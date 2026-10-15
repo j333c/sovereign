@@ -82,3 +82,52 @@ func TestOpen_UnwritableDirectory(t *testing.T) {
 		t.Fatalf("expected error when opening in unwritable path, got nil")
 	}
 }
+
+func TestDB_Settings(t *testing.T) {
+	tempDir := t.TempDir()
+	dbPath := filepath.Join(tempDir, "state", "sovereign.db")
+
+	db, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("Open failed: %v", err)
+	}
+	defer db.Close()
+
+	ctx := context.Background()
+
+	// Missing key returns empty string
+	val, err := db.GetSetting(ctx, "nonexistent")
+	if err != nil {
+		t.Fatalf("GetSetting failed for nonexistent key: %v", err)
+	}
+	if val != "" {
+		t.Fatalf("expected empty string, got %q", val)
+	}
+
+	// Insert setting
+	if err := db.SetSetting(ctx, "test_key", "test_value"); err != nil {
+		t.Fatalf("SetSetting failed: %v", err)
+	}
+
+	val, err = db.GetSetting(ctx, "test_key")
+	if err != nil {
+		t.Fatalf("GetSetting failed: %v", err)
+	}
+	if val != "test_value" {
+		t.Fatalf("expected 'test_value', got %q", val)
+	}
+
+	// Upsert setting
+	if err := db.SetSetting(ctx, "test_key", "updated_value"); err != nil {
+		t.Fatalf("SetSetting update failed: %v", err)
+	}
+
+	val, err = db.GetSetting(ctx, "test_key")
+	if err != nil {
+		t.Fatalf("GetSetting failed after update: %v", err)
+	}
+	if val != "updated_value" {
+		t.Fatalf("expected 'updated_value', got %q", val)
+	}
+}
+

@@ -180,6 +180,33 @@ func (d *DB) RecordBootStatus(ctx context.Context, status *BootStatusInfo) error
 	return nil
 }
 
+// GetSetting retrieves a configuration value by key from the settings table.
+// Returns an empty string and nil error if the key does not exist.
+func (d *DB) GetSetting(ctx context.Context, key string) (string, error) {
+	var val string
+	err := d.QueryRowContext(ctx, "SELECT value FROM settings WHERE key = ?", key).Scan(&val)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("failed to get setting %q: %w", key, err)
+	}
+	return val, nil
+}
+
+// SetSetting inserts or updates a configuration value by key in the settings table.
+func (d *DB) SetSetting(ctx context.Context, key, value string) error {
+	_, err := d.ExecContext(ctx, `
+		INSERT INTO settings (key, value, updated_at) 
+		VALUES (?, ?, CURRENT_TIMESTAMP)
+		ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP
+	`, key, value)
+	if err != nil {
+		return fmt.Errorf("failed to set setting %q: %w", key, err)
+	}
+	return nil
+}
+
 // Path returns the database file path.
 func (d *DB) Path() string {
 	return d.path

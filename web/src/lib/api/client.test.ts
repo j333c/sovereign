@@ -327,4 +327,200 @@ describe("SovereignApiClient", () => {
       }
     );
   });
+
+  it("successfully fetches getDisks with typed response", async () => {
+    const mockFetch: typeof fetch = async (input) => {
+      assert.equal(String(input), "http://localhost:8080/api/v1/storage/disks");
+      return new Response(
+        JSON.stringify({
+          disks: [
+            {
+              name: "nvme0n1",
+              path: "/dev/nvme0n1",
+              model: "Samsung SSD 980 1TB",
+              size_bytes: 1000204886016,
+              type: "nvme",
+              rotational: false,
+              mounted: false,
+              is_system: false,
+            },
+          ],
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } }
+      );
+    };
+
+    const client = new SovereignApiClient({
+      baseUrl: "http://localhost:8080",
+      fetchFn: mockFetch,
+    });
+
+    const res = await client.getDisks();
+    assert.equal(res.disks.length, 1);
+    assert.equal(res.disks[0].name, "nvme0n1");
+    assert.equal(res.disks[0].size_bytes, 1000204886016);
+  });
+
+  it("successfully calls initializeStorage with POST payload", async () => {
+    const mockFetch: typeof fetch = async (input, init) => {
+      assert.equal(String(input), "http://localhost:8080/api/v1/storage/initialize");
+      assert.equal(init?.method, "POST");
+      assert.equal(init?.body, JSON.stringify({ device: "/dev/nvme0n1" }));
+
+      return new Response(
+        JSON.stringify({
+          status: "initialized",
+          device: "/dev/nvme0n1",
+          mount_point: "/data",
+          message: "Storage pool formatted and mounted successfully",
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } }
+      );
+    };
+
+    const client = new SovereignApiClient({
+      baseUrl: "http://localhost:8080",
+      fetchFn: mockFetch,
+    });
+
+    const res = await client.initializeStorage({ device: "/dev/nvme0n1" });
+    assert.equal(res.status, "initialized");
+    assert.equal(res.mount_point, "/data");
+  });
+
+  it("successfully calls testNAS and returns success verification", async () => {
+    const mockFetch: typeof fetch = async (input, init) => {
+      assert.equal(String(input), "http://localhost:8080/api/v1/storage/nas/test");
+      assert.equal(init?.method, "POST");
+
+      return new Response(
+        JSON.stringify({
+          success: true,
+          message: "Connection and credentials verified successfully",
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } }
+      );
+    };
+
+    const client = new SovereignApiClient({
+      baseUrl: "http://localhost:8080",
+      fetchFn: mockFetch,
+    });
+
+    const res = await client.testNAS({
+      type: "smb",
+      host: "192.168.1.100",
+      share: "media",
+      username: "user",
+      password: "pass",
+    });
+    assert.equal(res.success, true);
+  });
+
+  it("successfully calls mountNAS and saves mount configuration", async () => {
+    const mockFetch: typeof fetch = async (input, init) => {
+      assert.equal(String(input), "http://localhost:8080/api/v1/storage/nas/mount");
+      assert.equal(init?.method, "POST");
+
+      return new Response(
+        JSON.stringify({
+          status: "mounted",
+          type: "smb",
+          host: "192.168.1.100",
+          share: "media",
+          mount_point: "/data/media",
+          message: "Network storage share mounted successfully",
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } }
+      );
+    };
+
+    const client = new SovereignApiClient({
+      baseUrl: "http://localhost:8080",
+      fetchFn: mockFetch,
+    });
+
+    const res = await client.mountNAS({
+      type: "smb",
+      host: "192.168.1.100",
+      share: "media",
+    });
+    assert.equal(res.status, "mounted");
+    assert.equal(res.mount_point, "/data/media");
+  });
+
+  it("successfully fetches getStorageStatus with redacted password and degraded notice", async () => {
+    const mockFetch: typeof fetch = async (input) => {
+      assert.equal(String(input), "http://localhost:8080/api/v1/storage/status");
+      return new Response(
+        JSON.stringify({
+          status: "degraded",
+          pool_type: "nas",
+          mount_point: "/data",
+          total_bytes: 1000000000000,
+          available_bytes: 800000000000,
+          used_bytes: 200000000000,
+          nas: {
+            configured: true,
+            type: "smb",
+            host: "nas.local",
+            share: "media",
+            username: "alex",
+            password: "***",
+            mount_point: "/data/media",
+            status: "degraded",
+            message: "Network storage temporarily unavailable",
+          },
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } }
+      );
+    };
+
+    const client = new SovereignApiClient({
+      baseUrl: "http://localhost:8080",
+      fetchFn: mockFetch,
+    });
+
+    const status = await client.getStorageStatus();
+    assert.equal(status.status, "degraded");
+    assert.equal(status.nas?.password, "***");
+    assert.equal(status.nas?.message, "Network storage temporarily unavailable");
+  });
+
+  it("handles storage API ProblemDetailsError on invalid disk format", async () => {
+    const mockFetch: typeof fetch = async () => {
+      return new Response(
+        JSON.stringify({
+          type: "https://sovereign.local/errors/http-400",
+          title: "Invalid Device",
+          status: 400,
+          detail: "device contains root or boot partitions and cannot be formatted",
+          instance: "/api/v1/storage/initialize",
+        }),
+        {
+          status: 400,
+          headers: { "Content-Type": "application/problem+json" },
+        }
+      );
+    };
+
+    const client = new SovereignApiClient({
+      baseUrl: "http://localhost:8080",
+      fetchFn: mockFetch,
+    });
+
+    await assert.rejects(
+      async () => {
+        await client.initializeStorage({ device: "/dev/sda" });
+      },
+      (err: unknown) => {
+        assert.ok(err instanceof ProblemDetailsError);
+        assert.equal(err.status, 400);
+        assert.equal(err.title, "Invalid Device");
+        assert.equal(err.detail, "device contains root or boot partitions and cannot be formatted");
+        return true;
+      }
+    );
+  });
 });
+

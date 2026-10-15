@@ -64,6 +64,106 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/storage/disks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Enumerate available block devices
+         * @description Returns list of unmounted/available SATA/NVMe block devices with capacity.
+         */
+        get: operations["getDisks"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/storage/initialize": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Format and initialize local storage pool
+         * @description Partitions and formats disk with ext4 write-ahead journaling and mounts under /data.
+         */
+        post: operations["initializeStorage"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/storage/nas/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Test network storage credentials
+         * @description Performs non-destructive credential and mount accessibility test.
+         */
+        post: operations["testNAS"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/storage/nas/mount": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Save and mount network storage share
+         * @description Mounts network share to /data/media or target folder and persists config in SQLite.
+         */
+        post: operations["mountNAS"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/storage/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get storage pool and NAS mount status
+         * @description Returns operational status, filesystem capacity, local pool, and network share health.
+         */
+        get: operations["getStorageStatus"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -131,6 +231,172 @@ export interface components {
             detail: string;
             /** @example /api/v1/health */
             instance: string;
+        };
+        DiskInfo: {
+            /** @example nvme0n1 */
+            name: string;
+            /** @example /dev/nvme0n1 */
+            path: string;
+            /** @example Samsung SSD 980 1TB */
+            model: string;
+            /**
+             * Format: int64
+             * @example 1000204886016
+             */
+            size_bytes: number;
+            /** @example nvme */
+            type: string;
+            /** @example false */
+            rotational: boolean;
+            /** @example false */
+            mounted: boolean;
+            /** @example /data */
+            mount_point?: string;
+            /** @example false */
+            is_system: boolean;
+        };
+        DisksResponse: {
+            disks: components["schemas"]["DiskInfo"][];
+        };
+        StorageInitializeRequest: {
+            /** @example /dev/nvme0n1 */
+            device: string;
+        };
+        StorageInitializeResponse: {
+            /** @example initialized */
+            status: string;
+            /** @example /dev/nvme0n1 */
+            device: string;
+            /** @example /data */
+            mount_point: string;
+            /** @example Storage pool formatted and mounted successfully */
+            message: string;
+        };
+        StorageNASTestRequest: {
+            /**
+             * @example smb
+             * @enum {string}
+             */
+            type: "nfs" | "smb";
+            /** @example 192.168.1.100 */
+            host: string;
+            /** @example media */
+            share: string;
+            /** @example family */
+            username?: string;
+            /** @example secretpass */
+            password?: string;
+            /** @example ro */
+            options?: string;
+        };
+        StorageNASTestResponse: {
+            /** @example true */
+            success: boolean;
+            /** @example Connection and credentials verified successfully */
+            message: string;
+        };
+        StorageNASMountRequest: {
+            /**
+             * @example smb
+             * @enum {string}
+             */
+            type: "nfs" | "smb";
+            /** @example 192.168.1.100 */
+            host: string;
+            /** @example media */
+            share: string;
+            /** @example family */
+            username?: string;
+            /** @example secretpass */
+            password?: string;
+            /** @example rw */
+            options?: string;
+            /** @example /data/media */
+            target_path?: string;
+        };
+        StorageNASMountResponse: {
+            /** @example mounted */
+            status: string;
+            /**
+             * @example smb
+             * @enum {string}
+             */
+            type: "nfs" | "smb";
+            /** @example 192.168.1.100 */
+            host: string;
+            /** @example media */
+            share: string;
+            /** @example /data/media */
+            mount_point: string;
+            /** @example Network storage share mounted successfully */
+            message: string;
+        };
+        StorageLocalPool: {
+            /** @example /dev/nvme0n1 */
+            device: string;
+            /** @example /data */
+            mount_point: string;
+            /** @example ext4 */
+            filesystem: string;
+            /** @example mounted */
+            status: string;
+        };
+        StorageNASStatus: {
+            /** @example true */
+            configured: boolean;
+            /**
+             * @example smb
+             * @enum {string}
+             */
+            type?: "nfs" | "smb";
+            /** @example 192.168.1.100 */
+            host?: string;
+            /** @example media */
+            share?: string;
+            /** @example family */
+            username?: string;
+            /** @example *** */
+            password?: string;
+            /** @example /data/media */
+            mount_point?: string;
+            /**
+             * @example connected
+             * @enum {string}
+             */
+            status?: "connected" | "degraded" | "disconnected" | "error";
+            /** @example Connected */
+            message: string;
+        };
+        StorageStatusResponse: {
+            /**
+             * @example ok
+             * @enum {string}
+             */
+            status: "ok" | "degraded" | "not_configured";
+            /**
+             * @example local
+             * @enum {string}
+             */
+            pool_type: "local" | "nas" | "hybrid" | "none";
+            /** @example /data */
+            mount_point: string;
+            /**
+             * Format: int64
+             * @example 1000204886016
+             */
+            total_bytes: number;
+            /**
+             * Format: int64
+             * @example 850123456789
+             */
+            available_bytes: number;
+            /**
+             * Format: int64
+             * @example 150081429227
+             */
+            used_bytes: number;
+            local_pool?: components["schemas"]["StorageLocalPool"];
+            nas?: components["schemas"]["StorageNASStatus"];
         };
     };
     responses: never;
@@ -227,6 +493,190 @@ export interface operations {
                 };
             };
             /** @description Internal supervisor error retrieving ingress status. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    getDisks: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description List of available storage disks. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DisksResponse"];
+                };
+            };
+            /** @description Internal supervisor error retrieving block devices. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    initializeStorage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StorageInitializeRequest"];
+            };
+        };
+        responses: {
+            /** @description Storage pool successfully initialized and mounted. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StorageInitializeResponse"];
+                };
+            };
+            /** @description Invalid device or device is in use / protected. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Internal supervisor error formatting or mounting storage pool. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    testNAS: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StorageNASTestRequest"];
+            };
+        };
+        responses: {
+            /** @description Network storage credentials and connectivity verified successfully. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StorageNASTestResponse"];
+                };
+            };
+            /** @description Authentication failed or invalid configuration. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Internal supervisor error testing network storage. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    mountNAS: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StorageNASMountRequest"];
+            };
+        };
+        responses: {
+            /** @description Network storage share mounted successfully. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StorageNASMountResponse"];
+                };
+            };
+            /** @description Invalid NAS request or failed validation. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Mount execution failed. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    getStorageStatus: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Storage status and capacity telemetry. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StorageStatusResponse"];
+                };
+            };
+            /** @description Internal supervisor error retrieving storage status. */
             500: {
                 headers: {
                     [name: string]: unknown;

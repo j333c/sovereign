@@ -75,6 +75,137 @@ paths:
               schema:
                 $ref: '#/components/schemas/ProblemDetails'
 
+  /api/v1/storage/disks:
+    get:
+      summary: Enumerate available block devices
+      description: Returns list of unmounted/available SATA/NVMe block devices with capacity.
+      operationId: getDisks
+      responses:
+        '200':
+          description: List of available storage disks.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DisksResponse'
+        '500':
+          description: Internal supervisor error retrieving block devices.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/v1/storage/initialize:
+    post:
+      summary: Format and initialize local storage pool
+      description: Partitions and formats disk with ext4 write-ahead journaling and mounts under /data.
+      operationId: initializeStorage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StorageInitializeRequest'
+      responses:
+        '200':
+          description: Storage pool successfully initialized and mounted.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StorageInitializeResponse'
+        '400':
+          description: Invalid device or device is in use / protected.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '500':
+          description: Internal supervisor error formatting or mounting storage pool.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/v1/storage/nas/test:
+    post:
+      summary: Test network storage credentials
+      description: Performs non-destructive credential and mount accessibility test.
+      operationId: testNAS
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StorageNASTestRequest'
+      responses:
+        '200':
+          description: Network storage credentials and connectivity verified successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StorageNASTestResponse'
+        '400':
+          description: Authentication failed or invalid configuration.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '500':
+          description: Internal supervisor error testing network storage.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/v1/storage/nas/mount:
+    post:
+      summary: Save and mount network storage share
+      description: Mounts network share to /data/media or target folder and persists config in SQLite.
+      operationId: mountNAS
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StorageNASMountRequest'
+      responses:
+        '200':
+          description: Network storage share mounted successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StorageNASMountResponse'
+        '400':
+          description: Invalid NAS request or failed validation.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '500':
+          description: Mount execution failed.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/v1/storage/status:
+    get:
+      summary: Get storage pool and NAS mount status
+      description: Returns operational status, filesystem capacity, local pool, and network share health.
+      operationId: getStorageStatus
+      responses:
+        '200':
+          description: Storage status and capacity telemetry.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StorageStatusResponse'
+        '500':
+          description: Internal supervisor error retrieving storage status.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
 components:
   schemas:
     HealthResponse:
@@ -187,3 +318,280 @@ components:
         instance:
           type: string
           example: /api/v1/health
+
+    DiskInfo:
+      type: object
+      required:
+        - name
+        - path
+        - model
+        - size_bytes
+        - type
+        - rotational
+        - mounted
+        - is_system
+      properties:
+        name:
+          type: string
+          example: nvme0n1
+        path:
+          type: string
+          example: /dev/nvme0n1
+        model:
+          type: string
+          example: Samsung SSD 980 1TB
+        size_bytes:
+          type: integer
+          format: int64
+          example: 1000204886016
+        type:
+          type: string
+          example: nvme
+        rotational:
+          type: boolean
+          example: false
+        mounted:
+          type: boolean
+          example: false
+        mount_point:
+          type: string
+          example: /data
+        is_system:
+          type: boolean
+          example: false
+
+    DisksResponse:
+      type: object
+      required:
+        - disks
+      properties:
+        disks:
+          type: array
+          items:
+            $ref: '#/components/schemas/DiskInfo'
+
+    StorageInitializeRequest:
+      type: object
+      required:
+        - device
+      properties:
+        device:
+          type: string
+          example: /dev/nvme0n1
+
+    StorageInitializeResponse:
+      type: object
+      required:
+        - status
+        - device
+        - mount_point
+        - message
+      properties:
+        status:
+          type: string
+          example: initialized
+        device:
+          type: string
+          example: /dev/nvme0n1
+        mount_point:
+          type: string
+          example: /data
+        message:
+          type: string
+          example: Storage pool formatted and mounted successfully
+
+    StorageNASTestRequest:
+      type: object
+      required:
+        - type
+        - host
+        - share
+      properties:
+        type:
+          type: string
+          enum: [nfs, smb]
+          example: smb
+        host:
+          type: string
+          example: 192.168.1.100
+        share:
+          type: string
+          example: media
+        username:
+          type: string
+          example: family
+        password:
+          type: string
+          example: secretpass
+        options:
+          type: string
+          example: ro
+
+    StorageNASTestResponse:
+      type: object
+      required:
+        - success
+        - message
+      properties:
+        success:
+          type: boolean
+          example: true
+        message:
+          type: string
+          example: Connection and credentials verified successfully
+
+    StorageNASMountRequest:
+      type: object
+      required:
+        - type
+        - host
+        - share
+      properties:
+        type:
+          type: string
+          enum: [nfs, smb]
+          example: smb
+        host:
+          type: string
+          example: 192.168.1.100
+        share:
+          type: string
+          example: media
+        username:
+          type: string
+          example: family
+        password:
+          type: string
+          example: secretpass
+        options:
+          type: string
+          example: rw
+        target_path:
+          type: string
+          example: /data/media
+
+    StorageNASMountResponse:
+      type: object
+      required:
+        - status
+        - type
+        - host
+        - share
+        - mount_point
+        - message
+      properties:
+        status:
+          type: string
+          example: mounted
+        type:
+          type: string
+          enum: [nfs, smb]
+          example: smb
+        host:
+          type: string
+          example: 192.168.1.100
+        share:
+          type: string
+          example: media
+        mount_point:
+          type: string
+          example: /data/media
+        message:
+          type: string
+          example: Network storage share mounted successfully
+
+    StorageLocalPool:
+      type: object
+      required:
+        - device
+        - mount_point
+        - filesystem
+        - status
+      properties:
+        device:
+          type: string
+          example: /dev/nvme0n1
+        mount_point:
+          type: string
+          example: /data
+        filesystem:
+          type: string
+          example: ext4
+        status:
+          type: string
+          example: mounted
+
+    StorageNASStatus:
+      type: object
+      required:
+        - configured
+        - message
+      properties:
+        configured:
+          type: boolean
+          example: true
+        type:
+          type: string
+          enum: [nfs, smb]
+          example: smb
+        host:
+          type: string
+          example: 192.168.1.100
+        share:
+          type: string
+          example: media
+        username:
+          type: string
+          example: family
+        password:
+          type: string
+          example: '***'
+        mount_point:
+          type: string
+          example: /data/media
+        status:
+          type: string
+          enum: [connected, degraded, disconnected, error]
+          example: connected
+        message:
+          type: string
+          example: Connected
+
+    StorageStatusResponse:
+      type: object
+      required:
+        - status
+        - pool_type
+        - mount_point
+        - total_bytes
+        - available_bytes
+        - used_bytes
+      properties:
+        status:
+          type: string
+          enum: [ok, degraded, not_configured]
+          example: ok
+        pool_type:
+          type: string
+          enum: [local, nas, hybrid, none]
+          example: local
+        mount_point:
+          type: string
+          example: /data
+        total_bytes:
+          type: integer
+          format: int64
+          example: 1000204886016
+        available_bytes:
+          type: integer
+          format: int64
+          example: 850123456789
+        used_bytes:
+          type: integer
+          format: int64
+          example: 150081429227
+        local_pool:
+          $ref: '#/components/schemas/StorageLocalPool'
+        nas:
+          $ref: '#/components/schemas/StorageNASStatus'
+

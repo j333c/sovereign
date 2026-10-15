@@ -5,6 +5,17 @@ export type BootStatusResponse = components["schemas"]["BootStatusResponse"];
 export type IngressStatusResponse = components["schemas"]["IngressStatusResponse"];
 export type IngressRoute = components["schemas"]["IngressRoute"];
 export type ProblemDetails = components["schemas"]["ProblemDetails"];
+export type DiskInfo = components["schemas"]["DiskInfo"];
+export type DisksResponse = components["schemas"]["DisksResponse"];
+export type StorageInitializeRequest = components["schemas"]["StorageInitializeRequest"];
+export type StorageInitializeResponse = components["schemas"]["StorageInitializeResponse"];
+export type StorageNASTestRequest = components["schemas"]["StorageNASTestRequest"];
+export type StorageNASTestResponse = components["schemas"]["StorageNASTestResponse"];
+export type StorageNASMountRequest = components["schemas"]["StorageNASMountRequest"];
+export type StorageNASMountResponse = components["schemas"]["StorageNASMountResponse"];
+export type StorageLocalPool = components["schemas"]["StorageLocalPool"];
+export type StorageNASStatus = components["schemas"]["StorageNASStatus"];
+export type StorageStatusResponse = components["schemas"]["StorageStatusResponse"];
 
 /**
  * ProblemDetailsError represents an RFC 7807 problem details error thrown by the daemon API.
@@ -117,6 +128,53 @@ export class SovereignApiClient {
    */
   async getIngressStatus(): Promise<IngressStatusResponse> {
     return this.request<IngressStatusResponse>("/api/v1/system/ingress");
+  }
+
+  /**
+   * Enumerate unmounted SATA/NVMe block devices with capacity.
+   */
+  async getDisks(): Promise<DisksResponse> {
+    return this.request<DisksResponse>("/api/v1/storage/disks");
+  }
+
+  /**
+   * Format and initialize local storage pool under /data with ext4 journaling.
+   */
+  async initializeStorage(request: StorageInitializeRequest): Promise<StorageInitializeResponse> {
+    return this.request<StorageInitializeResponse>("/api/v1/storage/initialize", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(request),
+    });
+  }
+
+  /**
+   * Non-destructive test of network storage credentials and connectivity.
+   */
+  async testNAS(request: StorageNASTestRequest): Promise<StorageNASTestResponse> {
+    return this.request<StorageNASTestResponse>("/api/v1/storage/nas/test", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(request),
+    });
+  }
+
+  /**
+   * Save and mount network storage share to /data/media or target folder.
+   */
+  async mountNAS(request: StorageNASMountRequest): Promise<StorageNASMountResponse> {
+    return this.request<StorageNASMountResponse>("/api/v1/storage/nas/mount", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(request),
+    });
+  }
+
+  /**
+   * Get storage pool, capacity telemetry, and NAS connection health.
+   */
+  async getStorageStatus(): Promise<StorageStatusResponse> {
+    return this.request<StorageStatusResponse>("/api/v1/storage/status");
   }
 }
 

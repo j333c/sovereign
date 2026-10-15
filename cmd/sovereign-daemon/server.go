@@ -3,11 +3,13 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -54,27 +56,29 @@ type IngressStatusResponse struct {
 
 // Config specifies runtime options for the daemon server.
 type Config struct {
-	ListenAddr  string
-	DataDir     string
-	DBPath      string
-	StatePath   string
-	CaddyURL    string
-	Logger      *slog.Logger
-	IngressMgr  ingress.IngressManager
-	MDNSService *ingress.MDNSService
-	BootMgr     *store.BootManager
+	ListenAddr    string
+	DataDir       string
+	DBPath        string
+	StatePath     string
+	CaddyURL      string
+	Logger        *slog.Logger
+	IngressMgr    ingress.IngressManager
+	MDNSService   *ingress.MDNSService
+	BootMgr       *store.BootManager
+	StorageEngine *storage.Engine
 }
 
 // Server is the appliance core supervisor HTTP daemon.
 type Server struct {
-	cfg         Config
-	db          *store.DB
-	bootMgr     *store.BootManager
-	logger      *slog.Logger
-	router      *http.ServeMux
-	ingressMgr  ingress.IngressManager
-	mdnsService *ingress.MDNSService
-	mu          sync.RWMutex
+	cfg           Config
+	db            *store.DB
+	bootMgr       *store.BootManager
+	storageEngine *storage.Engine
+	logger        *slog.Logger
+	router        *http.ServeMux
+	ingressMgr    ingress.IngressManager
+	mdnsService   *ingress.MDNSService
+	mu            sync.RWMutex
 }
 
 // NewServer initializes the supervisor server, ensures storage directories,
@@ -133,14 +137,28 @@ func NewServer(cfg Config) (*Server, error) {
 		cfg.MDNSService = ingress.NewMDNSService(ingress.DefaultMDNSConfig(cfg.Logger))
 	}
 
+	if cfg.StorageEngine == nil {
+		var err error
+		cfg.StorageEngine, err = storage.NewEngine(storage.EngineConfig{
+			DataDir: cfg.DataDir,
+			DB:      db,
+			Logger:  cfg.Logger,
+		})
+		if err != nil {
+			cfg.Logger.Error("storage engine initialization failed", "error", err)
+			return nil, fmt.Errorf("storage engine initialization failed: %w", err)
+		}
+	}
+
 	s := &Server{
-		cfg:         cfg,
-		db:          db,
-		bootMgr:     cfg.BootMgr,
-		logger:      cfg.Logger,
-		router:      http.NewServeMux(),
-		ingressMgr:  cfg.IngressMgr,
-		mdnsService: cfg.MDNSService,
+		cfg:           cfg,
+		db:            db,
+		bootMgr:       cfg.BootMgr,
+		storageEngine: cfg.StorageEngine,
+		logger:        cfg.Logger,
+		router:        http.NewServeMux(),
+		ingressMgr:    cfg.IngressMgr,
+		mdnsService:   cfg.MDNSService,
 	}
 
 	s.routes()
@@ -208,6 +226,11 @@ func (s *Server) StartBackgroundServices(ctx context.Context) {
 			}
 		}()
 	}
+
+	// 4. Background storage health probe
+	if s.storageEngine != nil {
+		s.storageEngine.StartProbing(ctx)
+	}
 }
 
 // BootManager returns the active BootManager instance.
@@ -217,10 +240,21 @@ func (s *Server) BootManager() *store.BootManager {
 	return s.bootMgr
 }
 
-// Close closes database handles and frees ingress/mDNS resources.
+// StorageEngine returns the active storage engine.
+func (s *Server) StorageEngine() *storage.Engine {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.storageEngine
+}
+
+// Close closes database handles and frees ingress/mDNS/storage resources.
 func (s *Server) Close() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	if s.storageEngine != nil {
+		_ = s.storageEngine.Close()
+	}
 
 	if s.mdnsService != nil {
 		s.mdnsService.Close()
@@ -241,6 +275,11 @@ func (s *Server) routes() {
 	s.router.HandleFunc("GET /api/v1/health", s.handleHealth)
 	s.router.HandleFunc("GET /api/v1/system/boot-status", s.handleBootStatus)
 	s.router.HandleFunc("GET /api/v1/system/ingress", s.handleIngressStatus)
+	s.router.HandleFunc("GET /api/v1/storage/disks", s.handleStorageDisks)
+	s.router.HandleFunc("POST /api/v1/storage/initialize", s.handleStorageInitialize)
+	s.router.HandleFunc("POST /api/v1/storage/nas/test", s.handleStorageNASTest)
+	s.router.HandleFunc("POST /api/v1/storage/nas/mount", s.handleStorageNASMount)
+	s.router.HandleFunc("GET /api/v1/storage/status", s.handleStorageStatus)
 }
 
 // Handler returns the HTTP handler for the server with CORS middleware.
@@ -375,3 +414,137 @@ func (s *Server) handleIngressStatus(w http.ResponseWriter, r *http.Request) {
 		Routes:         routes,
 	})
 }
+
+func (s *Server) handleStorageDisks(w http.ResponseWriter, r *http.Request) {
+	s.mu.RLock()
+	storageEng := s.storageEngine
+	s.mu.RUnlock()
+
+	if storageEng == nil {
+		s.writeProblem(w, http.StatusInternalServerError, "Internal Server Error", "Storage engine is not initialized", r.URL.Path)
+		return
+	}
+
+	disks, err := storageEng.ListAvailableDisks(r.Context())
+	if err != nil {
+		s.logger.Error("failed to list available disks", "error", err)
+		s.writeProblem(w, http.StatusInternalServerError, "Storage Error", "Failed to enumerate block devices", r.URL.Path)
+		return
+	}
+
+	s.writeJSON(w, http.StatusOK, map[string]any{
+		"disks": disks,
+	})
+}
+
+func (s *Server) handleStorageInitialize(w http.ResponseWriter, r *http.Request) {
+	s.mu.RLock()
+	storageEng := s.storageEngine
+	s.mu.RUnlock()
+
+	if storageEng == nil {
+		s.writeProblem(w, http.StatusInternalServerError, "Internal Server Error", "Storage engine is not initialized", r.URL.Path)
+		return
+	}
+
+	var req struct {
+		Device string `json:"device"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.writeProblem(w, http.StatusBadRequest, "Invalid Request", "Malformed JSON request payload", r.URL.Path)
+		return
+	}
+
+	if strings.TrimSpace(req.Device) == "" {
+		s.writeProblem(w, http.StatusBadRequest, "Invalid Device", "Device path cannot be empty", r.URL.Path)
+		return
+	}
+
+	res, err := storageEng.InitializeStorage(r.Context(), req.Device)
+	if err != nil {
+		if errors.Is(err, storage.ErrInvalidDevice) ||
+			errors.Is(err, storage.ErrSystemDeviceProtected) ||
+			errors.Is(err, storage.ErrDeviceInUse) {
+			s.writeProblem(w, http.StatusBadRequest, "Invalid Device", err.Error(), r.URL.Path)
+			return
+		}
+		s.logger.Error("storage initialization failed", "device", req.Device, "error", err)
+		s.writeProblem(w, http.StatusInternalServerError, "Storage Initialization Failed", "Failed to format and mount storage pool", r.URL.Path)
+		return
+	}
+
+	s.writeJSON(w, http.StatusOK, res)
+}
+
+func (s *Server) handleStorageNASTest(w http.ResponseWriter, r *http.Request) {
+	s.mu.RLock()
+	storageEng := s.storageEngine
+	s.mu.RUnlock()
+
+	if storageEng == nil {
+		s.writeProblem(w, http.StatusInternalServerError, "Internal Server Error", "Storage engine is not initialized", r.URL.Path)
+		return
+	}
+
+	var req storage.NASTestRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.writeProblem(w, http.StatusBadRequest, "Invalid Request", "Malformed JSON request payload", r.URL.Path)
+		return
+	}
+
+	res, err := storageEng.TestNAS(r.Context(), req)
+	if err != nil {
+		s.logger.Warn("NAS test connection failed", "host", req.Host, "error", err)
+		s.writeProblem(w, http.StatusBadRequest, "NAS Connection Failed", err.Error(), r.URL.Path)
+		return
+	}
+
+	s.writeJSON(w, http.StatusOK, res)
+}
+
+func (s *Server) handleStorageNASMount(w http.ResponseWriter, r *http.Request) {
+	s.mu.RLock()
+	storageEng := s.storageEngine
+	s.mu.RUnlock()
+
+	if storageEng == nil {
+		s.writeProblem(w, http.StatusInternalServerError, "Internal Server Error", "Storage engine is not initialized", r.URL.Path)
+		return
+	}
+
+	var req storage.NASMountRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.writeProblem(w, http.StatusBadRequest, "Invalid Request", "Malformed JSON request payload", r.URL.Path)
+		return
+	}
+
+	res, err := storageEng.MountNAS(r.Context(), req)
+	if err != nil {
+		if errors.Is(err, storage.ErrInvalidNASConfig) ||
+			errors.Is(err, storage.ErrNASAuthFailed) ||
+			errors.Is(err, storage.ErrNASUnreachable) {
+			s.writeProblem(w, http.StatusBadRequest, "NAS Configuration Error", err.Error(), r.URL.Path)
+			return
+		}
+		s.logger.Error("NAS mount failed", "host", req.Host, "error", err)
+		s.writeProblem(w, http.StatusInternalServerError, "Mount Failed", "Failed to mount network storage share", r.URL.Path)
+		return
+	}
+
+	s.writeJSON(w, http.StatusOK, res)
+}
+
+func (s *Server) handleStorageStatus(w http.ResponseWriter, r *http.Request) {
+	s.mu.RLock()
+	storageEng := s.storageEngine
+	s.mu.RUnlock()
+
+	if storageEng == nil {
+		s.writeProblem(w, http.StatusInternalServerError, "Internal Server Error", "Storage engine is not initialized", r.URL.Path)
+		return
+	}
+
+	status := storageEng.GetStorageStatus(r.Context())
+	s.writeJSON(w, http.StatusOK, status)
+}
+
