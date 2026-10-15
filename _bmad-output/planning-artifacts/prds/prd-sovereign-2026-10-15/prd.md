@@ -252,12 +252,13 @@ The user can interact with local AI models through a pre-integrated Open WebUI i
 #### FR-15: Managed LLM Inference Backend & Turnkey Default Setup
 The system can manage a dedicated high-performance LLM inference engine backend (candidate: `llama.cpp` / `llama-server`) with turnkey default configuration, automated hardware acceleration detection, and appliance-grade administrative controls. Realizes UJ-4.
 - **Consequences (testable)**:
-  - **Turnkey Default Setup**: On initial provisioning of the Local AI subsystem, Sovereign automatically deploys a pre-configured `llama.cpp` backend service with a verified, balanced default quantized GGUF model (e.g., standard Q4_K_M model such as Qwen 2.5 7B Instruct or Llama 3.2), autodetects hardware acceleration capabilities (Nvidia CUDA, Vulkan, Intel SYCL, or CPU fallback), enables FlashAttention (`-fa`) by default to reduce KV cache memory overhead by up to 50%, and establishes internal connectivity with zero manual configuration.
-  - **Model Storage & Administration**: Dedicated local volume (`/data/models`) stores GGUF models. The Admin Interface provides an appliance administration surface to:
+  - **Turnkey Default Setup**: On initial provisioning of the Local AI subsystem, Sovereign automatically deploys a pre-configured, lean `llama.cpp` backend service (minimal C++ runtime with zero Python dependency and < 25 MB idle footprint) with a verified, balanced default quantized GGUF model (e.g., standard Q4_K_M model such as Qwen 2.5 7B Instruct or Llama 3.2), autodetects hardware acceleration capabilities (Nvidia CUDA, Vulkan, Intel SYCL, or CPU fallback), enables FlashAttention (`-fa`) by default to reduce KV cache memory overhead by up to 50%, and establishes internal connectivity with zero manual configuration.
+  - **Model Storage & Administration**: Dedicated host storage volume (`/data/models`) stores GGUF models decoupled from container lifecycles (models persist across container upgrades and reinstalls). The Admin Interface provides an appliance administration surface to:
     - View the currently loaded active model, FlashAttention status, and memory footprint (RAM/VRAM).
     - Select and switch active models from local storage with one click.
     - Trigger background downloads of recommended default or alternative curated GGUF models with progress reporting. Model acquisition delegates to backend-native mechanisms where available; otherwise the system enforces atomic staging (`.downloading` staging file, SHA-256 validation, and atomic rename to `.gguf`) with resumable HTTP range downloads and UI retry controls.
   - **Backend Resource & Execution Tuning**: Admin interface allows users to adjust:
+    - Generation Intent Presets: Pre-calibrated sampling profiles (*Precise & Factual* at temperature 0.1 for document QA and contract analysis; *Balanced Assistant* at temperature 0.7 for conversational tasks; *Creative Drafting* at temperature 0.85) replacing complex machine learning hyperparameters.
     - GPU Layer Offloading (`-ngl` / `--n-gpu-layers`): Auto-calculated default with manual override slider (0 to 100% offload).
     - Context Window Size (`-c`): Configurable presets (2048, 4096, 8192 tokens) balanced against memory constraints and protected by FlashAttention.
     - CPU Thread Allocation (`-t`): Auto-pinned to optimal physical core count; on zero-GPU / CPU-only hosts, threads are automatically capped to `max(1, physical_cores - 2)` to guarantee uninterrupted OS, DNS, and storage operations, accompanied by a dedicated "CPU-Optimized Mode" UI indicator and 3B model recommendation.
@@ -267,9 +268,10 @@ The system can manage a dedicated high-performance LLM inference engine backend 
     - Supports configurable dynamic idle surrender timeout to unload model weights when idle and free VRAM for video transcoding.
 
 #### FR-16: Single-Source-of-Truth RAG
-The local AI system can query the document management system directly to answer user questions without requiring duplicate document uploads. Realizes UJ-4. [ASSUMPTION: Paperless-ngx API and metadata provide adequate search and text extraction performance for direct local LLM retrieval without requiring a separate standalone vector database for small-to-medium household libraries (< 10,000 documents).]
+The local AI system can query the document management system directly to answer user questions without requiring duplicate document uploads or external vector database bloat. Realizes UJ-4. [ASSUMPTION: Paperless-ngx API and metadata provide adequate search and text extraction performance for direct local LLM retrieval without requiring a separate standalone vector database for small-to-medium household libraries (< 10,000 documents).]
 - **Consequences (testable)**:
-  - Queries execute directly against the DMS search API / vector embeddings.
+  - Queries execute directly against the Paperless-ngx document database using full-text search (SQLite FTS5) and metadata matching, injecting relevant document excerpts directly into the inference context window.
+  - Zero external vector database daemon (e.g. Chroma, Qdrant) is required, eliminating secondary background indexing overhead and preventing index drift.
   - System enforces zero redundant data storage: documents are neither duplicated into the chat UI database nor stored in multiple locations.
   - Chat responses cite the specific document title and page number used to generate the answer.
 

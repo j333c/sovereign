@@ -275,6 +275,7 @@ Sovereign avoids deep or fuzzy shadows. Visual hierarchy is established through 
      - FlashAttention indicator badge (`{colors.status-green-bg}`, `{colors.status-green-fg}`, "⚡ FlashAttention Active").
   2. Setting Rows:
      - Model selector dropdown with atomic download progress bar (ETA, transfer rate, SHA-256 verification status).
+     - Generation Intent Presets segmented control (*"Precise & Factual"*, *"Balanced Assistant"*, *"Creative Drafting"*).
      - Context window segmented button pills (`2048`, `4096`, `8192`) with memory budget readout.
      - GPU layer offload slider with percentage readout (or capped CPU-thread allocation display `physical_cores - 2`).
      - Dynamic idle memory surrender switch.

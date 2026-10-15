@@ -76,7 +76,7 @@ This addendum preserves technical depth, architectural ideas, candidate software
 
 ## 6. RAG Single-Source-of-Truth & Update Rollback Mechanics
 
-- **Zero Data Duplication for RAG**: The local LLM / Open WebUI instance must connect directly to Paperless-ngx / DMS search/API endpoints or vector index. Users do not manually re-upload documents to the AI interface.
+- **Zero Data Duplication for RAG via Direct FTS5 Context Injection**: The local LLM / Open WebUI instance connects directly to Paperless-ngx document storage using full-text search (SQLite FTS5). Users do not manually re-upload documents to the AI interface, and Sovereign purposefully avoids running external vector databases (Chroma, Milvus, Qdrant) that add memory overhead, background re-indexing churn, and state drift. Matches are ranked and injected directly into the LLM context with page citations.
 - **Rollback Architecture**:
   - Image pinning and snapshotting of container configuration volumes prior to any update.
   - Automatic Rollback: If a newly pulled container fails its health check (e.g. within 3 minutes of startup or throws repeated crash loops), the previous image tag and volume state are restored automatically.
@@ -89,11 +89,13 @@ This addendum preserves technical depth, architectural ideas, candidate software
   - Expose a simple, local network shared folder (SMB/Samba or NFS) and/or a drag-and-drop web upload component in the admin dashboard.
   - Automatically routes uploaded videos, audio tracks, and audiobooks into their designated target directories and triggers library refresh/metadata indexing.
 - **Managed LLM Backend Administration & Shared API Endpoint**:
-  - **Candidate Runtime**: `llama.cpp` (`llama-server`) running as an independent, lightweight C++ container on internal bridge network (`http://sovereign-ai-backend:8080/v1`).
+  - **Candidate Runtime**: `llama.cpp` (`llama-server`) running as an independent, lightweight C++ container on internal bridge network (`http://sovereign-ai-backend:8080/v1`) with zero Python runtime dependency and < 25 MB idle memory footprint.
+  - **Decoupled Model Storage**: Models reside in a dedicated host path (`/data/models`) mounted into the engine, ensuring zero-copy persistence across container updates and removals.
   - **Turnkey Default Setup**: First boot provisions a recommended default quantized GGUF model (e.g., Qwen 2.5 7B Instruct or Llama 3.2 Q4_K_M), autodetects available GPU acceleration (CUDA, Vulkan, SYCL, or CPU), enables FlashAttention (`-fa`) by default, and wires the internal OpenAI-compatible endpoint to Open WebUI and Paperless-ngx.
   - **Admin Surface in Sovereign**: Dedicated management controls in the Admin Interface allow the user to:
     - View active model, FlashAttention status, memory footprint (RAM/VRAM), and inference speed (tokens/sec).
     - Select from downloaded GGUF models in `/data/models`, with download lifecycle safeguarded by atomic staging (`.downloading` + SHA-256 verification) and resumable HTTP transfers.
+    - Select **Generation Intent Presets** (*Precise & Factual*, *Balanced Assistant*, *Creative Drafting*) pre-calibrated to the active model rather than exposing low-level sampling sliders.
     - Adjust GPU offload layer slider (`-ngl`), context window presets (`-c`: 2048, 4096, 8192), CPU thread allocation (auto-capped to `physical_cores - 2` on CPU-only hosts with "CPU-Optimized Mode" indicator), and idle surrender timeout.
     - Reload backend model or restart container with a single click.
     - Inspect backend inference and error logs without CLI access.

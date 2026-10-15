@@ -127,6 +127,7 @@ Sovereign speaks with **reassuring consumer clarity**. It protects family data a
   - Displays turnkey setup badge: *"Default Setup: Qwen 2.5 7B (Q4_K_M) · Autodetected GPU Offload Active"* (on zero-GPU hosts: *"CPU-Optimized Mode: Balanced Core Allocation Active"*).
   - **FlashAttention Status**: Pill badge displaying *"FlashAttention Active · KV Cache Optimized"*.
   - **Active Model Selector**: Dropdown showing available `.gguf` files in storage; switching model triggers graceful reload with progress spinner.
+  - **Generation Intent Presets**: Segmented button pills (*"Precise & Factual"* · *"Balanced Assistant"* · *"Creative Drafting"*) providing intuitive consumer presets for temperature and sampling without technical dials.
   - **Model Download Lifecycle**: Integrated download progress indicator showing transfer rate, ETA, and automatic SHA-256 verification badge, with inline "Resume Download" action on network interruption.
   - **Context Window Sizing**: Segmented button pills for `2048`, `4096` (default), and `8192` tokens; displays estimated memory usage badge.
   - **GPU Acceleration Slider**: Range slider controlling transformer layer offload (`-ngl`) from `0% (CPU Only)` to `100% (Full GPU Offload)`; automatically locked to CPU-only on headless systems without dedicated hardware.
