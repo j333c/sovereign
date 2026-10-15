@@ -74,7 +74,8 @@ export interface paths {
         /**
          * Real-time SSE telemetry event stream
          * @description Streams real-time hardware telemetry updates (CPU, RAM, storage, NAS, optical, GPU)
-         *     via Server-Sent Events formatted as `event: telemetry.update`.
+         *     and service lifecycle events (service.pull_progress, service.health_changed, service.error)
+         *     via Server-Sent Events.
          */
         get: operations["getSystemEvents"];
         put?: never;
@@ -94,7 +95,7 @@ export interface paths {
         };
         /**
          * Real-time SSE telemetry stream alias
-         * @description Convenience root alias for /api/v1/system/events.
+         * @description Convenience root alias for /api/v1/system/events emitting telemetry and service lifecycle events.
          */
         get: operations["getEvents"];
         put?: never;
@@ -323,6 +324,86 @@ export interface paths {
          * @description Updates key-value settings. Requires administrative privileges.
          */
         post: operations["updateSettings"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/services": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List managed services
+         * @description Returns list of managed appliance services and their container lifecycle states.
+         */
+        get: operations["getServices"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/services/{id}/activate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Activate managed service on-demand
+         * @description Pulls OCI image from official repository on-demand and starts container with bounded memory.
+         */
+        post: operations["activateService"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/services/{id}/deactivate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Deactivate managed service
+         * @description Stops container runtime and preserves persistent data volumes under /data.
+         */
+        post: operations["deactivateService"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/services/{id}/restart": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Restart managed service container
+         * @description Restarts container runtime. Requires administrative authentication if configured.
+         */
+        post: operations["restartService"];
         delete?: never;
         options?: never;
         head?: never;
@@ -695,6 +776,85 @@ export interface components {
              * @example 2026-10-15T15:30:00Z
              */
             timestamp: string;
+        };
+        ServiceStatus: {
+            /** @example jellyfin */
+            id: string;
+            /** @example Jellyfin */
+            name: string;
+            /** @example Video Streaming */
+            description?: string;
+            /**
+             * @example inactive
+             * @enum {string}
+             */
+            status: "inactive" | "starting" | "running" | "degraded" | "stopped" | "error";
+            /**
+             * @example unknown
+             * @enum {string}
+             */
+            health?: "healthy" | "degraded" | "unhealthy" | "unknown";
+            /** @example jellyfin/jellyfin:12.2.0 */
+            image: string;
+            /** @example false */
+            image_downloaded: boolean;
+            /**
+             * Format: int64
+             * @example 2147483648
+             */
+            mem_limit_bytes: number;
+            /**
+             * Format: int64
+             * @example 1073741824
+             */
+            mem_reservation_bytes: number;
+            /** @example /media */
+            subpath?: string;
+            /** @example 8096 */
+            port?: number;
+            /**
+             * @example [
+             *       "/data/media/movies:/data/media/movies",
+             *       "/data/state/services/jellyfin:/config"
+             *     ]
+             */
+            volumes?: string[];
+            /** Format: date-time */
+            updated_at?: string;
+        };
+        ServicesListResponse: {
+            services: components["schemas"]["ServiceStatus"][];
+        };
+        ServicePullProgressEvent: {
+            /** @example jellyfin */
+            service_id: string;
+            /**
+             * Format: float
+             * @example 45
+             */
+            progress_percent: number;
+            /** @example Downloading layers... */
+            status: string;
+        };
+        ServiceHealthChangedEvent: {
+            /** @example jellyfin */
+            service_id: string;
+            /** @example degraded */
+            status: string;
+            /** @example degraded */
+            health: string;
+            /** @example 3 consecutive probe failures over 60s */
+            detail?: string;
+            /** Format: date-time */
+            timestamp?: string;
+        };
+        ServiceErrorEvent: {
+            /** @example jellyfin */
+            service_id: string;
+            /** @example Network unreachable during image pull */
+            message: string;
+            /** Format: date-time */
+            timestamp?: string;
         };
     };
     responses: never;
@@ -1283,6 +1443,182 @@ export interface operations {
             };
             /** @description Administrative privileges required. */
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    getServices: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description List of services. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ServicesListResponse"];
+                };
+            };
+            /** @description Internal supervisor error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    activateService: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Service activated successfully. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ServiceStatus"];
+                };
+            };
+            /** @description Service activation initiated. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ServiceStatus"];
+                };
+            };
+            /** @description Service not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Internal supervisor error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Image pull failed (network or registry error). */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    deactivateService: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Service deactivated successfully. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ServiceStatus"];
+                };
+            };
+            /** @description Service not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Internal supervisor error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    restartService: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Service restarted successfully. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ServiceStatus"];
+                };
+            };
+            /** @description Administrative authentication required. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Service not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Internal supervisor error. */
+            500: {
                 headers: {
                     [name: string]: unknown;
                 };

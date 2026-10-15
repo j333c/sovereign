@@ -80,7 +80,8 @@ paths:
       summary: Real-time SSE telemetry event stream
       description: |
         Streams real-time hardware telemetry updates (CPU, RAM, storage, NAS, optical, GPU)
-        via Server-Sent Events formatted as `event: telemetry.update`.
+        and service lifecycle events (service.pull_progress, service.health_changed, service.error)
+        via Server-Sent Events.
       operationId: getSystemEvents
       responses:
         '200':
@@ -89,12 +90,12 @@ paths:
             text/event-stream:
               schema:
                 type: string
-                description: SSE stream emitting telemetry.update events.
+                description: SSE stream emitting telemetry.update and service.* events.
 
   /api/events:
     get:
       summary: Real-time SSE telemetry stream alias
-      description: Convenience root alias for /api/v1/system/events.
+      description: Convenience root alias for /api/v1/system/events emitting telemetry and service lifecycle events.
       operationId: getEvents
       responses:
         '200':
@@ -103,7 +104,7 @@ paths:
             text/event-stream:
               schema:
                 type: string
-                description: SSE stream emitting telemetry.update events.
+                description: SSE stream emitting telemetry.update and service.* events.
 
 
   /api/v1/storage/disks:
@@ -427,6 +428,139 @@ paths:
                 $ref: '#/components/schemas/ProblemDetails'
         '403':
           description: Administrative privileges required.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/v1/services:
+    get:
+      summary: List managed services
+      description: Returns list of managed appliance services and their container lifecycle states.
+      operationId: getServices
+      responses:
+        '200':
+          description: List of services.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServicesListResponse'
+        '500':
+          description: Internal supervisor error.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/v1/services/{id}/activate:
+    post:
+      summary: Activate managed service on-demand
+      description: Pulls OCI image from official repository on-demand and starts container with bounded memory.
+      operationId: activateService
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            example: jellyfin
+      responses:
+        '200':
+          description: Service activated successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServiceStatus'
+        '202':
+          description: Service activation initiated.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServiceStatus'
+        '404':
+          description: Service not found.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '502':
+          description: Image pull failed (network or registry error).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '500':
+          description: Internal supervisor error.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/v1/services/{id}/deactivate:
+    post:
+      summary: Deactivate managed service
+      description: Stops container runtime and preserves persistent data volumes under /data.
+      operationId: deactivateService
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            example: jellyfin
+      responses:
+        '200':
+          description: Service deactivated successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServiceStatus'
+        '404':
+          description: Service not found.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '500':
+          description: Internal supervisor error.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/v1/services/{id}/restart:
+    post:
+      summary: Restart managed service container
+      description: Restarts container runtime. Requires administrative authentication if configured.
+      operationId: restartService
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            example: jellyfin
+      responses:
+        '200':
+          description: Service restarted successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServiceStatus'
+        '401':
+          description: Administrative authentication required.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '404':
+          description: Service not found.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '500':
+          description: Internal supervisor error.
           content:
             application/problem+json:
               schema:
@@ -1015,5 +1149,128 @@ components:
           format: date-time
           example: '2026-10-15T15:30:00Z'
 
+    ServiceStatus:
+      type: object
+      required:
+        - id
+        - name
+        - status
+        - image
+        - image_downloaded
+        - mem_limit_bytes
+        - mem_reservation_bytes
+      properties:
+        id:
+          type: string
+          example: jellyfin
+        name:
+          type: string
+          example: Jellyfin
+        description:
+          type: string
+          example: Video Streaming
+        status:
+          type: string
+          enum: [inactive, starting, running, degraded, stopped, error]
+          example: inactive
+        health:
+          type: string
+          enum: [healthy, degraded, unhealthy, unknown]
+          example: unknown
+        image:
+          type: string
+          example: jellyfin/jellyfin:12.2.0
+        image_downloaded:
+          type: boolean
+          example: false
+        mem_limit_bytes:
+          type: integer
+          format: int64
+          example: 2147483648
+        mem_reservation_bytes:
+          type: integer
+          format: int64
+          example: 1073741824
+        subpath:
+          type: string
+          example: /media
+        port:
+          type: integer
+          example: 8096
+        volumes:
+          type: array
+          items:
+            type: string
+          example:
+            - /data/media/movies:/data/media/movies
+            - /data/state/services/jellyfin:/config
+        updated_at:
+          type: string
+          format: date-time
 
+    ServicesListResponse:
+      type: object
+      required:
+        - services
+      properties:
+        services:
+          type: array
+          items:
+            $ref: '#/components/schemas/ServiceStatus'
 
+    ServicePullProgressEvent:
+      type: object
+      required:
+        - service_id
+        - progress_percent
+        - status
+      properties:
+        service_id:
+          type: string
+          example: jellyfin
+        progress_percent:
+          type: number
+          format: float
+          example: 45.0
+        status:
+          type: string
+          example: Downloading layers...
+
+    ServiceHealthChangedEvent:
+      type: object
+      required:
+        - service_id
+        - status
+        - health
+      properties:
+        service_id:
+          type: string
+          example: jellyfin
+        status:
+          type: string
+          example: degraded
+        health:
+          type: string
+          example: degraded
+        detail:
+          type: string
+          example: 3 consecutive probe failures over 60s
+        timestamp:
+          type: string
+          format: date-time
+
+    ServiceErrorEvent:
+      type: object
+      required:
+        - service_id
+        - message
+      properties:
+        service_id:
+          type: string
+          example: jellyfin
+        message:
+          type: string
+          example: Network unreachable during image pull
+        timestamp:
+          type: string
+          format: date-time

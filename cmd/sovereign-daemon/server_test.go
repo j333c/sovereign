@@ -1,9 +1,11 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -17,6 +19,7 @@ import (
 	"sovereign/internal/ingress"
 	"sovereign/internal/storage"
 	"sovereign/internal/store"
+	"sovereign/internal/supervisor"
 )
 
 
@@ -1418,6 +1421,322 @@ func TestServer_SSE_EventsAlias(t *testing.T) {
 	}
 }
 
+func TestServer_Services_ListInitial(t *testing.T) {
+	srv, _ := setupTestServer(t)
+	defer srv.Close()
 
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/services", nil)
+	w := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(w, req)
 
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK, got: %d: %s", w.Code, w.Body.String())
+	}
 
+	var res struct {
+		Services []supervisor.ServiceStatus `json:"services"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &res); err != nil {
+		t.Fatalf("failed to decode services response: %v", err)
+	}
+
+	if len(res.Services) != 3 {
+		t.Fatalf("expected 3 services, got %d", len(res.Services))
+	}
+
+	expectedIDs := []string{"jellyfin", "navidrome", "audiobookshelf"}
+	for i, id := range expectedIDs {
+		svc := res.Services[i]
+		if svc.ID != id {
+			t.Errorf("expected service[%d] to be %s, got %s", i, id, svc.ID)
+		}
+		if svc.Status != "inactive" {
+			t.Errorf("expected %s status to be inactive initially, got %s", id, svc.Status)
+		}
+		if svc.ImageDownloaded {
+			t.Errorf("expected %s image_downloaded to be false initially", id)
+		}
+		if svc.MemLimitBytes <= 0 || svc.MemReservationBytes <= 0 {
+			t.Errorf("expected %s to have positive memory bounds", id)
+		}
+	}
+}
+
+func TestServer_Services_Activation_Success_And_SSEProgress(t *testing.T) {
+	srv, _ := setupTestServer(t)
+	defer srv.Close()
+
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Connect SSE listener
+	sseReq, err := http.NewRequestWithContext(ctx, http.MethodGet, ts.URL+"/api/events", nil)
+	if err != nil {
+		t.Fatalf("failed to create SSE request: %v", err)
+	}
+	sseResp, err := http.DefaultClient.Do(sseReq)
+	if err != nil {
+		t.Fatalf("failed to connect to SSE stream: %v", err)
+	}
+	defer sseResp.Body.Close()
+
+	receivedEvents := make(chan string, 32)
+	go func() {
+		scanner := bufio.NewScanner(sseResp.Body)
+		for scanner.Scan() {
+			line := scanner.Text()
+			if strings.HasPrefix(line, "event: ") {
+				eventName := strings.TrimPrefix(line, "event: ")
+				receivedEvents <- eventName
+			}
+		}
+	}()
+
+	// Wait briefly for SSE handshake to complete
+	time.Sleep(50 * time.Millisecond)
+
+	// Activate jellyfin
+	actReq, err := http.NewRequest(http.MethodPost, ts.URL+"/api/v1/services/jellyfin/activate", nil)
+	if err != nil {
+		t.Fatalf("failed to create activate request: %v", err)
+	}
+	actResp, err := http.DefaultClient.Do(actReq)
+	if err != nil {
+		t.Fatalf("failed to execute activate request: %v", err)
+	}
+	defer actResp.Body.Close()
+
+	if actResp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK from activate, got %d", actResp.StatusCode)
+	}
+
+	var svc supervisor.ServiceStatus
+	if err := json.NewDecoder(actResp.Body).Decode(&svc); err != nil {
+		t.Fatalf("failed to decode activate response: %v", err)
+	}
+
+	if svc.ID != "jellyfin" || svc.Status != "running" || !svc.ImageDownloaded {
+		t.Errorf("unexpected activated service state: %+v", svc)
+	}
+
+	// Verify SSE events were captured
+	hasTelemetry := false
+	hasPullProgress := false
+	hasHealthChanged := false
+
+	timeout := time.After(2 * time.Second)
+	for !hasPullProgress || !hasHealthChanged {
+		select {
+		case evt := <-receivedEvents:
+			if evt == "telemetry.update" {
+				hasTelemetry = true
+			}
+			if evt == "service.pull_progress" {
+				hasPullProgress = true
+			}
+			if evt == "service.health_changed" {
+				hasHealthChanged = true
+			}
+		case <-timeout:
+			break
+		}
+	}
+
+	if !hasTelemetry {
+		t.Errorf("expected telemetry.update event over SSE")
+	}
+	if !hasPullProgress {
+		t.Errorf("expected service.pull_progress event over SSE")
+	}
+	if !hasHealthChanged {
+		t.Errorf("expected service.health_changed event over SSE")
+	}
+}
+
+func TestServer_Services_Activation_PullFailure(t *testing.T) {
+	srv, _ := setupTestServer(t)
+	defer srv.Close()
+
+	mockEngine := srv.ServiceManager().Engine().(*supervisor.MockRuntimeEngine)
+	mockEngine.SetImagePresent(supervisor.ImageNavidrome, false)
+	mockEngine.SetPullFailure(supervisor.ImageNavidrome, errors.New("network unreachable"))
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/services/navidrome/activate", nil)
+	w := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadGateway {
+		t.Fatalf("expected 502 Bad Gateway on pull failure, got: %d: %s", w.Code, w.Body.String())
+	}
+
+	ct := w.Header().Get("Content-Type")
+	if !strings.HasPrefix(ct, "application/problem+json") {
+		t.Errorf("expected application/problem+json, got: %s", ct)
+	}
+
+	var problem ProblemDetails
+	if err := json.Unmarshal(w.Body.Bytes(), &problem); err != nil {
+		t.Fatalf("failed to decode problem details: %v", err)
+	}
+	if problem.Status != 502 || problem.Title != "Image Pull Failed" {
+		t.Errorf("unexpected problem details: %+v", problem)
+	}
+
+	// Verify service state remains inactive
+	checkReq := httptest.NewRequest(http.MethodGet, "/api/v1/services", nil)
+	wCheck := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(wCheck, checkReq)
+
+	var listRes struct {
+		Services []supervisor.ServiceStatus `json:"services"`
+	}
+	_ = json.Unmarshal(wCheck.Body.Bytes(), &listRes)
+	for _, s := range listRes.Services {
+		if s.ID == "navidrome" {
+			if s.Status != "inactive" {
+				t.Errorf("expected navidrome to remain inactive, got: %s", s.Status)
+			}
+			if s.ImageDownloaded {
+				t.Errorf("expected image_downloaded false on pull failure")
+			}
+		}
+	}
+}
+
+func TestServer_Services_Deactivation_PreservesVolumes(t *testing.T) {
+	srv, dataDir := setupTestServer(t)
+	defer srv.Close()
+
+	// 1. Activate Jellyfin
+	actReq := httptest.NewRequest(http.MethodPost, "/api/v1/services/jellyfin/activate", nil)
+	wAct := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(wAct, actReq)
+	if wAct.Code != http.StatusOK {
+		t.Fatalf("failed to activate jellyfin: %d", wAct.Code)
+	}
+
+	// 2. Put simulated user media and configuration in volumes
+	testMedia := filepath.Join(dataDir, "media", "movies", "TestMovie.mkv")
+	testConfig := filepath.Join(dataDir, "state", "services", "jellyfin", "config", "prefs.json")
+
+	if err := os.WriteFile(testMedia, []byte("movie-bytes-1234"), 0644); err != nil {
+		t.Fatalf("failed to write media file: %v", err)
+	}
+	if err := os.WriteFile(testConfig, []byte(`{"configured": true}`), 0644); err != nil {
+		t.Fatalf("failed to write config file: %v", err)
+	}
+
+	// 3. Deactivate Jellyfin
+	deactReq := httptest.NewRequest(http.MethodPost, "/api/v1/services/jellyfin/deactivate", nil)
+	wDeact := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(wDeact, deactReq)
+	if wDeact.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK from deactivate, got: %d", wDeact.Code)
+	}
+
+	var deactRes supervisor.ServiceStatus
+	_ = json.Unmarshal(wDeact.Body.Bytes(), &deactRes)
+	if deactRes.Status != "inactive" {
+		t.Errorf("expected status inactive, got: %s", deactRes.Status)
+	}
+
+	// 4. Assert files are strictly preserved
+	if _, err := os.Stat(testMedia); os.IsNotExist(err) {
+		t.Fatalf("CRITICAL: media file %s was deleted during deactivation!", testMedia)
+	}
+	if _, err := os.Stat(testConfig); os.IsNotExist(err) {
+		t.Fatalf("CRITICAL: config file %s was deleted during deactivation!", testConfig)
+	}
+}
+
+func TestServer_Services_Restart_AuthGating(t *testing.T) {
+	srv, _ := setupTestServer(t)
+	defer srv.Close()
+
+	// Before setup is completed: restart is permitted
+	reqBeforeSetup := httptest.NewRequest(http.MethodPost, "/api/v1/services/jellyfin/restart", nil)
+	wBeforeSetup := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(wBeforeSetup, reqBeforeSetup)
+	if wBeforeSetup.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK on restart before setup, got: %d", wBeforeSetup.Code)
+	}
+
+	// Complete first-run setup wizard to provision admin credentials
+	setupPayload := `{
+		"username": "admin",
+		"password": "HouseholdMasterKey2026!",
+		"email": "alex@family.net",
+		"language": "de",
+		"features": ["video", "audio", "dms", "ai"]
+	}`
+	reqSetup := httptest.NewRequest(http.MethodPost, "/api/v1/auth/setup", bytes.NewBufferString(setupPayload))
+	wSetup := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(wSetup, reqSetup)
+	if wSetup.Code != http.StatusOK {
+		t.Fatalf("failed to complete setup: %d", wSetup.Code)
+	}
+
+	cookies := wSetup.Result().Cookies()
+	var sessionCookie *http.Cookie
+	for _, c := range cookies {
+		if c.Name == "sovereign_session" {
+			sessionCookie = c
+			break
+		}
+	}
+	if sessionCookie == nil {
+		t.Fatalf("session cookie missing from setup response")
+	}
+
+	// Post-setup: Unauthenticated restart must be rejected with 401 Unauthorized
+	reqUnauth := httptest.NewRequest(http.MethodPost, "/api/v1/services/jellyfin/restart", nil)
+	wUnauth := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(wUnauth, reqUnauth)
+	if wUnauth.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 Unauthorized for unauthenticated restart post-setup, got: %d", wUnauth.Code)
+	}
+
+	// Post-setup: Authenticated restart with session cookie must succeed with 200 OK
+	reqAuth := httptest.NewRequest(http.MethodPost, "/api/v1/services/jellyfin/restart", nil)
+	reqAuth.AddCookie(sessionCookie)
+	wAuth := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(wAuth, reqAuth)
+	if wAuth.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK for authenticated restart post-setup, got: %d: %s", wAuth.Code, wAuth.Body.String())
+	}
+
+	var res supervisor.ServiceStatus
+	_ = json.Unmarshal(wAuth.Body.Bytes(), &res)
+	if res.ID != "jellyfin" || res.Status != "running" {
+		t.Errorf("unexpected restart response: %+v", res)
+	}
+}
+
+func TestServer_Services_UnknownService(t *testing.T) {
+	srv, _ := setupTestServer(t)
+	defer srv.Close()
+
+	endpoints := []string{
+		"/api/v1/services/nonexistent/activate",
+		"/api/v1/services/nonexistent/deactivate",
+		"/api/v1/services/nonexistent/restart",
+	}
+
+	for _, ep := range endpoints {
+		req := httptest.NewRequest(http.MethodPost, ep, nil)
+		w := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(w, req)
+
+		if w.Code != http.StatusNotFound {
+			t.Errorf("expected 404 Not Found for %s, got: %d", ep, w.Code)
+		}
+
+		ct := w.Header().Get("Content-Type")
+		if !strings.HasPrefix(ct, "application/problem+json") {
+			t.Errorf("expected application/problem+json for %s, got: %s", ep, ct)
+		}
+	}
+}

@@ -21,6 +21,7 @@ import (
 	"sovereign/internal/ingress"
 	"sovereign/internal/storage"
 	"sovereign/internal/store"
+	"sovereign/internal/supervisor"
 )
 
 const (
@@ -90,6 +91,12 @@ type Config struct {
 	AuthMgr           *auth.Manager
 	HardwareCollector hardware.Collector
 	TelemetryInterval time.Duration
+	ServiceMgr        *supervisor.ServiceManager
+}
+
+type sseEvent struct {
+	Event string `json:"event"`
+	Data  any    `json:"data"`
 }
 
 // Server is the appliance core supervisor HTTP daemon.
@@ -105,9 +112,13 @@ type Server struct {
 	router            *http.ServeMux
 	ingressMgr        ingress.IngressManager
 	mdnsService       *ingress.MDNSService
+	serviceMgr        *supervisor.ServiceManager
 	stopChan          chan struct{}
 	closeOnce         sync.Once
 	mu                sync.RWMutex
+
+	eventsMu         sync.RWMutex
+	eventSubscribers map[chan sseEvent]struct{}
 }
 
 
@@ -210,6 +221,26 @@ func NewServer(cfg Config) (*Server, error) {
 		ingressMgr:        cfg.IngressMgr,
 		mdnsService:       cfg.MDNSService,
 		stopChan:          make(chan struct{}),
+		eventSubscribers:  make(map[chan sseEvent]struct{}),
+	}
+
+	if cfg.ServiceMgr == nil {
+		var engine supervisor.RuntimeEngine
+		sockPath := "/var/run/docker.sock"
+		if _, err := os.Stat(sockPath); err == nil {
+			engine = supervisor.NewDockerEngine(sockPath, cfg.Logger)
+		} else {
+			engine = supervisor.NewMockRuntimeEngine()
+		}
+
+		s.serviceMgr = supervisor.NewServiceManager(supervisor.ServiceManagerConfig{
+			DataDir:          cfg.DataDir,
+			Engine:           engine,
+			Logger:           cfg.Logger,
+			EventBroadcaster: s.BroadcastEvent,
+		})
+	} else {
+		s.serviceMgr = cfg.ServiceMgr
 	}
 
 	s.routes()
@@ -290,6 +321,11 @@ func (s *Server) StartBackgroundServices(ctx context.Context) {
 			s.logger.Warn("failed to prune expired sessions on startup", "error", err)
 		}
 	}
+
+	// 6. Start service watchdog probing
+	if s.serviceMgr != nil {
+		s.serviceMgr.StartWatchdog(ctx)
+	}
 }
 
 // BootManager returns the active BootManager instance.
@@ -320,7 +356,29 @@ func (s *Server) HardwareCollector() hardware.Collector {
 	return s.hardwareCollector
 }
 
-// Close closes database handles and frees ingress/mDNS/storage resources.
+// ServiceManager returns the active ServiceManager instance.
+func (s *Server) ServiceManager() *supervisor.ServiceManager {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.serviceMgr
+}
+
+// BroadcastEvent emits an SSE event to all actively connected SSE clients.
+func (s *Server) BroadcastEvent(event string, data any) {
+	s.eventsMu.RLock()
+	defer s.eventsMu.RUnlock()
+
+	evt := sseEvent{Event: event, Data: data}
+	for ch := range s.eventSubscribers {
+		select {
+		case ch <- evt:
+		default:
+			// Non-blocking drop if client channel buffer is full
+		}
+	}
+}
+
+// Close closes database handles and frees ingress/mDNS/storage/supervisor resources.
 func (s *Server) Close() error {
 	s.closeOnce.Do(func() {
 		if s.stopChan != nil {
@@ -330,6 +388,10 @@ func (s *Server) Close() error {
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	if s.serviceMgr != nil {
+		_ = s.serviceMgr.Close()
+	}
 
 	if s.storageEngine != nil {
 		_ = s.storageEngine.Close()
@@ -391,6 +453,12 @@ func (s *Server) routes() {
 	// Protected administrative settings endpoints
 	s.router.Handle("GET /api/v1/settings", s.authMgr.RequireAdmin(http.HandlerFunc(s.handleGetSettings)))
 	s.router.Handle("POST /api/v1/settings", s.authMgr.RequireAdmin(http.HandlerFunc(s.handleUpdateSettings)))
+
+	// Managed Services lifecycle endpoints
+	s.router.HandleFunc("GET /api/v1/services", s.handleListServices)
+	s.router.HandleFunc("POST /api/v1/services/{id}/activate", s.handleActivateService)
+	s.router.HandleFunc("POST /api/v1/services/{id}/deactivate", s.handleDeactivateService)
+	s.router.HandleFunc("POST /api/v1/services/{id}/restart", s.requireSetupOrAdmin(s.handleRestartService))
 }
 
 
@@ -636,6 +704,17 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("X-Accel-Buffering", "no")
 
+	eventCh := make(chan sseEvent, 64)
+	s.eventsMu.Lock()
+	s.eventSubscribers[eventCh] = struct{}{}
+	s.eventsMu.Unlock()
+
+	defer func() {
+		s.eventsMu.Lock()
+		delete(s.eventSubscribers, eventCh)
+		s.eventsMu.Unlock()
+	}()
+
 	// Push initial event immediately on connection
 	initEvt := s.getTelemetryUpdate(r.Context())
 	if data, err := json.Marshal(initEvt); err == nil {
@@ -658,6 +737,15 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 			return
 		case <-s.stopChan:
 			return
+		case evt := <-eventCh:
+			data, err := json.Marshal(evt.Data)
+			if err != nil {
+				continue
+			}
+			if _, err := fmt.Fprintf(w, "event: %s\ndata: %s\n\n", evt.Event, data); err != nil {
+				return
+			}
+			flusher.Flush()
 		case <-ticker.C:
 			evt := s.getTelemetryUpdate(r.Context())
 			data, err := json.Marshal(evt)
@@ -1003,3 +1091,137 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func extractServiceID(r *http.Request, action string) string {
+	id := r.PathValue("id")
+	if id != "" {
+		return id
+	}
+	// Fallback parsing for /api/v1/services/{id}/{action} or /api/v1/services/{id}
+	path := strings.Trim(r.URL.Path, "/")
+	parts := strings.Split(path, "/")
+	for i, p := range parts {
+		if p == "services" && i+1 < len(parts) {
+			val := parts[i+1]
+			if val != action {
+				return val
+			}
+		}
+	}
+	return ""
+}
+
+func (s *Server) handleListServices(w http.ResponseWriter, r *http.Request) {
+	s.mu.RLock()
+	mgr := s.serviceMgr
+	s.mu.RUnlock()
+
+	if mgr == nil {
+		s.writeProblem(w, http.StatusInternalServerError, "Internal Server Error", "Service manager is not initialized", r.URL.Path)
+		return
+	}
+
+	services, err := mgr.ListServices(r.Context())
+	if err != nil {
+		s.logger.Error("failed to list services", "error", err)
+		s.writeProblem(w, http.StatusInternalServerError, "Internal Server Error", "Failed to retrieve service list", r.URL.Path)
+		return
+	}
+
+	s.writeJSON(w, http.StatusOK, map[string]any{
+		"services": services,
+	})
+}
+
+func (s *Server) handleActivateService(w http.ResponseWriter, r *http.Request) {
+	s.mu.RLock()
+	mgr := s.serviceMgr
+	s.mu.RUnlock()
+
+	if mgr == nil {
+		s.writeProblem(w, http.StatusInternalServerError, "Internal Server Error", "Service manager is not initialized", r.URL.Path)
+		return
+	}
+
+	id := extractServiceID(r, "activate")
+	if id == "" {
+		s.writeProblem(w, http.StatusBadRequest, "Invalid Request", "Service ID missing in request path", r.URL.Path)
+		return
+	}
+
+	svc, err := mgr.ActivateService(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, supervisor.ErrServiceNotFound) {
+			s.writeProblem(w, http.StatusNotFound, "Service Not Found", fmt.Sprintf("Service '%s' is not defined", id), r.URL.Path)
+			return
+		}
+		if errors.Is(err, supervisor.ErrPullFailed) {
+			s.writeProblem(w, http.StatusBadGateway, "Image Pull Failed", fmt.Sprintf("Failed to pull OCI image for '%s': %v", id, err), r.URL.Path)
+			return
+		}
+		s.logger.Error("failed to activate service", "service", id, "error", err)
+		s.writeProblem(w, http.StatusInternalServerError, "Internal Server Error", fmt.Sprintf("Failed to activate service '%s': %v", id, err), r.URL.Path)
+		return
+	}
+
+	s.writeJSON(w, http.StatusOK, svc)
+}
+
+func (s *Server) handleDeactivateService(w http.ResponseWriter, r *http.Request) {
+	s.mu.RLock()
+	mgr := s.serviceMgr
+	s.mu.RUnlock()
+
+	if mgr == nil {
+		s.writeProblem(w, http.StatusInternalServerError, "Internal Server Error", "Service manager is not initialized", r.URL.Path)
+		return
+	}
+
+	id := extractServiceID(r, "deactivate")
+	if id == "" {
+		s.writeProblem(w, http.StatusBadRequest, "Invalid Request", "Service ID missing in request path", r.URL.Path)
+		return
+	}
+
+	svc, err := mgr.DeactivateService(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, supervisor.ErrServiceNotFound) {
+			s.writeProblem(w, http.StatusNotFound, "Service Not Found", fmt.Sprintf("Service '%s' is not defined", id), r.URL.Path)
+			return
+		}
+		s.logger.Error("failed to deactivate service", "service", id, "error", err)
+		s.writeProblem(w, http.StatusInternalServerError, "Internal Server Error", fmt.Sprintf("Failed to deactivate service '%s': %v", id, err), r.URL.Path)
+		return
+	}
+
+	s.writeJSON(w, http.StatusOK, svc)
+}
+
+func (s *Server) handleRestartService(w http.ResponseWriter, r *http.Request) {
+	s.mu.RLock()
+	mgr := s.serviceMgr
+	s.mu.RUnlock()
+
+	if mgr == nil {
+		s.writeProblem(w, http.StatusInternalServerError, "Internal Server Error", "Service manager is not initialized", r.URL.Path)
+		return
+	}
+
+	id := extractServiceID(r, "restart")
+	if id == "" {
+		s.writeProblem(w, http.StatusBadRequest, "Invalid Request", "Service ID missing in request path", r.URL.Path)
+		return
+	}
+
+	svc, err := mgr.RestartService(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, supervisor.ErrServiceNotFound) {
+			s.writeProblem(w, http.StatusNotFound, "Service Not Found", fmt.Sprintf("Service '%s' is not defined", id), r.URL.Path)
+			return
+		}
+		s.logger.Error("failed to restart service", "service", id, "error", err)
+		s.writeProblem(w, http.StatusInternalServerError, "Internal Server Error", fmt.Sprintf("Failed to restart service '%s': %v", id, err), r.URL.Path)
+		return
+	}
+
+	s.writeJSON(w, http.StatusOK, svc)
+}

@@ -25,6 +25,11 @@ export type SessionResponse = components["schemas"]["SessionResponse"];
 export type LogoutResponse = components["schemas"]["LogoutResponse"];
 export type SettingsResponse = components["schemas"]["SettingsResponse"];
 export type TelemetryUpdate = components["schemas"]["TelemetryUpdate"];
+export type ServiceStatus = components["schemas"]["ServiceStatus"];
+export type ServicesListResponse = components["schemas"]["ServicesListResponse"];
+export type ServicePullProgressEvent = components["schemas"]["ServicePullProgressEvent"];
+export type ServiceHealthChangedEvent = components["schemas"]["ServiceHealthChangedEvent"];
+export type ServiceErrorEvent = components["schemas"]["ServiceErrorEvent"];
 
 /**
  * ProblemDetailsError represents an RFC 7807 problem details error thrown by the daemon API.
@@ -254,6 +259,40 @@ export class SovereignApiClient {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(settings),
+    });
+  }
+
+  /**
+   * List managed appliance services and their lifecycle states.
+   */
+  async getServices(): Promise<ServicesListResponse> {
+    return this.request<ServicesListResponse>("/api/v1/services");
+  }
+
+  /**
+   * Activate a managed service on-demand.
+   */
+  async activateService(id: string): Promise<ServiceStatus> {
+    return this.request<ServiceStatus>(`/api/v1/services/${encodeURIComponent(id)}/activate`, {
+      method: "POST",
+    });
+  }
+
+  /**
+   * Deactivate a running service while preserving persistent data volumes.
+   */
+  async deactivateService(id: string): Promise<ServiceStatus> {
+    return this.request<ServiceStatus>(`/api/v1/services/${encodeURIComponent(id)}/deactivate`, {
+      method: "POST",
+    });
+  }
+
+  /**
+   * Restart a service container runtime.
+   */
+  async restartService(id: string): Promise<ServiceStatus> {
+    return this.request<ServiceStatus>(`/api/v1/services/${encodeURIComponent(id)}/restart`, {
+      method: "POST",
     });
   }
 

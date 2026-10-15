@@ -45,8 +45,8 @@ development_status:
   epic-1-retrospective: optional
 
 
-  epic-2: backlog
-  2-1-on-demand-container-lifecycle-engine-health-probing: backlog
+  epic-2: in-progress
+  2-1-on-demand-container-lifecycle-engine-health-probing: review
   2-2-servicecard-statusbadge-appliance-ui-controls: backlog
   2-3-in-house-video-streaming-integration-jellyfin: backlog
   2-4-music-audiobook-streaming-integration-navidrome-audiobookshe: backlog

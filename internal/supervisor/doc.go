@@ -11,21 +11,11 @@ import (
 	"context"
 )
 
-// ServiceState represents the operational status of a managed container spoke.
-type ServiceState string
-
-const (
-	ServiceStateRunning   ServiceState = "running"
-	ServiceStateDegraded  ServiceState = "degraded"
-	ServiceStateStopped   ServiceState = "stopped"
-	ServiceStateStarting  ServiceState = "starting"
-	ServiceStateRollback  ServiceState = "rollback"
-)
-
 // Supervisor defines the container orchestration contract for sovereign-daemon.
 type Supervisor interface {
-	StartService(ctx context.Context, name string) error
-	StopService(ctx context.Context, name string) error
-	RestartService(ctx context.Context, name string) error
-	GetServiceState(ctx context.Context, name string) (ServiceState, error)
+	ListServices(ctx context.Context) ([]ServiceStatus, error)
+	GetService(ctx context.Context, id string) (*ServiceStatus, error)
+	ActivateService(ctx context.Context, id string) (*ServiceStatus, error)
+	DeactivateService(ctx context.Context, id string) (*ServiceStatus, error)
+	RestartService(ctx context.Context, id string) (*ServiceStatus, error)
 }
