@@ -601,7 +601,7 @@ paths:
   /api/v1/services/{id}/refresh:
     post:
       summary: Refresh media service library
-      description: Triggers immediate library refresh webhook in the specified media service (e.g. Jellyfin).
+      description: Triggers immediate library refresh webhook in the specified media service (e.g. Jellyfin, Navidrome, Audiobookshelf).
       operationId: refreshService
       parameters:
         - name: id

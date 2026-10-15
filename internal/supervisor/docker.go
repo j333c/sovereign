@@ -508,6 +508,19 @@ func (d *DockerEngine) StartContainer(ctx context.Context, spec ContainerSpec) e
 		"HostConfig":   hostConfig,
 	}
 
+	if len(spec.Env) > 0 {
+		var envList []string
+		keys := make([]string, 0, len(spec.Env))
+		for k := range spec.Env {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			envList = append(envList, fmt.Sprintf("%s=%s", k, spec.Env[k]))
+		}
+		createPayload["Env"] = envList
+	}
+
 	payloadBytes, err := json.Marshal(createPayload)
 	if err != nil {
 		return err

@@ -1978,22 +1978,24 @@ func TestServer_Jellyfin_ActivationAndRefresh(t *testing.T) {
 		t.Errorf("expected alias /video/refresh to succeed and invoke refresh, got status: %d", wAlias.Code)
 	}
 
-	// 7b. Refresh unsupported active service (navidrome) returns 400 Bad Request
-	_, err = srv.ServiceManager().ActivateService(context.Background(), supervisor.ServiceNavidrome)
-	if err != nil {
-		t.Fatalf("failed to activate navidrome: %v", err)
+	// 7b. Refresh unsupported active service returns 400 Bad Request
+	srv.ServiceManager().RegisterServiceDef(supervisor.ServiceDef{
+		ID:   "custom",
+		Name: "Custom Unsupported",
+	})
+	srv.ServiceManager().SetServiceStatusForTest("custom", supervisor.StatusRunning)
+
+	reqCustomRefresh := httptest.NewRequest(http.MethodPost, "/api/v1/services/custom/refresh", nil)
+	wCustomRefresh := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(wCustomRefresh, reqCustomRefresh)
+	if wCustomRefresh.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 Bad Request when refreshing unsupported service custom, got: %d", wCustomRefresh.Code)
 	}
-	reqNavidromeRefresh := httptest.NewRequest(http.MethodPost, "/api/v1/services/navidrome/refresh", nil)
-	wNavidromeRefresh := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(wNavidromeRefresh, reqNavidromeRefresh)
-	if wNavidromeRefresh.Code != http.StatusBadRequest {
-		t.Errorf("expected 400 Bad Request when refreshing unsupported service navidrome, got: %d", wNavidromeRefresh.Code)
-	}
-	var navProblem ProblemDetails
-	if err := json.Unmarshal(wNavidromeRefresh.Body.Bytes(), &navProblem); err != nil {
-		t.Errorf("failed to parse problem details for navidrome refresh: %v", err)
-	} else if navProblem.Status != http.StatusBadRequest || !strings.Contains(navProblem.Detail, "does not support library refresh") {
-		t.Errorf("unexpected problem details for unsupported service refresh: %+v", navProblem)
+	var customProblem ProblemDetails
+	if err := json.Unmarshal(wCustomRefresh.Body.Bytes(), &customProblem); err != nil {
+		t.Errorf("failed to parse problem details for custom refresh: %v", err)
+	} else if customProblem.Status != http.StatusBadRequest || !strings.Contains(customProblem.Detail, "does not support library refresh") {
+		t.Errorf("unexpected problem details for unsupported service refresh: %+v", customProblem)
 	}
 
 	// 8. Place media file in movies directory and deactivate Jellyfin
@@ -2018,5 +2020,323 @@ func TestServer_Jellyfin_ActivationAndRefresh(t *testing.T) {
 	srv.Handler().ServeHTTP(wRefreshPostDeact, reqRefreshPostDeact)
 	if wRefreshPostDeact.Code != http.StatusServiceUnavailable {
 		t.Errorf("expected 503 after deactivation, got: %d", wRefreshPostDeact.Code)
+	}
+}
+
+func TestServer_AudioServices_ActivationAndRefresh(t *testing.T) {
+	tempDir := t.TempDir()
+	dataDir := filepath.Join(tempDir, "data")
+
+	stateDir := filepath.Join(dataDir, "state")
+	_ = os.MkdirAll(stateDir, 0755)
+	_ = os.WriteFile(filepath.Join(stateDir, "boot_state.json"), []byte(`{"clean_shutdown": true}`), 0644)
+
+	mockEngine := supervisor.NewMockRuntimeEngine()
+	mockIngress := &mockIngressManager{
+		status: map[string]any{"connected": true, "status": "ok"},
+	}
+
+	svcMgr := supervisor.NewServiceManager(supervisor.ServiceManagerConfig{
+		DataDir: dataDir,
+		Engine:  mockEngine,
+	})
+
+	srv, err := NewServer(Config{
+		DataDir:    dataDir,
+		IngressMgr: mockIngress,
+		ServiceMgr: svcMgr,
+	})
+	if err != nil {
+		t.Fatalf("failed to create test server: %v", err)
+	}
+	defer srv.Close()
+
+	// 1. Initial Inactive State checks
+	reqNavInactive := httptest.NewRequest(http.MethodPost, "/api/v1/services/navidrome/refresh", nil)
+	wNavInactive := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(wNavInactive, reqNavInactive)
+	if wNavInactive.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503 for inactive navidrome refresh, got: %d", wNavInactive.Code)
+	}
+
+	reqAbsInactive := httptest.NewRequest(http.MethodPost, "/api/v1/services/audiobookshelf/refresh", nil)
+	wAbsInactive := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(wAbsInactive, reqAbsInactive)
+	if wAbsInactive.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503 for inactive audiobookshelf refresh, got: %d", wAbsInactive.Code)
+	}
+
+	// 2. Pre-create user media to verify preservation
+	musicDir := filepath.Join(dataDir, "media", "music")
+	_ = os.MkdirAll(musicDir, 0755)
+	existingMusic := filepath.Join(musicDir, "song.flac")
+	_ = os.WriteFile(existingMusic, []byte("flac-music-data"), 0644)
+
+	audiobooksDir := filepath.Join(dataDir, "media", "audiobooks")
+	_ = os.MkdirAll(audiobooksDir, 0755)
+	existingBook := filepath.Join(audiobooksDir, "novel.m4b")
+	_ = os.WriteFile(existingBook, []byte("m4b-book-data"), 0644)
+
+	absConfigDir := filepath.Join(dataDir, "state", "services", "audiobookshelf", "config")
+	_ = os.MkdirAll(absConfigDir, 0755)
+	existingUserDB := filepath.Join(absConfigDir, "users.sqlite")
+	_ = os.WriteFile(existingUserDB, []byte("user-sqlite-db"), 0644)
+
+	// 3. Activate Navidrome
+	reqNavAct := httptest.NewRequest(http.MethodPost, "/api/v1/services/navidrome/activate", nil)
+	wNavAct := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(wNavAct, reqNavAct)
+	if wNavAct.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK activating Navidrome, got: %d: %s", wNavAct.Code, wNavAct.Body.String())
+	}
+	var navStatus supervisor.ServiceStatus
+	_ = json.Unmarshal(wNavAct.Body.Bytes(), &navStatus)
+	if navStatus.ID != "navidrome" || navStatus.Status != "running" || navStatus.Port != 4533 || navStatus.Subpath != "/music" {
+		t.Errorf("unexpected Navidrome status: %+v", navStatus)
+	}
+
+	// Verify Navidrome directories and file preservation
+	navDataDir := filepath.Join(dataDir, "state", "services", "navidrome", "data")
+	if fi, err := os.Stat(navDataDir); err != nil || !fi.IsDir() {
+		t.Errorf("expected navidrome state dir to exist: %v", err)
+	}
+	if musicContent, err := os.ReadFile(existingMusic); err != nil || string(musicContent) != "flac-music-data" {
+		t.Errorf("existing music file modified or missing: %v", err)
+	}
+
+	// 4. Activate Audiobookshelf
+	reqAbsAct := httptest.NewRequest(http.MethodPost, "/api/v1/services/audiobookshelf/activate", nil)
+	wAbsAct := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(wAbsAct, reqAbsAct)
+	if wAbsAct.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK activating Audiobookshelf, got: %d: %s", wAbsAct.Code, wAbsAct.Body.String())
+	}
+	var absStatus supervisor.ServiceStatus
+	_ = json.Unmarshal(wAbsAct.Body.Bytes(), &absStatus)
+	if absStatus.ID != "audiobookshelf" || absStatus.Status != "running" || absStatus.Port != 13378 || absStatus.Subpath != "/audiobooks" {
+		t.Errorf("unexpected Audiobookshelf status: %+v", absStatus)
+	}
+
+	// Verify Audiobookshelf directories and persistence preservation
+	absMetaDir := filepath.Join(dataDir, "state", "services", "audiobookshelf", "metadata")
+	if fi, err := os.Stat(absMetaDir); err != nil || !fi.IsDir() {
+		t.Errorf("expected audiobookshelf metadata dir to exist: %v", err)
+	}
+	if bookContent, err := os.ReadFile(existingBook); err != nil || string(bookContent) != "m4b-book-data" {
+		t.Errorf("existing audiobook file modified or missing: %v", err)
+	}
+	if dbContent, err := os.ReadFile(existingUserDB); err != nil || string(dbContent) != "user-sqlite-db" {
+		t.Errorf("existing user db modified or missing: %v", err)
+	}
+
+	// 5. Ingress Status includes both spoke routes
+	reqIngress := httptest.NewRequest(http.MethodGet, "/api/v1/system/ingress", nil)
+	wIngress := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(wIngress, reqIngress)
+	var ingressRes IngressStatusResponse
+	_ = json.Unmarshal(wIngress.Body.Bytes(), &ingressRes)
+
+	hasNavRoute := false
+	hasAbsRoute := false
+	for _, r := range ingressRes.Routes {
+		if r.Service == "navidrome" && r.Subpath == "/music" && r.Upstream == "sovereign-navidrome:4533" {
+			hasNavRoute = true
+		}
+		if r.Service == "audiobookshelf" && r.Subpath == "/audiobooks" && r.Upstream == "sovereign-audiobookshelf:13378" {
+			hasAbsRoute = true
+		}
+	}
+	if !hasNavRoute {
+		t.Errorf("expected navidrome route in ingress status: %+v", ingressRes.Routes)
+	}
+	if !hasAbsRoute {
+		t.Errorf("expected audiobookshelf route in ingress status: %+v", ingressRes.Routes)
+	}
+
+	// 6. Test Refresh endpoints when active
+	navRefreshed := false
+	srv.ServiceManager().AudioProvisioner().NavidromeRefreshFunc = func(ctx context.Context) error {
+		navRefreshed = true
+		return nil
+	}
+	reqNavRefresh := httptest.NewRequest(http.MethodPost, "/api/v1/services/navidrome/refresh", nil)
+	wNavRefresh := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(wNavRefresh, reqNavRefresh)
+	if wNavRefresh.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK refreshing navidrome, got: %d", wNavRefresh.Code)
+	}
+	if !navRefreshed {
+		t.Errorf("expected navidrome refresh webhook to be dispatched")
+	}
+
+	// Test alias 'music'
+	navRefreshed = false
+	reqMusicRefresh := httptest.NewRequest(http.MethodPost, "/api/v1/services/music/refresh", nil)
+	wMusicRefresh := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(wMusicRefresh, reqMusicRefresh)
+	if wMusicRefresh.Code != http.StatusOK || !navRefreshed {
+		t.Errorf("expected alias /music/refresh to trigger navidrome refresh")
+	}
+
+	absRefreshed := false
+	srv.ServiceManager().AudioProvisioner().AudiobookshelfRefreshFunc = func(ctx context.Context) error {
+		absRefreshed = true
+		return nil
+	}
+	reqAbsRefresh := httptest.NewRequest(http.MethodPost, "/api/v1/services/audiobookshelf/refresh", nil)
+	wAbsRefresh := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(wAbsRefresh, reqAbsRefresh)
+	if wAbsRefresh.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK refreshing audiobookshelf, got: %d", wAbsRefresh.Code)
+	}
+	if !absRefreshed {
+		t.Errorf("expected audiobookshelf refresh webhook to be dispatched")
+	}
+
+	// Test alias 'audiobooks'
+	absRefreshed = false
+	reqBooksRefresh := httptest.NewRequest(http.MethodPost, "/api/v1/services/audiobooks/refresh", nil)
+	wBooksRefresh := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(wBooksRefresh, reqBooksRefresh)
+	if wBooksRefresh.Code != http.StatusOK || !absRefreshed {
+		t.Errorf("expected alias /audiobooks/refresh to trigger audiobookshelf refresh")
+	}
+
+	// 7. Deactivate and verify volume preservation
+	reqDeactNav := httptest.NewRequest(http.MethodPost, "/api/v1/services/navidrome/deactivate", nil)
+	wDeactNav := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(wDeactNav, reqDeactNav)
+	if wDeactNav.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK deactivating navidrome, got: %d", wDeactNav.Code)
+	}
+	if _, err := os.Stat(existingMusic); os.IsNotExist(err) {
+		t.Fatalf("CRITICAL: music file was deleted during navidrome deactivation!")
+	}
+
+	reqDeactAbs := httptest.NewRequest(http.MethodPost, "/api/v1/services/audiobookshelf/deactivate", nil)
+	wDeactAbs := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(wDeactAbs, reqDeactAbs)
+	if wDeactAbs.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK deactivating audiobookshelf, got: %d", wDeactAbs.Code)
+	}
+	if _, err := os.Stat(existingBook); os.IsNotExist(err) {
+		t.Fatalf("CRITICAL: audiobook file was deleted during audiobookshelf deactivation!")
+	}
+	if _, err := os.Stat(existingUserDB); os.IsNotExist(err) {
+		t.Fatalf("CRITICAL: user database was deleted during audiobookshelf deactivation!")
+	}
+
+	// Subsequent refresh post-deactivation returns 503
+	reqRefreshPostNav := httptest.NewRequest(http.MethodPost, "/api/v1/services/navidrome/refresh", nil)
+	wRefreshPostNav := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(wRefreshPostNav, reqRefreshPostNav)
+	if wRefreshPostNav.Code != http.StatusServiceUnavailable {
+		t.Errorf("expected 503 for navidrome refresh after deactivation, got: %d", wRefreshPostNav.Code)
+	}
+}
+
+func TestServer_AudioBundle_ActivationAndRefresh(t *testing.T) {
+	tempDir := t.TempDir()
+	dataDir := filepath.Join(tempDir, "data")
+
+	stateDir := filepath.Join(dataDir, "state")
+	_ = os.MkdirAll(stateDir, 0755)
+	_ = os.WriteFile(filepath.Join(stateDir, "boot_state.json"), []byte(`{"clean_shutdown": true}`), 0644)
+
+	mockEngine := supervisor.NewMockRuntimeEngine()
+	mockIngress := &mockIngressManager{
+		status: map[string]any{"connected": true, "status": "ok"},
+	}
+
+	svcMgr := supervisor.NewServiceManager(supervisor.ServiceManagerConfig{
+		DataDir: dataDir,
+		Engine:  mockEngine,
+	})
+
+	srv, err := NewServer(Config{
+		DataDir:    dataDir,
+		IngressMgr: mockIngress,
+		ServiceMgr: svcMgr,
+	})
+	if err != nil {
+		t.Fatalf("failed to create test server: %v", err)
+	}
+	defer srv.Close()
+
+	// 1. Activate audio bundle via POST /api/v1/services/audio/activate
+	reqBundle := httptest.NewRequest(http.MethodPost, "/api/v1/services/audio/activate", nil)
+	wBundle := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(wBundle, reqBundle)
+
+	if wBundle.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK activating audio bundle, got: %d: %s", wBundle.Code, wBundle.Body.String())
+	}
+
+	// Verify both Navidrome and Audiobookshelf are running
+	navSvc, err := svcMgr.GetService(context.Background(), supervisor.ServiceNavidrome)
+	if err != nil || navSvc.Status != supervisor.StatusRunning {
+		t.Errorf("expected navidrome to be running, got: %+v, err: %v", navSvc, err)
+	}
+	absSvc, err := svcMgr.GetService(context.Background(), supervisor.ServiceAudiobookshelf)
+	if err != nil || absSvc.Status != supervisor.StatusRunning {
+		t.Errorf("expected audiobookshelf to be running, got: %+v, err: %v", absSvc, err)
+	}
+
+	// 2. Refresh bundle via POST /api/v1/services/audio/refresh
+	navRefreshed := false
+	absRefreshed := false
+	svcMgr.AudioProvisioner().NavidromeRefreshFunc = func(ctx context.Context) error {
+		navRefreshed = true
+		return nil
+	}
+	svcMgr.AudioProvisioner().AudiobookshelfRefreshFunc = func(ctx context.Context) error {
+		absRefreshed = true
+		return nil
+	}
+
+	reqRefresh := httptest.NewRequest(http.MethodPost, "/api/v1/services/audio/refresh", nil)
+	wRefresh := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(wRefresh, reqRefresh)
+
+	if wRefresh.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK refreshing audio bundle, got: %d: %s", wRefresh.Code, wRefresh.Body.String())
+	}
+	if !navRefreshed || !absRefreshed {
+		t.Errorf("expected both navidrome (%v) and audiobookshelf (%v) to be refreshed", navRefreshed, absRefreshed)
+	}
+
+	// 3. Test Pull Failure in audio bundle returns 502 Bad Gateway
+	tempDir2 := t.TempDir()
+	dataDir2 := filepath.Join(tempDir2, "data")
+	stateDir2 := filepath.Join(dataDir2, "state")
+	_ = os.MkdirAll(stateDir2, 0755)
+	_ = os.WriteFile(filepath.Join(stateDir2, "boot_state.json"), []byte(`{"clean_shutdown": true}`), 0644)
+
+	mockEngineFail := supervisor.NewMockRuntimeEngine()
+	mockEngineFail.SetPullFailure(supervisor.ImageNavidrome, errors.New("pull failure for navidrome"))
+
+	srvFail, err := NewServer(Config{
+		DataDir:    dataDir2,
+		ServiceMgr: supervisor.NewServiceManager(supervisor.ServiceManagerConfig{
+			DataDir: dataDir2,
+			Engine:  mockEngineFail,
+		}),
+	})
+	if err != nil {
+		t.Fatalf("failed to create fail server: %v", err)
+	}
+	defer srvFail.Close()
+
+	reqFail := httptest.NewRequest(http.MethodPost, "/api/v1/services/audio/activate", nil)
+	wFail := httptest.NewRecorder()
+	srvFail.Handler().ServeHTTP(wFail, reqFail)
+
+	if wFail.Code != http.StatusBadGateway {
+		t.Errorf("expected 502 Bad Gateway on pull failure in audio bundle, got: %d: %s", wFail.Code, wFail.Body.String())
+	}
+	var prob ProblemDetails
+	_ = json.Unmarshal(wFail.Body.Bytes(), &prob)
+	if prob.Title != "Image Pull Failed" {
+		t.Errorf("expected title 'Image Pull Failed', got: %s", prob.Title)
 	}
 }

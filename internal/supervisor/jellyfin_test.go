@@ -522,12 +522,10 @@ func TestSupervisor_Jellyfin_RefreshService_Lifecycle(t *testing.T) {
 	}
 
 	// 6. Test unsupported service returns ErrInvalidOperation
-	_, err = mgr.ActivateService(ctx, ServiceNavidrome)
-	if err != nil {
-		t.Fatalf("failed to activate Navidrome: %v", err)
-	}
-	errUnsupported := mgr.RefreshService(ctx, ServiceNavidrome)
+	mgr.definitions["unsupported"] = ServiceDef{ID: "unsupported", Name: "Unsupported"}
+	mgr.statuses["unsupported"] = &ServiceStatus{ID: "unsupported", Status: StatusRunning}
+	errUnsupported := mgr.RefreshService(ctx, "unsupported")
 	if !errors.Is(errUnsupported, ErrInvalidOperation) {
-		t.Errorf("expected ErrInvalidOperation for navidrome refresh, got: %v", errUnsupported)
+		t.Errorf("expected ErrInvalidOperation for unsupported refresh, got: %v", errUnsupported)
 	}
 }

@@ -262,3 +262,106 @@ func TestCaddyClient_GetStatus_SuccessAndError(t *testing.T) {
 		t.Errorf("expected status=error and connected=false, got %v", errStatus)
 	}
 }
+
+func TestCaddyClient_AudioRoutes_MusicAndAudiobooks(t *testing.T) {
+	client := NewCaddyClient("http://caddy:2019", nil)
+
+	routes := []RouteConfig{
+		{
+			Service: "navidrome",
+			Port:    4533,
+			Subpath: "/music",
+		},
+		{
+			Service: "audiobookshelf",
+			Port:    13378,
+			Subpath: "/audiobooks",
+		},
+	}
+
+	cfg := client.BuildCaddyConfig(routes)
+
+	apps, ok := cfg["apps"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected apps block in caddy config")
+	}
+	httpApp, ok := apps["http"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected http app block in caddy config")
+	}
+	servers, ok := httpApp["servers"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected servers block in caddy config")
+	}
+
+	srv0, ok := servers["srv0"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected srv0 server block in caddy config")
+	}
+	caddyRoutes, ok := srv0["routes"].([]map[string]any)
+	if !ok {
+		t.Fatalf("expected routes list in srv0 block")
+	}
+
+	// Route 0: /api
+	// Route 1: /music -> sovereign-navidrome:4533
+	// Route 2: /audiobooks -> sovereign-audiobookshelf:13378
+	// Route 3: fallback web
+	if len(caddyRoutes) != 4 {
+		t.Fatalf("expected 4 routes in caddy config, got %d", len(caddyRoutes))
+	}
+
+	// Verify Navidrome spoke route
+	musicRoute := caddyRoutes[1]
+	if musicRoute["@id"] != "route-spoke-music" {
+		t.Errorf("expected music route id route-spoke-music, got %v", musicRoute["@id"])
+	}
+	musicHandles, ok := musicRoute["handle"].([]map[string]any)
+	if !ok || len(musicHandles) < 2 {
+		t.Fatalf("expected 2 handles in music route")
+	}
+	if musicHandles[0]["handler"] != "rewrite" || musicHandles[0]["strip_path_prefix"] != "/music" {
+		t.Errorf("expected rewrite with strip_path_prefix /music, got %v", musicHandles[0])
+	}
+	musicProxyUpstreams := musicHandles[1]["upstreams"].([]map[string]any)
+	if musicProxyUpstreams[0]["dial"] != "sovereign-navidrome:4533" {
+		t.Errorf("expected dial sovereign-navidrome:4533, got %v", musicProxyUpstreams[0]["dial"])
+	}
+
+	// Verify Audiobookshelf spoke route
+	absRoute := caddyRoutes[2]
+	if absRoute["@id"] != "route-spoke-audiobooks" {
+		t.Errorf("expected audiobooks route id route-spoke-audiobooks, got %v", absRoute["@id"])
+	}
+	absHandles, ok := absRoute["handle"].([]map[string]any)
+	if !ok || len(absHandles) < 2 {
+		t.Fatalf("expected 2 handles in audiobooks route")
+	}
+	if absHandles[0]["handler"] != "rewrite" || absHandles[0]["strip_path_prefix"] != "/audiobooks" {
+		t.Errorf("expected rewrite with strip_path_prefix /audiobooks, got %v", absHandles[0])
+	}
+	absProxyUpstreams := absHandles[1]["upstreams"].([]map[string]any)
+	if absProxyUpstreams[0]["dial"] != "sovereign-audiobookshelf:13378" {
+		t.Errorf("expected dial sovereign-audiobookshelf:13378, got %v", absProxyUpstreams[0]["dial"])
+	}
+
+	// Verify direct port listener srv_4533
+	srv4533, ok := servers["srv_4533"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected servers to contain srv_4533")
+	}
+	listen4533 := srv4533["listen"].([]string)
+	if len(listen4533) != 1 || listen4533[0] != ":4533" {
+		t.Errorf("expected srv_4533 listen [:4533], got %v", listen4533)
+	}
+
+	// Verify direct port listener srv_13378
+	srv13378, ok := servers["srv_13378"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected servers to contain srv_13378")
+	}
+	listen13378 := srv13378["listen"].([]string)
+	if len(listen13378) != 1 || listen13378[0] != ":13378" {
+		t.Errorf("expected srv_13378 listen [:13378], got %v", listen13378)
+	}
+}

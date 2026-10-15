@@ -239,6 +239,7 @@ type ServiceManagerConfig struct {
 	EventBroadcaster    EventBroadcaster
 	HardwareOpts        HardwareProbeOptions
 	JellyfinProvisioner *JellyfinProvisioner
+	AudioProvisioner    *AudioProvisioner
 }
 
 // ServiceManager orchestrates on-demand container lifecycles, health probing, and volume preservation.
@@ -256,6 +257,7 @@ type ServiceManager struct {
 	stopOnce            sync.Once
 	timeNow             func() time.Time
 	jellyfinProvisioner *JellyfinProvisioner
+	audioProvisioner    *AudioProvisioner
 }
 
 // NewServiceManager constructs and initializes the appliance service lifecycle manager.
@@ -273,6 +275,11 @@ func NewServiceManager(cfg ServiceManagerConfig) *ServiceManager {
 	jp := cfg.JellyfinProvisioner
 	if jp == nil {
 		jp = NewJellyfinProvisioner(cfg.DataDir, cfg.Logger, cfg.HardwareOpts)
+	}
+
+	ap := cfg.AudioProvisioner
+	if ap == nil {
+		ap = NewAudioProvisioner(cfg.DataDir, cfg.Logger)
 	}
 
 	timeFunc := cfg.WatchdogConfig.TimeFunc
@@ -362,6 +369,7 @@ func NewServiceManager(cfg ServiceManagerConfig) *ServiceManager {
 		activating:          make(map[string]bool),
 		timeNow:             timeFunc,
 		jellyfinProvisioner: jp,
+		audioProvisioner:    ap,
 	}
 }
 
@@ -416,8 +424,10 @@ func (m *ServiceManager) resolveID(id string) string {
 	switch id {
 	case "video":
 		return ServiceJellyfin
-	case "audio":
+	case "audio", "music":
 		return ServiceNavidrome
+	case "audiobook", "audiobooks", "books":
+		return ServiceAudiobookshelf
 	default:
 		return id
 	}
@@ -446,6 +456,18 @@ func (m *ServiceManager) GetService(ctx context.Context, id string) (*ServiceSta
 
 // ActivateService pulls the image on-demand, streams SSE progress, synthesizes Compose spec, and starts the container.
 func (m *ServiceManager) ActivateService(ctx context.Context, id string) (*ServiceStatus, error) {
+	if id == "audio" {
+		navSvc, err := m.ActivateService(ctx, ServiceNavidrome)
+		if err != nil {
+			return nil, fmt.Errorf("audio bundle failed to activate %s: %w", ServiceNavidrome, err)
+		}
+		if _, err := m.ActivateService(ctx, ServiceAudiobookshelf); err != nil {
+			m.logger.Warn("audio bundle failed to activate audiobookshelf", "error", err)
+			return nil, fmt.Errorf("audio bundle failed to activate %s: %w", ServiceAudiobookshelf, err)
+		}
+		return navSvc, nil
+	}
+
 	id = m.resolveID(id)
 	m.mu.Lock()
 	if m.activating[id] {
@@ -539,6 +561,7 @@ func (m *ServiceManager) ActivateService(ctx context.Context, id string) (*Servi
 
 	var devices []string
 	var udpPorts map[int]int
+	var env map[string]string
 
 	if id == ServiceJellyfin && m.jellyfinProvisioner != nil {
 		jellyfinRes, err := m.jellyfinProvisioner.Provision(ctx)
@@ -549,6 +572,15 @@ func (m *ServiceManager) ActivateService(ctx context.Context, id string) (*Servi
 		}
 		devices = jellyfinRes.Devices
 		udpPorts = jellyfinRes.UDPPorts
+	} else if (id == ServiceNavidrome || id == ServiceAudiobookshelf) && m.audioProvisioner != nil {
+		audioRes, err := m.audioProvisioner.Provision(ctx, id)
+		if err != nil {
+			m.logger.Error("failed to provision audio specialized environment", "service", id, "error", err)
+			emitError(fmt.Sprintf("Failed to provision %s: %v", id, err))
+			return nil, fmt.Errorf("failed to provision %s: %w", id, err)
+		}
+		env = audioRes.Env
+		devices = audioRes.Devices
 	}
 
 	// 3. Synthesize Compose specification
@@ -562,6 +594,7 @@ func (m *ServiceManager) ActivateService(ctx context.Context, id string) (*Servi
 		Devices:                devices,
 		Volumes:                volumes,
 		Networks:               []string{"sovereign-ingress", "sovereign-control"},
+		Env:                    env,
 	}
 
 	if _, err := SynthesizeComposeSpec(m.dataDir, containerSpec); err != nil {
@@ -785,8 +818,28 @@ func (m *ServiceManager) JellyfinProvisioner() *JellyfinProvisioner {
 	return m.jellyfinProvisioner
 }
 
+// AudioProvisioner returns the provisioner used for audio services.
+func (m *ServiceManager) AudioProvisioner() *AudioProvisioner {
+	return m.audioProvisioner
+}
+
 // RefreshService triggers a library scan or metadata refresh for the specified service.
 func (m *ServiceManager) RefreshService(ctx context.Context, id string) error {
+	if id == "audio" {
+		errNav := m.RefreshService(ctx, ServiceNavidrome)
+		errAbs := m.RefreshService(ctx, ServiceAudiobookshelf)
+		if errNav != nil && errAbs != nil {
+			return fmt.Errorf("audio bundle refresh failed: navidrome: %w, audiobookshelf: %v", errNav, errAbs)
+		}
+		if errNav != nil {
+			return errNav
+		}
+		if errAbs != nil {
+			return errAbs
+		}
+		return nil
+	}
+
 	id = m.resolveID(id)
 	m.mu.RLock()
 	_, exists := m.definitions[id]
@@ -801,15 +854,49 @@ func (m *ServiceManager) RefreshService(ctx context.Context, id string) error {
 	}
 	m.mu.RUnlock()
 
-	if id != ServiceJellyfin {
+	switch id {
+	case ServiceJellyfin:
+		if m.jellyfinProvisioner != nil {
+			return m.jellyfinProvisioner.TriggerLibraryRefresh(ctx)
+		}
+		return nil
+	case ServiceNavidrome:
+		if m.audioProvisioner != nil {
+			return m.audioProvisioner.TriggerNavidromeRefresh(ctx)
+		}
+		return nil
+	case ServiceAudiobookshelf:
+		if m.audioProvisioner != nil {
+			return m.audioProvisioner.TriggerAudiobookshelfRefresh(ctx)
+		}
+		return nil
+	default:
 		return fmt.Errorf("%w: service does not support library refresh", ErrInvalidOperation)
 	}
+}
 
-	if m.jellyfinProvisioner != nil {
-		return m.jellyfinProvisioner.TriggerLibraryRefresh(ctx)
+// RegisterServiceDef registers a custom service definition.
+func (m *ServiceManager) RegisterServiceDef(def ServiceDef) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.definitions[def.ID] = def
+	if _, exists := m.statuses[def.ID]; !exists {
+		m.statuses[def.ID] = &ServiceStatus{
+			ID:     def.ID,
+			Name:   def.Name,
+			Status: StatusInactive,
+			Health: HealthUnknown,
+		}
 	}
+}
 
-	return nil
+// SetServiceStatusForTest overrides a service status for testing.
+func (m *ServiceManager) SetServiceStatusForTest(id, status string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if st, exists := m.statuses[id]; exists {
+		st.Status = status
+	}
 }
 
 // Close stops background routines.
