@@ -11,20 +11,23 @@
        --surface: #FFFFFF;
        --border: #E5E7EB;
        --border-subtle: #F1F5F9;
+       --border-active: #CBD5E1;
        --text-primary: #0F172A;
        --text-muted: #64748B;
-       --text-faint: #94A3B8;
+       --text-faint: #475569;
        --action-primary: #0F172A;
        --action-primary-hover: #1E293B;
        --action-primary-fg: #FFFFFF;
        --status-green: #10B981;
        --status-green-bg: #ECFDF5;
        --status-green-fg: #065F46;
-       --status-green-border: #A7F3D0;
        --status-amber: #F59E0B;
        --status-amber-bg: #FFFBEB;
        --status-amber-fg: #92400E;
-       --status-amber-border: #FDE68A;
+       --status-red: #EF4444;
+       --status-red-bg: #FEF2F2;
+       --status-red-fg: #991B1B;
+       --focus-ring: #2563EB;
        --radius: 8px;
     */
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -41,6 +44,12 @@
     a { color: inherit; text-decoration: none; }
     button { font-family: inherit; cursor: pointer; border: none; background: none; }
 
+    /* Focus Visible Accessibility */
+    :focus-visible {
+      outline: 2px solid #2563EB !important;
+      outline-offset: 2px !important;
+    }
+
     /* Layout Containers */
     .app-header {
       height: 64px;
@@ -51,14 +60,18 @@
       justify-content: space-between;
       padding: 0 28px;
       flex-shrink: 0;
+      z-index: 10;
     }
     .main-viewport {
       flex: 1;
+      max-width: 1440px;
+      width: 100%;
+      margin: 0 auto;
       padding: 24px 28px;
       display: flex;
       flex-direction: column;
       gap: 20px;
-      overflow: hidden;
+      overflow-y: auto;
     }
     .hardware-bar {
       height: 56px;
@@ -71,6 +84,7 @@
       flex-shrink: 0;
       font-size: 13px;
       color: #64748B;
+      z-index: 10;
     }
 
     /* Header Components */
@@ -101,14 +115,15 @@
       font-size: 12px;
       font-weight: 500;
     }
-    .health-dot { width: 7px; height: 7px; background: #10B981; border-radius: 50%; }
+    .health-dot { font-size: 10px; color: #10B981; }
 
     .header-actions { display: flex; align-items: center; gap: 12px; }
     .header-btn {
       display: inline-flex;
       align-items: center;
       gap: 6px;
-      padding: 7px 12px;
+      padding: 8px 14px;
+      min-height: 40px;
       border: 1px solid #E5E7EB;
       background: #FFFFFF;
       border-radius: 8px;
@@ -128,7 +143,7 @@
       flex-shrink: 0;
     }
     .services-title { font-size: 15px; font-weight: 600; color: #0F172A; letter-spacing: -0.2px; }
-    .services-count { font-size: 13px; color: #64748B; }
+    .services-count { font-size: 13px; color: #475569; }
 
     .service-grid {
       display: grid;
@@ -168,16 +183,16 @@
       color: #0F172A;
     }
     .service-name { font-size: 16px; font-weight: 600; color: #0F172A; letter-spacing: -0.2px; }
-    .service-tech { font-size: 12px; color: #94A3B8; font-weight: 400; }
+    .service-tech { font-size: 12px; color: #475569; font-weight: 500; }
 
     .card-overflow-btn {
-      width: 28px;
-      height: 28px;
+      width: 44px;
+      height: 44px;
       border-radius: 6px;
       display: flex;
       align-items: center;
       justify-content: center;
-      color: #94A3B8;
+      color: #64748B;
       transition: background 0.15s, color 0.15s;
     }
     .card-overflow-btn:hover { background: #F1F5F9; color: #0F172A; }
@@ -193,6 +208,7 @@
     .meta-stat { font-size: 22px; font-weight: 600; color: #0F172A; letter-spacing: -0.5px; }
     .meta-sub { font-size: 13px; color: #64748B; }
 
+    /* Status Badge with Color Independence */
     .status-pill {
       display: inline-flex;
       align-items: center;
@@ -206,10 +222,7 @@
     .status-pill.green { background: #ECFDF5; color: #065F46; border: 1px solid #A7F3D0; }
     .status-pill.amber { background: #FFFBEB; color: #92400E; border: 1px solid #FDE68A; }
     .status-pill.red { background: #FEF2F2; color: #991B1B; border: 1px solid #FECACA; }
-    .pill-dot { width: 6px; height: 6px; border-radius: 50%; }
-    .pill-dot.green { background: #10B981; }
-    .pill-dot.amber { background: #F59E0B; }
-    .pill-dot.red { background: #EF4444; }
+    .status-symbol { font-size: 10px; line-height: 1; }
 
     .card-action-btn {
       display: flex;
@@ -226,43 +239,8 @@
       transition: background 0.15s;
     }
     .card-action-btn:hover { background: #1E293B; }
-    .card-action-btn.secondary {
-      background: #F8F9FA;
-      color: #0F172A;
-      border: 1px solid #E5E7EB;
-    }
-    .card-action-btn.secondary:hover { background: #F1F5F9; border-color: #CBD5E1; }
 
-    /* Extensible Add-on Placeholder Card */
-    .service-card.add-placeholder {
-      border: 1.5px dashed #CBD5E1;
-      background: transparent;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      text-align: center;
-      gap: 10px;
-      cursor: pointer;
-    }
-    .service-card.add-placeholder:hover {
-      border-color: #94A3B8;
-      background: #FFFFFF;
-    }
-    .add-icon-circle {
-      width: 36px;
-      height: 36px;
-      border-radius: 50%;
-      background: #F1F5F9;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      color: #64748B;
-    }
-    .add-text-title { font-size: 14px; font-weight: 500; color: #0F172A; }
-    .add-text-sub { font-size: 12px; color: #94A3B8; }
-
-    /* Quick Ingestion Link Banner (Non-intrusive) */
+    /* Ingestion Link Banner */
     .ingest-link-banner {
       background: #FFFFFF;
       border: 1px solid #E5E7EB;
@@ -277,8 +255,8 @@
     .ingest-left { display: flex; align-items: center; gap: 10px; }
     .ingest-tag {
       background: #F1F5F9;
-      color: #475569;
-      font-weight: 500;
+      color: #0F172A;
+      font-weight: 600;
       padding: 2px 7px;
       border-radius: 4px;
       font-size: 11px;
@@ -289,6 +267,7 @@
       display: inline-flex;
       align-items: center;
       gap: 4px;
+      min-height: 44px;
     }
 
     /* Hardware Telemetry Bar */
@@ -314,7 +293,8 @@
       display: inline-flex;
       align-items: center;
       gap: 6px;
-      padding: 4px 10px;
+      padding: 5px 12px;
+      min-height: 36px;
       background: #F8F9FA;
       border: 1px solid #E5E7EB;
       border-radius: 9999px;
@@ -323,12 +303,19 @@
       color: #0F172A;
     }
 
-    /* Responsive adjustments for Mobile */
-    @media (max-width: 899px) {
+    /* Tablet Responsive (768px - 1023px) */
+    @media (max-width: 1023px) and (min-width: 768px) {
+      body { height: auto; overflow-y: auto; }
+      .service-grid { grid-template-columns: repeat(2, 1fr); gap: 16px; }
+    }
+
+    /* Mobile Responsive (< 768px) */
+    @media (max-width: 767px) {
       body { height: auto; overflow-y: auto; }
       .app-header { padding: 0 16px; }
       .main-viewport { padding: 16px; overflow: visible; }
       .service-grid { grid-template-columns: 1fr; gap: 12px; }
+      .card-action-btn { height: 44px; }
       .hardware-bar {
         height: auto;
         flex-direction: column;
@@ -337,36 +324,37 @@
         align-items: flex-start;
       }
       .telemetry-group { flex-wrap: wrap; gap: 14px; }
+      .ingest-link-banner { flex-direction: column; align-items: flex-start; gap: 10px; }
     }
   </style>
 </head>
 <body>
 
   <!-- App Header -->
-  <header class="app-header">
+  <header class="app-header" role="banner">
     <div class="brand-group">
-      <div class="logo-crest">S</div>
+      <div class="logo-crest" aria-hidden="true">S</div>
       <div>
         <div class="brand-title">Sovereign</div>
       </div>
-      <div class="health-badge">
-        <span class="health-dot"></span>
+      <div class="health-badge" role="status">
+        <span class="health-dot" aria-hidden="true">●</span>
         All Systems Operational
       </div>
     </div>
 
     <div class="header-actions">
       <!-- Direct Link to Standalone Dropzone -->
-      <a href="dropzone.html" class="header-btn" title="Open Media Dropzone">
-        <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+      <a href="dropzone.html" class="header-btn" title="Open Media Dropzone" aria-label="Open Media Dropzone">
+        <svg aria-hidden="true" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
           <path stroke-linecap="round" stroke-linejoin="round" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
         </svg>
         <span>Drop Media</span>
       </a>
 
       <!-- Direct Link to Central Settings -->
-      <a href="settings.html" class="header-btn" title="System Settings">
-        <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+      <a href="settings.html" class="header-btn" title="System Settings" aria-label="System Settings">
+        <svg aria-hidden="true" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
           <path stroke-linecap="round" stroke-linejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
           <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
         </svg>
@@ -374,185 +362,187 @@
       </a>
 
       <!-- Language Selector -->
-      <button class="header-btn" style="padding: 7px 10px;">
+      <button class="header-btn" style="padding: 7px 10px;" aria-label="Change Language, currently English">
         <span style="font-size: 12px; font-weight: 600;">EN</span>
       </button>
     </div>
   </header>
 
-  <!-- Main Viewport (Zero-scroll on 1080p Desktop) -->
-  <main class="main-viewport">
+  <!-- Main Viewport (Zero-scroll on 1080p Desktop, Auto-scroll for 5+ services) -->
+  <main class="main-viewport" role="main">
     
     <div class="services-header">
-      <div class="services-title">Installed Services</div>
-      <div class="services-count">4 active · 1 available</div>
+      <h1 class="services-title">Installed Services</h1>
+      <div class="services-count">4 active services</div>
     </div>
 
     <!-- Extensible Service Grid -->
     <div class="service-grid">
 
       <!-- 1. Video Streaming (Jellyfin) -->
-      <div class="service-card">
+      <section class="service-card" aria-labelledby="srv-video">
         <div class="card-top">
           <div class="card-identity">
-            <div class="service-icon">
+            <div class="service-icon" aria-hidden="true">
               <svg width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
                 <path stroke-linecap="round" stroke-linejoin="round" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
               </svg>
             </div>
             <div>
-              <div class="service-name">Video Streaming</div>
+              <h2 id="srv-video" class="service-name">Video Streaming</h2>
               <div class="service-tech">Jellyfin</div>
             </div>
           </div>
-          <button class="card-overflow-btn" title="Options">•••</button>
+          <button class="card-overflow-btn" title="Options for Video Streaming" aria-label="Options for Video Streaming">•••</button>
         </div>
 
         <div class="card-meta">
           <div class="status-pill green">
-            <span class="pill-dot green"></span>
-            Running Healthy
+            <span class="status-symbol" aria-hidden="true">●</span>
+            <span>Running Healthy</span>
           </div>
           <div class="meta-stat">124 Movies</div>
-          <div class="meta-sub">48 TV Shows · 4K Transcoding Ready</div>
+          <div class="meta-sub">48 TV Shows · 4K Playback Ready</div>
         </div>
 
-        <a href="#open-jellyfin" target="_blank" class="card-action-btn">
+        <a href="#open-jellyfin" target="_blank" class="card-action-btn" aria-label="Open Video Streaming UI in new tab">
           Open Streaming UI
-          <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+          <svg aria-hidden="true" width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
             <path stroke-linecap="round" stroke-linejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
           </svg>
         </a>
-      </div>
+      </section>
 
       <!-- 2. Audio & Audiobooks (Navidrome / Audiobookshelf) -->
-      <div class="service-card">
+      <section class="service-card" aria-labelledby="srv-audio">
         <div class="card-top">
           <div class="card-identity">
-            <div class="service-icon">
+            <div class="service-icon" aria-hidden="true">
               <svg width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
                 <path stroke-linecap="round" stroke-linejoin="round" d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3" />
               </svg>
             </div>
             <div>
-              <div class="service-name">Audio & Books</div>
+              <h2 id="srv-audio" class="service-name">Audio & Books</h2>
               <div class="service-tech">Audiobookshelf & Navidrome</div>
             </div>
           </div>
-          <button class="card-overflow-btn" title="Options">•••</button>
+          <button class="card-overflow-btn" title="Options for Audio & Books" aria-label="Options for Audio & Books">•••</button>
         </div>
 
         <div class="card-meta">
           <div class="status-pill green">
-            <span class="pill-dot green"></span>
-            Running Healthy
+            <span class="status-symbol" aria-hidden="true">●</span>
+            <span>Running Healthy</span>
           </div>
           <div class="meta-stat">1,420 Tracks</div>
-          <div class="meta-sub">34 Audiobooks · Subsonic API Active</div>
+          <div class="meta-sub">34 Audiobooks · Phone Sync Ready</div>
         </div>
 
-        <a href="#open-audio" target="_blank" class="card-action-btn">
+        <a href="#open-audio" target="_blank" class="card-action-btn" aria-label="Open Audio UI in new tab">
           Open Audio UI
-          <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+          <svg aria-hidden="true" width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
             <path stroke-linecap="round" stroke-linejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
           </svg>
         </a>
-      </div>
+      </section>
 
       <!-- 3. Document Archive (Paperless-ngx) -->
-      <div class="service-card">
+      <section class="service-card" aria-labelledby="srv-dms">
         <div class="card-top">
           <div class="card-identity">
-            <div class="service-icon">
+            <div class="service-icon" aria-hidden="true">
               <svg width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
                 <path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
               </svg>
             </div>
             <div>
-              <div class="service-name">Document Archive</div>
+              <h2 id="srv-dms" class="service-name">Document Archive</h2>
               <div class="service-tech">Paperless-ngx</div>
             </div>
           </div>
-          <button class="card-overflow-btn" title="Options">•••</button>
+          <button class="card-overflow-btn" title="Options for Document Archive" aria-label="Options for Document Archive">•••</button>
         </div>
 
         <div class="card-meta">
           <div class="status-pill green">
-            <span class="pill-dot green"></span>
-            Running Healthy
+            <span class="status-symbol" aria-hidden="true">●</span>
+            <span>Running Healthy</span>
           </div>
           <div class="meta-stat">142 Documents</div>
-          <div class="meta-sub">OCR Active · Mail Polling Connected</div>
+          <div class="meta-sub">Search Active · Mailbox Connected</div>
         </div>
 
-        <a href="#open-paperless" target="_blank" class="card-action-btn">
+        <a href="#open-paperless" target="_blank" class="card-action-btn" aria-label="Open Document Archive in new tab">
           Open Archive UI
-          <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+          <svg aria-hidden="true" width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
             <path stroke-linecap="round" stroke-linejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
           </svg>
         </a>
-      </div>
+      </section>
 
       <!-- 4. Local AI (Open WebUI) -->
-      <div class="service-card">
+      <section class="service-card" aria-labelledby="srv-ai">
         <div class="card-top">
           <div class="card-identity">
-            <div class="service-icon">
+            <div class="service-icon" aria-hidden="true">
               <svg width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
                 <path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
               </svg>
             </div>
             <div>
-              <div class="service-name">Local AI Chat</div>
+              <h2 id="srv-ai" class="service-name">Local AI Chat</h2>
               <div class="service-tech">Open WebUI & Ollama</div>
             </div>
           </div>
-          <button class="card-overflow-btn" title="Options">•••</button>
+          <button class="card-overflow-btn" title="Options for Local AI Chat" aria-label="Options for Local AI Chat">•••</button>
         </div>
 
         <div class="card-meta">
           <div class="status-pill amber">
-            <span class="pill-dot amber"></span>
-            Starting AI Model...
+            <span class="status-symbol" aria-hidden="true">◆</span>
+            <span>Starting AI Model...</span>
           </div>
-          <div class="meta-stat">Private RAG</div>
-          <div class="meta-sub">Reloading model into GPU VRAM (<=5s)</div>
+          <div class="meta-stat">Private Search</div>
+          <div class="meta-sub">Warming up private AI (ready in 5s)</div>
         </div>
 
-        <a href="#open-openwebui" target="_blank" class="card-action-btn">
+        <a href="#open-openwebui" target="_blank" class="card-action-btn" aria-label="Open AI Chat UI in new tab">
           Open AI Chat UI
-          <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+          <svg aria-hidden="true" width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
             <path stroke-linecap="round" stroke-linejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
           </svg>
         </a>
-      </div>
+      </section>
 
     </div>
 
     <!-- Household Ingestion Banner -->
-    <div class="ingest-link-banner">
+    <aside class="ingest-link-banner" aria-label="Household upload shortcuts">
       <div class="ingest-left">
         <span class="ingest-tag">Household Access</span>
-        <span>Need to upload files or discs? Use the standalone dropzone or SMB network path <code>\\sovereign\drop</code></span>
+        <span>Need to upload media or discs? Use the standalone dropzone or network folder <code>\\sovereign\drop</code></span>
       </div>
       <a href="dropzone.html" class="ingest-btn">
         Open Standalone Dropzone &rarr;
       </a>
-    </div>
+    </aside>
 
   </main>
 
   <!-- Hardware Telemetry Bar -->
-  <footer class="hardware-bar">
+  <footer class="hardware-bar" role="contentinfo" aria-live="polite">
     <div class="telemetry-group">
       <div class="telemetry-item">
-        <span class="telemetry-label">NVMe Storage:</span>
-        <div class="telemetry-progress"><div class="telemetry-fill"></div></div>
+        <span class="telemetry-label">Internal Storage:</span>
+        <div class="telemetry-progress" role="progressbar" aria-valuenow="52" aria-valuemin="0" aria-valuemax="100" aria-label="Internal storage capacity 52 percent used">
+          <div class="telemetry-fill"></div>
+        </div>
         <span class="telemetry-value">4.2 TB / 8.0 TB</span>
       </div>
       <div class="telemetry-item">
         <span class="telemetry-label">Home NAS:</span>
-        <span class="telemetry-value" style="color: #10B981;">Connected (10 GbE)</span>
+        <span class="telemetry-value" style="color: #065F46;">Connected</span>
       </div>
       <div class="telemetry-item">
         <span class="telemetry-label">Optical Drive:</span>
@@ -561,10 +551,10 @@
     </div>
 
     <div class="telemetry-group">
-      <a href="settings.html#gpu" class="gpu-schedule-pill" title="Adjust GPU Allocation Schedule">
-        <span>☀️</span>
+      <a href="settings.html#gpu" class="gpu-schedule-pill" title="Adjust Smart Hardware Sharing Schedule" aria-label="Smart Hardware Sharing Schedule: Daytime Mode, AI Priority">
+        <span aria-hidden="true">☀️</span>
         <span>Daytime Mode: <strong>AI Priority</strong></span>
-        <span style="color: #94A3B8; font-size: 11px;">07:00–01:00</span>
+        <span style="color: #475569; font-size: 11px;">07:00–01:00</span>
       </a>
       <div>
         <span>Appliance Version: <strong>2026.10</strong></span>

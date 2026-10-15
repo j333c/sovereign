@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>UX Design Validation Report: Sovereign Home Server</title>
+<style>
+  :root {
+    --bg: #fafaf9;
+    --surface: #ffffff;
+    --border: #e7e5e4;
+    --text: #1c1917;
+    --muted: #78716c;
+
+    --verdict-strong: #16a34a;
+    --verdict-adequate: #65a30d;
+    --verdict-thin: #d97706;
+    --verdict-broken: #dc2626;
+
+    --sev-low: #64748b;
+    --sev-medium: #ca8a04;
+    --sev-high: #ea580c;
+    --sev-critical: #dc2626;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.6;
+    font-size: 15px;
+  }
+  .container { max-width: 960px; margin: 0 auto; padding: 32px 24px 64px; }
+
+  header.report-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 24px;
+    padding-bottom: 24px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 32px;
+  }
+  .report-title h1 { margin: 0 0 6px; font-size: 26px; font-weight: 700; letter-spacing: -0.02em; }
+  .report-meta { color: var(--muted); font-size: 13px; }
+
+  .overall-verdict {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 6px;
+    min-width: 160px;
+  }
+  .verdict-pill {
+    display: inline-block;
+    padding: 6px 14px;
+    border-radius: 9999px;
+    font-size: 13px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: #fff;
+  }
+  .verdict-strong   { background: var(--verdict-strong); }
+  .verdict-adequate { background: var(--verdict-adequate); }
+
+  .summary-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px 24px;
+    margin-bottom: 32px;
+  }
+  .summary-card h2 { margin: 0 0 10px; font-size: 15px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+  .summary-card p { margin: 0 0 8px; }
+  .summary-card p:last-child { margin: 0; }
+
+  section.dimension {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    margin-bottom: 16px;
+    overflow: hidden;
+  }
+  summary.dimension-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px 20px;
+    cursor: pointer;
+    user-select: none;
+    font-weight: 600;
+  }
+  summary.dimension-header:hover { background: #f5f5f4; }
+  .dimension-title { display: flex; align-items: center; gap: 12px; font-size: 16px; }
+  .dimension-body {
+    padding: 0 20px 20px;
+    border-top: 1px solid var(--border);
+  }
+  .dimension-desc { color: var(--muted); font-size: 14px; margin: 14px 0; }
+
+  .finding {
+    border-left: 3px solid var(--border);
+    padding: 10px 14px;
+    margin: 10px 0;
+    background: #fafaf9;
+    border-radius: 0 6px 6px 0;
+    font-size: 14px;
+  }
+  .finding.sev-resolved { border-left-color: var(--verdict-strong); }
+  .finding-badge {
+    display: inline-block;
+    padding: 2px 7px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    color: #fff;
+    margin-right: 6px;
+  }
+  .badge-resolved { background: var(--verdict-strong); }
+
+  footer.report-footer {
+    margin-top: 48px;
+    padding-top: 24px;
+    border-top: 1px solid var(--border);
+    color: var(--muted);
+    font-size: 12px;
+    display: flex;
+    justify-content: space-between;
+  }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <header class="report-header">
+    <div class="report-title">
+      <h1>UX Validation Report: Sovereign Home Server</h1>
+      <div class="report-meta">
+        Workspace: <code>ux-sovereign-2026-10-15</code> · Date: 2026-10-15
+      </div>
+    </div>
+    <div class="overall-verdict">
+      <span class="verdict-pill verdict-strong">Strong (All Resolved)</span>
+      <span style="font-size: 12px; color: var(--muted);">Pass 1 + Pass 2 Complete</span>
+    </div>
+  </header>
+
+  <div class="summary-card">
+    <h2>Executive Summary</h2>
+    <p>The Sovereign UX spine pair (<code>DESIGN.md</code> and <code>EXPERIENCE.md</code>) and companion interactive mockups were evaluated across three specialized lenses: <strong>Rubric Walker</strong>, <strong>Accessibility & Usability Lens</strong>, and <strong>Responsive & Viewport Lens</strong>.</p>
+    <p>Zero critical architectural flaws were found. All 8 findings across traceability, contrast, focus states, and responsive scaling were resolved directly into the final spines and companion HTML mockups.</p>
+  </div>
+
+  <main>
+    <!-- Dimension 1 -->
+    <details class="dimension" open>
+      <summary class="dimension-header">
+        <span class="dimension-title">1. Flow Coverage & Traceability</span>
+        <span class="verdict-pill verdict-strong" style="font-size:11px; padding:3px 8px;">Strong</span>
+      </summary>
+      <div class="dimension-body">
+        <p class="dimension-desc">Ensures 100% parity with PRD user journeys with named protagonists, numbered steps, climaxes, and failure paths.</p>
+        <div class="finding sev-resolved">
+          <span class="finding-badge badge-resolved">Resolved</span>
+          <strong>Traceability Harmonization:</strong> Updated all 5 journey titles in <code>EXPERIENCE.md</code> to mirror <code>prd.md</code> verbatim (UJ-1 through UJ-5).
+        </div>
+      </div>
+    </details>
+
+    <!-- Dimension 2 -->
+    <details class="dimension" open>
+      <summary class="dimension-header">
+        <span class="dimension-title">2. Color Contrast & Tokens</span>
+        <span class="verdict-pill verdict-strong" style="font-size:11px; padding:3px 8px;">Strong</span>
+      </summary>
+      <div class="dimension-body">
+        <p class="dimension-desc">WCAG 2.1 AA/AAA compliance across text, backgrounds, and interactive controls.</p>
+        <div class="finding sev-resolved">
+          <span class="finding-badge badge-resolved">Resolved</span>
+          <strong>Faint Text Contrast:</strong> Darkened <code>text-faint</code> token from <code>#94A3B8</code> to <code>#475569</code>, lifting contrast ratio to 7.0:1 (exceeding WCAG AAA).
+        </div>
+      </div>
+    </details>
+
+    <!-- Dimension 3 -->
+    <details class="dimension" open>
+      <summary class="dimension-header">
+        <span class="dimension-title">3. Color Independence & Status Micro-Shapes</span>
+        <span class="verdict-pill verdict-strong" style="font-size:11px; padding:3px 8px;">Strong</span>
+      </summary>
+      <div class="dimension-body">
+        <p class="dimension-desc">Status indicators must not rely on color alone (WCAG 1.4.1).</p>
+        <div class="finding sev-resolved">
+          <span class="finding-badge badge-resolved">Resolved</span>
+          <strong>Geometric Micro-Shapes:</strong> Paired semantic colors with distinct shapes: Green circle (●), Amber diamond (◆), Red triangle (▲).
+        </div>
+      </div>
+    </details>
+
+    <!-- Dimension 4 -->
+    <details class="dimension" open>
+      <summary class="dimension-header">
+        <span class="dimension-title">4. Keyboard Focus & Screen Reader Semantics</span>
+        <span class="verdict-pill verdict-strong" style="font-size:11px; padding:3px 8px;">Strong</span>
+      </summary>
+      <div class="dimension-body">
+        <p class="dimension-desc">WCAG 2.1.1, 2.4.7 focus visibility and ARIA attributes.</p>
+        <div class="finding sev-resolved">
+          <span class="finding-badge badge-resolved">Resolved</span>
+          <strong>Focus Rings & ARIA:</strong> Added explicit <code>:focus-visible</code> styles (<code>2px solid #2563EB</code>), labeled toggle switches via <code>aria-labelledby</code>, and added <code>aria-live="polite"</code> for telemetry.
+        </div>
+      </div>
+    </details>
+
+    <!-- Dimension 5 -->
+    <details class="dimension" open>
+      <summary class="dimension-header">
+        <span class="dimension-title">5. Responsive Viewports & Extensibility</span>
+        <span class="verdict-pill verdict-strong" style="font-size:11px; padding:3px 8px;">Strong</span>
+      </summary>
+      <div class="dimension-body">
+        <p class="dimension-desc">Single-viewport physics (1080p desktop) and mobile touch targets (&ge;44px).</p>
+        <div class="finding sev-resolved">
+          <span class="finding-badge badge-resolved">Resolved</span>
+          <strong>Extensible Grid Physics:</strong> Pinned header/telemetry bars while unlocking internal grid scroll for 5+ services; expanded mobile touch targets to &ge;44px.
+        </div>
+      </div>
+    </details>
+  </main>
+
+  <footer class="report-footer">
+    <div>Artifacts: <code>DESIGN.md</code>, <code>EXPERIENCE.md</code>, <code>mockups/</code></div>
+    <div>BMad UX Validation · 2026-10-15</div>
+  </footer>
+
+</div>
+</body>
+</html>

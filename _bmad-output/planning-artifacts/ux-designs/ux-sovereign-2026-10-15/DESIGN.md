@@ -12,7 +12,7 @@ colors:
   border-active: '#CBD5E1'
   text-primary: '#0F172A'
   text-muted: '#64748B'
-  text-faint: '#94A3B8'
+  text-faint: '#475569'
   action-primary: '#0F172A'
   action-primary-hover: '#1E293B'
   action-primary-fg: '#FFFFFF'
@@ -32,6 +32,7 @@ colors:
   status-red-fg: '#991B1B'
   status-red-border: '#FECACA'
   accent-blue: '#2563EB'
+  focus-ring: '#2563EB'
   timeline-day: '#3B82F6'
   timeline-night: '#0F172A'
 typography:
@@ -106,8 +107,8 @@ components:
     borderRadius: '{rounded.full}'
     fontSize: '{typography.small.fontSize}'
   OverflowMenu:
-    width: '28px'
-    height: '28px'
+    width: '44px'
+    height: '44px'
     borderRadius: '{rounded.md}'
   TelemetryBar:
     height: '56px'
@@ -144,7 +145,7 @@ components:
 
 ## Brand & Style
 
-Sovereign embodies **quiet appliance confidence**. It is designed to feel like high-end consumer audio or refined domestic hardware (Braun, Dieter Rams, Teenage Engineering, Bang & Olufsen)—never a dense Linux sysadmin dashboard or cluttered cloud infrastructure portal.
+Sovereign embodies **quiet appliance confidence**. It is designed to feel like high-end consumer audio or refined domestic electronics (Braun, Dieter Rams, Bang & Olufsen)—never a dense Linux sysadmin dashboard or cluttered cloud infrastructure portal.
 
 The design prioritizes clarity, spaciousness, and zero cognitive load. Data typography is crisp and legible; borders are hairline separators; status indicators are reassuring rather than alarming. The system communicates that home data is safe, private, and running smoothly without demanding constant user vigilance.
 
@@ -159,11 +160,12 @@ The palette is rooted in clean Nordic light neutrality with decisive contrast an
 - `{colors.border}` (`#E5E7EB`): Hairline structural division. Separates header, cards, and bottom telemetry bars without heavy drop-shadows.
 - `{colors.text-primary}` (`#0F172A`): Deep slate obsidian for primary headings, service names, and active states. Delivers WCAG AAA contrast (14.2:1) against surface.
 - `{colors.text-muted}` (`#64748B`): Secondary metrics, file metadata, and descriptive copy. Maintains WCAG AA compliance (4.6:1).
+- `{colors.text-faint}` (`#475569`): Subtle secondary labels and tech descriptions, calibrated to 7.0:1 contrast for full WCAG AAA/AA compliance.
 - `{colors.action-primary}` (`#0F172A`): Confident, tactile action buttons (such as "Open Service UI") with stark white text `{colors.action-primary-fg}`.
-- `{colors.status-green}` (`#10B981`) & `{colors.status-green-bg}` (`#ECFDF5`): Healthy running state. Reassuring green dot and soft background container.
-- `{colors.status-amber}` (`#F59E0B`) & `{colors.status-amber-bg}` (`#FFFBEB`): Attention required (e.g., transient AI warm-up, NAS reconnection check).
-- `{colors.status-red}` (`#EF4444`) & `{colors.status-red-bg}` (`#FEF2F2`): Service stopped or error state requiring action.
-- `{colors.accent-blue}` (`#2563EB`): Text links, interactive paths, and focus rings.
+- `{colors.status-green}` (`#10B981`) & `{colors.status-green-bg}` (`#ECFDF5`): Healthy running state. Reassuring green dot (●) and soft background container with `{colors.status-green-fg}` text.
+- `{colors.status-amber}` (`#F59E0B`) & `{colors.status-amber-bg}` (`#FFFBEB`): Attention required state (◆). The single canonical standard for warning/attention (replacing ambiguous "yellow").
+- `{colors.status-red}` (`#EF4444`) & `{colors.status-red-bg}` (`#FEF2F2`): Service stopped or error state (▲) requiring action.
+- `{colors.accent-blue}` (`#2563EB`) & `{colors.focus-ring}`: Text links, interactive paths, and high-visibility keyboard focus rings.
 
 ---
 
@@ -183,17 +185,17 @@ Sovereign utilizes modern system sans-serif font stacks (`-apple-system`, `Blink
 
 ## Layout & Spacing
 
-### 1. Single-Viewport Desktop Rule (1080p+)
-On desktop viewports (width $\ge$ 900px, 1080p through 4K), the Central Admin Dashboard enforces a strict **single-viewport height (`100vh; overflow: hidden`)**. The entire appliance interface—Header (`{components.AppHeader.height}`), Service Card Grid, and Telemetry Bar (`{components.TelemetryBar.height}`)—must fit completely without vertical page scrolling.
+### 1. Viewport Hierarchy & Breakpoints
+Layout adheres to three standardized responsive tiers:
+- **Desktop (Width $\ge$ 1024px)**: Default 4-column service grid. On 1080p through 4K screens with standard 4 services, the Central Admin Dashboard enforces a **single-viewport height (`100vh; overflow: hidden`)** with container `max-width: 1440px`. Header and Telemetry bar remain strictly pinned (`flex-shrink: 0`). When 5+ services are installed or when vertical height is constricted ($< 700\text{px}$), the service grid container gracefully unlocks internal scrolling (`overflow-y: auto`) while header and telemetry remain pinned.
+- **Tablet (Width 768px – 1023px)**: 2-column service card grid (`repeat(2, 1fr)`) with fluid vertical scrolling.
+- **Mobile (Width $< 768\text{px}$)**: Single-column layout (`repeat(1, 1fr)`) with fluid vertical flow and expanded touch targets ($44\text{px}+$ height).
 
 ### 2. Spacing Scale
 Layouts adhere to an 8pt spatial grid:
 - Card inner padding: `{spacing.5}` (20px)
 - Gap between grid cards: `{spacing.4}` (16px)
 - Outer viewport margin: `{spacing.6}` (24px) to `{spacing.8}` (32px)
-
-### 3. Mobile Viewport Fluidity
-On mobile screens ($< 900\text{px}$), the single-viewport restriction unlocks (`overflow-y: auto`). Service cards stack into a single column with full touch targets ($44\text{px}+$ height).
 
 ---
 
@@ -203,6 +205,7 @@ Sovereign avoids deep or fuzzy shadows. Visual hierarchy is established through 
 - **Default Elevation**: Cards sit flush on `{colors.canvas}` with a 1px border (`{colors.border}`).
 - **Card Hover Elevation**: Soft ambient shadow `0 4px 12px rgba(15, 23, 42, 0.04)` and border shift to `{colors.border-active}`.
 - **Modals / Dropdowns**: Ambient depth `0 10px 25px -5px rgba(15, 23, 42, 0.08)`, border `{colors.border}`.
+- **Keyboard Focus Ring**: 2px solid `{colors.focus-ring}` with 2px offset (`outline: 2px solid #2563EB; outline-offset: 2px`).
 
 ---
 
@@ -228,14 +231,20 @@ Sovereign avoids deep or fuzzy shadows. Visual hierarchy is established through 
 - Anatomy:
   1. Header: Service icon (40x40px, `{colors.canvas}` fill) + Service Title + Tech subtitle + `•••` overflow menu button.
   2. Status & Metric: Status pill (`{components.StatusBadge}`) + large metric (e.g. "124 Movies") + secondary descriptor.
-  3. Action: Full-width button (`{colors.action-primary}` fill, white text, 38px height) linking to the installed application in a new tab.
+  3. Action: Full-width button (`{colors.action-primary}` fill, white text, 38px desktop height, 44px mobile height) linking to the installed application in a new tab.
 
 ### StatusBadge
 - Inline-flex pill: 3px top/bottom, 8px left/right. Radius: `{rounded.full}`.
-- Dot: 6x6px rounded circle.
-- Green state: `{colors.status-green-bg}` with `{colors.status-green-fg}` text and `{colors.status-green}` dot.
-- Amber state: `{colors.status-amber-bg}` with `{colors.status-amber-fg}` text and `{colors.status-amber}` dot.
-- Red state: `{colors.status-red-bg}` with `{colors.status-red-fg}` text and `{colors.status-red}` dot.
+- Color Independence: Pairs semantic color with distinct geometric micro-shapes:
+  - Green state: `{colors.status-green-bg}` with `{colors.status-green-fg}` text and circle (●) icon.
+  - Amber state: `{colors.status-amber-bg}` with `{colors.status-amber-fg}` text and diamond (◆) icon.
+  - Red state: `{colors.status-red-bg}` with `{colors.status-red-fg}` text and triangle (▲) icon.
+
+### OverflowMenu
+- Width / Height: `{components.OverflowMenu.width}` x `{components.OverflowMenu.height}` (44x44px touch target area with 28x28px visual button).
+- Radius: `{rounded.md}`.
+- Background: Transparent with hover `{colors.border-subtle}`.
+- Behavior: Opens an accessible popover containing Restart, Rollback, and Logs actions. Focus trapped on open; closes on Escape.
 
 ### TelemetryBar
 - Height: `{components.TelemetryBar.height}` (56px)
@@ -244,21 +253,37 @@ Sovereign avoids deep or fuzzy shadows. Visual hierarchy is established through 
 
 ### DropzoneCard
 - Max-width: 680px, centered on `{colors.canvas}`.
-- Target: 2px dashed border (`#CBD5E1`), padding `{spacing.12}`, hover transition to `#0F172A` border.
+- Target: 2px dashed border (`{colors.border-active}`), padding `{spacing.12}`, hover transition to `{colors.action-primary}` border.
 - Category Tabs: Pill group with active tab white background and subtle shadow.
+
+### SettingsNavigation
+- Width: `{components.SettingsNavigation.width}` (240px).
+- Radius: `{rounded.lg}`.
+- Active item: Background `{colors.surface}`, border 1px solid `{colors.border}`, bold text. Hover item: Background `{colors.border-subtle}`.
+
+### RollbackModal
+- Max-width: `{components.RollbackModal.maxWidth}` (480px).
+- Radius: `{rounded.xl}`.
+- Border: 1px solid `{colors.border}`, shadow `0 20px 25px -5px rgba(0, 0, 0, 0.1)`.
+- Anatomy: Warning icon, version diff text, reassurance notice, and primary action button (`{colors.action-primary}`).
+
+### BootProgressBar
+- Height: `{components.BootProgressBar.height}` (6px).
+- Background: `{components.BootProgressBar.background}`.
+- Fill: `{components.BootProgressBar.fill}` with animated transition. Radius: `{rounded.full}`.
 
 ---
 
 ## Do's and Don'ts
 
 ### Do
-- **Do** fit the entire Admin Dashboard on 1080p without page scrollbars.
-- **Do** use plain, reassuring consumer language for all states and tooltips.
+- **Do** fit the 4-service Admin Dashboard on 1080p without page scrollbars, with internal scrolling only for 5+ services.
+- **Do** pair every status color with its distinct micro-shape (●, ◆, ▲) and plain-language text label.
+- **Do** provide high-visibility focus rings (`:focus-visible`) on all interactive buttons, cards, and switches.
 - **Do** maintain strict visual separation between Sovereign's appliance chrome and the installed third-party apps.
-- **Do** use the standard 8px corner radius across all components.
 
 ### Don't
 - **Don't** display terminal logs, stack traces, or Linux device paths (`/dev/sda1`) on the dashboard.
 - **Don't** cram the media upload dropzone into the admin dashboard; keep it on its dedicated `/drop` surface.
-- **Don't** use decorative gradients, glow effects, or non-semantic saturated accents.
+- **Don't** use faint text colors below the 4.5:1 AA contrast threshold.
 - **Don't** author custom sub-admin chat bubbles or media player controls; those belong to the installed software.
