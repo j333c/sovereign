@@ -1,0 +1,120 @@
+openapi: 3.1.0
+info:
+  title: Sovereign Core Supervisor API
+  version: 0.1.0
+  description: |
+    Core control plane API for Sovereign Home Server appliance supervisor.
+    Provides health diagnostics, boot lifecycle monitoring, and control boundaries.
+servers:
+  - url: http://localhost:8080
+    description: Local daemon direct port
+  - url: /
+    description: Same-origin ingress gateway
+
+paths:
+  /api/v1/health:
+    get:
+      summary: Appliance health probe
+      description: Returns the operational status of the supervisor daemon and database durability engine.
+      operationId: getHealth
+      responses:
+        '200':
+          description: Supervisor and database are operational.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+        '503':
+          description: Database or core subsystem is unhealthy.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/v1/system/boot-status:
+    get:
+      summary: Boot status and diagnostic integrity
+      description: Returns the current boot tier, clean shutdown status, and diagnostic results.
+      operationId: getBootStatus
+      responses:
+        '200':
+          description: System boot status details.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BootStatusResponse'
+        '500':
+          description: Internal supervisor error retrieving boot state.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+components:
+  schemas:
+    HealthResponse:
+      type: object
+      required:
+        - status
+        - version
+        - database
+      properties:
+        status:
+          type: string
+          enum: [ok, degraded, error]
+          example: ok
+        version:
+          type: string
+          example: 0.1.0
+        database:
+          type: string
+          enum: [connected, disconnected, error]
+          example: connected
+
+    BootStatusResponse:
+      type: object
+      required:
+        - mode
+        - clean_shutdown
+        - diagnostics_completed
+        - message
+      properties:
+        mode:
+          type: string
+          enum: [operational, diagnostics, recovery]
+          example: operational
+        clean_shutdown:
+          type: boolean
+          example: true
+        diagnostics_completed:
+          type: boolean
+          example: true
+        message:
+          type: string
+          example: All systems operational
+
+    ProblemDetails:
+      type: object
+      required:
+        - type
+        - title
+        - status
+        - detail
+        - instance
+      properties:
+        type:
+          type: string
+          format: uri
+          example: https://sovereign.local/errors/database-unavailable
+        title:
+          type: string
+          example: Service Unavailable
+        status:
+          type: integer
+          example: 503
+        detail:
+          type: string
+          example: SQLite WAL database failed health probe.
+        instance:
+          type: string
+          example: /api/v1/health

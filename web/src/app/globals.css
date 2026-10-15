@@ -1,0 +1,79 @@
+@import "tailwindcss";
+
+/*
+  Sovereign Visual Design Spine — Nordic/Braun Direction A Tokens
+  Matches DESIGN.md
+*/
+
+@theme {
+  /* Colors */
+  --color-canvas: #F8F9FA;
+  --color-surface: #FFFFFF;
+  --color-border: #E5E7EB;
+  --color-border-subtle: #F1F5F9;
+  --color-border-active: #CBD5E1;
+  --color-text-primary: #0F172A;
+  --color-text-muted: #64748B;
+  --color-text-faint: #475569;
+  --color-action-primary: #0F172A;
+  --color-action-primary-hover: #1E293B;
+  --color-action-primary-fg: #FFFFFF;
+  --color-action-secondary: #F8F9FA;
+  --color-action-secondary-hover: #F1F5F9;
+  --color-action-secondary-fg: #0F172A;
+  --color-status-green: #10B981;
+  --color-status-green-bg: #ECFDF5;
+  --color-status-green-fg: #065F46;
+  --color-status-green-border: #A7F3D0;
+  --color-status-amber: #F59E0B;
+  --color-status-amber-bg: #FFFBEB;
+  --color-status-amber-fg: #92400E;
+  --color-status-amber-border: #FDE68A;
+  --color-status-red: #EF4444;
+  --color-status-red-bg: #FEF2F2;
+  --color-status-red-fg: #991B1B;
+  --color-status-red-border: #FECACA;
+  --color-accent-blue: #2563EB;
+  --color-focus-ring: #2563EB;
+
+  /* Typography */
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+
+  /* Border Radius */
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 12px;
+  --radius-full: 9999px;
+  --radius-default: 8px;
+}
+
+:root {
+  /* Canvas: #F8F9FA */
+  --canvas: #F8F9FA;
+  /* Surface: #FFFFFF */
+  --surface: #FFFFFF;
+  /* Text Primary: #0F172A */
+  --text-primary: #0F172A;
+  /* Accent Blue: #2563EB */
+  --accent-blue: #2563EB;
+
+  --border: #E5E7EB;
+  --border-subtle: #F1F5F9;
+  --border-active: #CBD5E1;
+  --text-muted: #64748B;
+  --text-faint: #475569;
+  --status-green: #10B981;
+  --status-amber: #F59E0B;
+  --status-red: #EF4444;
+}
+
+body {
+  background-color: var(--canvas);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  margin: 0;
+  padding: 0;
+  -webkit-font-smoothing: antialiased;
+}

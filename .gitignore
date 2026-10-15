@@ -16,3 +16,22 @@ Thumbs.db
 .vscode/
 *.swp
 *~
+
+# Sovereign state and databases
+data/state/*.db
+data/state/*.db-wal
+data/state/*.db-shm
+data/state/*.json
+!data/**/.gitkeep
+
+# Go binaries
+/bin/
+/sovereign-daemon
+
+# Web build artifacts & dependencies
+web/node_modules/
+web/.next/
+web/out/
+web/.turbo/
+*.tsbuildinfo
+

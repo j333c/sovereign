@@ -1,0 +1,51 @@
+services:
+  sovereign-daemon:
+    build:
+      context: .
+      dockerfile: Dockerfile.daemon
+    image: sovereign-daemon:latest
+    container_name: sovereign-daemon
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      # Privileged control boundary: Docker socket mounted exclusively in supervisor daemon
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./data:/data
+    environment:
+      - SOVEREIGN_ADDR=:8080
+      - SOVEREIGN_DATA_DIR=/data
+    ports:
+      - "8080:8080"
+    networks:
+      - sovereign-control
+      - sovereign-ingress
+      - sovereign-ai
+
+  sovereign-web:
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+    image: sovereign-web:latest
+    container_name: sovereign-web
+    restart: unless-stopped
+    # Isolated presentation boundary: strictly NO docker.sock mount or host shell access
+    environment:
+      - NODE_ENV=production
+      - NEXT_PUBLIC_API_URL=http://sovereign-daemon:8080
+    ports:
+      - "3000:3000"
+    networks:
+      - sovereign-ingress
+
+networks:
+  sovereign-ingress:
+    name: sovereign-ingress
+    driver: bridge
+  sovereign-control:
+    name: sovereign-control
+    driver: bridge
+  sovereign-ai:
+    name: sovereign-ai
+    driver: bridge
+    internal: true
