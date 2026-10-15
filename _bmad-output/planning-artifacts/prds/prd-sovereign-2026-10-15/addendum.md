@@ -52,11 +52,14 @@ This addendum preserves technical depth, architectural ideas, candidate software
 
 ### Key Technical Pitfall: The GPU / VRAM Collision
 - **Problem**: In consumer setups with a single shared GPU (or unified iGPU), local LLM backends (like Ollama) greedily allocate nearly 100% of available VRAM. When Jellyfin initiates an on-the-fly transcode session, the system throws `CUDA out of memory` errors or stalls playback.
-- **Sovereign Mitigation Options**:
-  1. **Dynamic Model Unloading**: Configure `OLLAMA_KEEP_ALIVE=0` or short idle timeouts so VRAM is surrendered when chat is inactive.
-  2. **VRAM Overhead Reservation**: Enforce `OLLAMA_GPU_OVERHEAD` reserves to protect encoder headroom.
-  3. **Multi-Adapter / Hybrid Routing**: Route media transcoding to Intel QuickSync / iGPU and LLM inference to discrete Nvidia GPU (or CPU fallback).
-  4. **Queue Prioritization**: Pause background transcoding jobs during interactive LLM queries, or temporarily scale down LLM context when transcode streams fire up.
+- **Sovereign Day/Night Strategy & Mitigation Options**:
+  1. **Daytime AI Reservation**: Keep GPU power and VRAM unconstrained during daytime hours for interactive local AI requests (chat, RAG queries). Avoid running non-urgent video transcoding or batch processing during the day.
+  2. **Nighttime / Early Morning Batch Window**: Schedule heavy background tasks (disc rip encoding, multi-profile mobile exports, batch OCR) to execute during off-peak night/early morning hours.
+  3. **Admin UI Visibility**: Provide a visible setting in the admin frontend that clearly explains GPU utilization policy and allows the user to configure when the GPU is reserved for AI and when batch background tasks are permitted.
+  4. **Dynamic Model Unloading**: Configure `OLLAMA_KEEP_ALIVE=0` or short idle timeouts (e.g. 5 minutes) so VRAM is surrendered when chat is inactive.
+  5. **VRAM Overhead Reservation**: Enforce `OLLAMA_GPU_OVERHEAD` reserves to protect encoder headroom.
+  6. **Multi-Adapter / Hybrid Routing**: Route media transcoding to Intel QuickSync / iGPU and LLM inference to discrete Nvidia GPU (or CPU fallback).
+  7. **Queue Prioritization**: Automatically pause background transcoding jobs during interactive LLM queries, or temporarily scale down LLM context when real-time streaming transcode sessions initiate.
 
 ### Dirty-Shutdown / Power-Outage Resilience
 - Default ext4 setups risk corrupting container databases (SQLite in Jellyfin/Paperless, PostgreSQL).

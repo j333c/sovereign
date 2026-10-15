@@ -1,6 +1,6 @@
 ---
 title: Sovereign Home Server
-status: draft
+status: final
 created: 2026-10-15
 updated: 2026-10-15
 ---
@@ -125,7 +125,7 @@ For most households, the promise of the "personal cloud" and "smart home" has re
 **Description**: A fast-booting, low-overhead web application that serves as the single administrative pane of glass for the home user. Realizes UJ-1 and UJ-5. It provides a guided First-Run Wizard, visual feature toggles, system health indicators, and update controls. Power users can inspect advanced settings, but standard users never need to leave this interface.
 
 #### FR-1: First-Run Setup Wizard
-The system can guide a first-time user through initial configuration on first boot at `http://sovereign.local` (or DHCP IP). Realizes UJ-1.
+The system can guide a first-time user through initial configuration on first boot at `http://sovereign.local` (or DHCP IP). Realizes UJ-1. [ASSUMPTION: Standard consumer home routers allow mDNS multicast traffic (.local domain resolution); for routers with mDNS disabled, DHCP IP fallback is sufficient.]
 - **Consequences (testable)**:
   - System advertises `sovereign.local` via mDNS on the local subnet within 30 seconds of network interface initialization.
   - Wizard prompts for network configuration (DHCP default, static IP option, hostname), storage selection (local disk initialization or NAS NFS/SMB mount), feature selection checkboxes, and notification email address.
@@ -146,14 +146,14 @@ The system can execute scheduled background updates with automated failure rollb
   - System checks for upstream image updates and executes unattended updates during a user-configured maintenance window (default: 3:00 AM).
   - Before an update is applied, the system snapshots container configuration files and records the previous image digest.
   - If a newly updated container fails health checks within 180 seconds or enters a crash-loop state, the system automatically terminates it, restores the prior image digest and configuration snapshot, sets the indicator to **Yellow**, and dispatches an alert email.
-  - The admin interface displays a "Roll back to previous version" action button for any running feature.
+  - The Admin Interface displays a "Roll back to previous version" action button for any running feature.
 
 #### FR-4: Power-Loss Resilience & Boot Diagnostics
 The system can recover cleanly from abrupt power loss without file system corruption or data fragmentation. Realizes UJ-5.
 - **Consequences (testable)**:
   - Storage filesystems utilize write-ahead journaling or transactional copy-on-write mechanisms ensuring clean remounts after ungraceful shutdowns.
   - Database containers utilize WAL (Write-Ahead Logging) mode to prevent SQLite or PostgreSQL corruption during dirty power cuts.
-  - During boot, the admin web server initializes within 15 seconds of kernel boot and displays real-time startup progress and storage health checks if post-crash recovery routines are executing.
+  - During boot, the Admin Interface initializes within 15 seconds of kernel boot and displays real-time startup progress and storage health checks if post-crash recovery routines are executing.
 
 ---
 
@@ -168,17 +168,18 @@ The user can configure media and document storage targets using internal physica
   - Gracefully handles temporary NAS disconnections by setting affected feature cards to **Yellow** with an informative status (e.g., *"NAS storage unreachable"*) rather than crashing container runtimes.
 
 #### FR-6: Media Landing Zone Drop
-The user can copy media files into the system via a network shared folder or web-based drag-and-drop interface.
+The user can copy media files into the system via a network shared folder or web-based drag-and-drop interface. Realizes UJ-1, UJ-3.
 - **Consequences (testable)**:
-  - System exposes an SMB network share (`\\sovereign\drop` or `smb://sovereign.local/drop`) and a drag-and-drop file upload target in the admin UI.
-  - Ingested files are automatically sorted into appropriate media directories (Movies, TV Shows, Music, Audiobooks).
+  - System exposes an SMB network share (`\\sovereign\drop` or `smb://sovereign.local/drop`) and a drag-and-drop file upload target in the Admin Interface.
+  - The Landing Zone provides designated target folders (`drop/movies`, `drop/tv`, `drop/music`, `drop/audiobooks`) and automated file extension / MIME-type inspection to route loose files to their designated media directories.
   - Triggers the corresponding media server library scan and metadata retrieval within 60 seconds of file transfer completion.
 
 #### FR-7: Optical Disc Automated Ingestion
-The system can detect inserted optical media (Blu-ray, DVD, Audio CD), rip media streams, retrieve external metadata, and eject the disc automatically. Realizes UJ-3.
+The system can detect inserted optical media (Blu-ray, DVD, Audio CD), rip media streams, retrieve external metadata, and eject the disc automatically. Realizes UJ-3. [ASSUMPTION: The server hardware contains a compatible SATA or USB optical drive with read support for CD, DVD, and Blu-ray media.]
 - **Consequences (testable)**:
   - Optical drive polling detects disc insertion within 10 seconds.
-  - Rips movie or music content to a temporary staging volume without user intervention.
+  - Unencrypted DVD and Audio CD discs rip to a temporary staging volume out of the box without user intervention.
+  - Commercial Blu-ray discs require a user-provided decryption key directory (e.g. `KEYDB.cfg` / MakeMKV integration) to remain strictly compliant with open-source licensing; unkeyed encrypted discs are gracefully rejected and ejected.
   - Queries external databases (TMDb, IMDb, MusicBrainz) using disc fingerprints or volume labels to populate title, year, track, and artwork metadata.
   - Ejects the optical tray upon completion and moves processed media to the active library folder.
   - If disc reading fails after 3 retries, ejects the disc, logs the failure, and triggers an email alert.
@@ -186,7 +187,7 @@ The system can detect inserted optical media (Blu-ray, DVD, Audio CD), rip media
 #### FR-8: Scheduled Transcoding Queue
 The system can execute scheduled background video transcoding to generate standard in-house streaming versions and offline mobile profiles. Realizes UJ-3.
 - **Consequences (testable)**:
-  - Scheduled queue runs during off-peak hours (default: 02:00 to 06:00).
+  - Scheduled queue runs during off-peak hours (default: 01:00 to 07:00).
   - Encodes raw disc rips into standardized H.264/H.265 MP4 files with universal browser/device compatibility.
   - Automatically generates an optimized, space-efficient 720p/1080p mobile profile for offline synchronization to tablets and smartphones.
 
@@ -204,10 +205,10 @@ The system can serve high-definition video streams across local and remote home 
 - **Out of Scope**: Building custom Sovereign video player apps; users rely entirely on existing open-source and ecosystem clients.
 
 #### FR-10: Audio Streaming, Party Playlists & Audiobooks
-The system can manage and stream personal music libraries, collaborative party playlists, and audiobook collections. Realizes UJ-3.
+The system can manage and stream personal music libraries, collaborative party playlists, and audiobook collections via a dual-container architecture. Realizes UJ-3.
 - **Consequences (testable)**:
-  - Exposes a web interface for party playlist creation and continuous playback.
-  - Provides a dedicated audiobook streaming backend (Audiobookshelf or Subsonic API) supporting chapter markers, playback position sync, and narration speed adjustments.
+  - Deploys **Navidrome** as the primary music server, exposing a central web interface for party playlist creation and continuous playback, plus Subsonic API support for external clients.
+  - Deploys **Audiobookshelf** as a dedicated audiobook and podcast backend supporting chapter markers, multi-device playback position sync, and narration speed adjustments.
   - Compatible with standard mobile audio apps (e.g., Symfonium, Substreamer, Plappa, Audiobookshelf mobile).
 
 ---
@@ -223,7 +224,7 @@ The system can store, OCR, categorize, and index household documents via an inte
   - Stores all documents in standard, non-proprietary filesystem directory structures.
 
 #### FR-12: Multi-Channel Document Ingestion
-The user can ingest documents via mobile camera scanning apps and automated email polling. Realizes UJ-2.
+The user can ingest documents via mobile camera scanning apps and automated email polling. Realizes UJ-2. [ASSUMPTION: The household has an active email account supporting standard IMAP/SSL connections for automated invoice retrieval.]
 - **Consequences (testable)**:
   - Compatible with standard Paperless mobile companion apps on iOS and Android.
   - Supports IMAP mailbox polling with user-supplied credentials, automatically downloading and archiving PDF attachments and marking emails as processed.
@@ -231,7 +232,7 @@ The user can ingest documents via mobile camera scanning apps and automated emai
 #### FR-13: Smart Home & Notification Event Bridge
 The system can dispatch urgent alerts to Home Assistant and email when documents contain critical deadlines or renewal dates. Realizes UJ-2.
 - **Consequences (testable)**:
-  - Scans document metadata and OCR text for due dates, contract expiration dates, and payment obligations.
+  - Scans document metadata and OCR text using a lightweight deterministic regex parser (for dates and payment totals), supplemented by a nightly off-peak LLM extraction pass during the nighttime batch window.
   - Exposes a Home Assistant webhook and MQTT event publisher that fires when an actionable deadline is within a configurable threshold (e.g., 14 days).
   - Sends a consolidated email digest to the admin email address detailing impending deadlines.
 
@@ -246,27 +247,32 @@ The user can interact with local AI models through a pre-integrated Open WebUI i
   - Provides conversational chat, persona selection, and chat history.
   - Accessible on desktop and mobile web browsers without installing custom native software.
   - Connects to a local LLM runtime (e.g., Ollama container) operating 100% offline.
+  - Provides a pre-configured standard system customization prompt that sets the response language matching the user's configured locale and embeds country-specific regulations, legal frameworks, and cultural habits (e.g., standard billing periods, cancellation notice windows, document formatting conventions).
 
 #### FR-15: Single-Source-of-Truth RAG
-The local AI system can query the document management system directly to answer user questions without requiring duplicate document uploads. Realizes UJ-4.
+The local AI system can query the document management system directly to answer user questions without requiring duplicate document uploads. Realizes UJ-4. [ASSUMPTION: Paperless-ngx API and metadata provide adequate search and text extraction performance for direct local LLM retrieval without requiring a separate standalone vector database for small-to-medium household libraries (< 10,000 documents).]
 - **Consequences (testable)**:
   - Queries execute directly against the DMS search API / vector embeddings.
   - System enforces zero redundant data storage: documents are neither duplicated into the chat UI database nor stored in multiple locations.
   - Chat responses cite the specific document title and page number used to generate the answer.
 
 #### FR-16: Standardized Shared AI Platform API
-The system can expose an internal OpenAI-compatible API endpoint and automatically configure installed features to leverage local AI.
+The system can expose an internal OpenAI-compatible API endpoint and automatically configure installed features to leverage local AI. Realizes UJ-4.
 - **Consequences (testable)**:
   - Exposes an internal HTTP endpoint (e.g., `http://sovereign-ai:11434/v1`) accessible to other Sovereign containers.
   - When activating a feature that supports AI integrations (e.g., DMS auto-tagging or summarization), Sovereign automatically provisions the internal endpoint URL and credentials into the feature container's configuration.
 
-#### FR-17: Active GPU & VRAM Arbitration
-The system can dynamically manage GPU memory and compute resources to prevent local AI models from starving or crashing video transcoding sessions.
+#### FR-17: Active GPU & VRAM Arbitration & Day/Night Scheduling
+The system can dynamically manage GPU memory and compute resources to prevent local AI models from starving or crashing video transcoding sessions, reserving daytime GPU availability for interactive user requests. Realizes UJ-3, UJ-4. [ASSUMPTION: Intel QuickSync (via 8th gen+ Core CPUs) or Nvidia GPUs with NVENC support are the primary hardware acceleration targets for video transcoding.]
 - **Consequences (testable)**:
-  - If a single GPU is shared between local LLMs and video transcoding:
-    - LLM service enforces idle model unloading (`OLLAMA_KEEP_ALIVE` configured to 5 minutes or less) to release VRAM.
-    - System reserves minimum VRAM overhead (`OLLAMA_GPU_OVERHEAD`) ensuring video encoder buffers remain available.
-  - In systems equipped with hybrid GPUs (e.g., Intel iGPU with QuickSync + discrete Nvidia GPU), video transcoding is automatically pinned to the iGPU while LLM inference is pinned to the dGPU.
+  - **Daytime Priority for AI**: During daytime hours (default: 07:00 to 01:00), the system actively reserves GPU compute and VRAM for interactive user AI queries. Heavy background video transcoding, disc rips, and non-urgent batch tasks are withheld or throttled.
+  - **Nighttime Batch Window**: Heavy batch video transcoding and background OCR processing run during scheduled off-peak nighttime/early morning hours (default: 01:00 to 07:00).
+  - **Visible Admin UI Setting**: The Admin Interface provides a clear, user-facing schedule setting where users can inspect and customize daytime vs. nighttime GPU allocation and task priorities.
+  - **Resource Arbitration**:
+    - If a single GPU is shared between local LLMs and real-time streaming:
+      - LLM service enforces idle model unloading (`OLLAMA_KEEP_ALIVE` configured to 5 minutes or less) to release VRAM.
+      - System reserves minimum VRAM overhead (`OLLAMA_GPU_OVERHEAD`) ensuring video encoder buffers remain available.
+    - In systems equipped with hybrid GPUs (e.g., Intel iGPU with QuickSync + discrete Nvidia GPU), video transcoding is automatically pinned to the iGPU while LLM inference is pinned to the dGPU.
 
 ---
 
@@ -354,14 +360,16 @@ The platform can publish concrete minimum hardware profiles by feature tier and 
 
 ## 7. Success Metrics & Counter-Metrics
 
+> **Measurement Methodology Note**: In strict adherence to **NFR-3 (Zero Telemetry)**, Sovereign transmits zero diagnostic, usage, or completion pings to external servers. All primary and secondary success metrics (SM-1 through SM-6) are measured and validated via synthetic end-to-end test harnesses, automated CI fault-injection suites, and structured, opt-in local usability lab sessions.
+
 ### Primary Success Metrics
 - **SM-1 (Setup Completion Rate)**: $\ge 90\%$ of first-time home users complete the First-Run Wizard from power-on to their first active **Green** feature in under 10 minutes without consulting external command-line guides. Validates FR-1, FR-2.
-- **SM-2 (Zero Terminal Operation)**: $100\%$ of standard feature installations, updates, and rollbacks execute cleanly through the Admin UI with zero required shell or terminal commands. Validates FR-2, FR-3.
+- **SM-2 (Zero Terminal Operation)**: $100\%$ of standard feature installations, updates, and rollbacks execute cleanly through the Admin Interface with zero required shell or terminal commands. Validates FR-2, FR-3.
 - **SM-3 (RAG Answer Accuracy & Integrity)**: $\ge 95\%$ of test queries against the DMS via Local AI cite correct document sources and page numbers with zero cross-document hallucinations. Validates FR-14, FR-15.
 - **SM-4 (Dirty-Shutdown Recovery)**: $100\%$ clean boot and database integrity recovery after 20 consecutive simulated ungraceful power disconnections during active transcode/write operations. Validates FR-4.
 
 ### Secondary Success Metrics
-- **SM-5 (Optical Ingestion Success)**: $\ge 85\%$ of commercial Blu-ray/DVD discs ripped, matched with metadata, and ejected without manual intervention. Validates FR-7.
+- **SM-5 (Optical Ingestion Success)**: $\ge 85\%$ of unencrypted/keyed commercial discs ripped, matched with metadata, and ejected without manual intervention. Validates FR-7.
 - **SM-6 (Update Rollback Reliability)**: $100\%$ of simulated failed container updates trigger automatic rollback within 180 seconds, restoring the system to operational state. Validates FR-3.
 
 ### Counter-Metrics (Do NOT Optimize)
