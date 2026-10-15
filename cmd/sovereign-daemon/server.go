@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"net"
 	"net/http"
 	"net/url"
@@ -16,6 +17,7 @@ import (
 	"time"
 
 	"sovereign/internal/auth"
+	"sovereign/internal/hardware"
 	"sovereign/internal/ingress"
 	"sovereign/internal/storage"
 	"sovereign/internal/store"
@@ -24,6 +26,22 @@ import (
 const (
 	AppVersion = "0.1.0"
 )
+
+// TelemetryUpdate matches the OpenAPI 3.1 real-time telemetry schema.
+type TelemetryUpdate struct {
+	CPUPercent        float64 `json:"cpu_percent"`
+	MemoryUsedBytes   uint64  `json:"memory_used_bytes"`
+	MemoryTotalBytes  uint64  `json:"memory_total_bytes"`
+	StorageUsedBytes  uint64  `json:"storage_used_bytes"`
+	StorageTotalBytes uint64  `json:"storage_total_bytes"`
+	StoragePercent    float64 `json:"storage_percent"`
+	NASStatus         string  `json:"nas_status"`
+	NASMessage        string  `json:"nas_message"`
+	OverallStatus     string  `json:"overall_status"`
+	OpticalStatus     string  `json:"optical_status"`
+	GPUStatus         string  `json:"gpu_status"`
+	Timestamp         string  `json:"timestamp"`
+}
 
 // ProblemDetails implements RFC 7807 error responses.
 type ProblemDetails struct {
@@ -59,32 +77,37 @@ type IngressStatusResponse struct {
 
 // Config specifies runtime options for the daemon server.
 type Config struct {
-	ListenAddr    string
-	DataDir       string
-	DBPath        string
-	StatePath     string
-	CaddyURL      string
-	Logger        *slog.Logger
-	IngressMgr    ingress.IngressManager
-	MDNSService   *ingress.MDNSService
-	BootMgr       *store.BootManager
-	StorageEngine *storage.Engine
-	AuthMgr       *auth.Manager
+	ListenAddr        string
+	DataDir           string
+	DBPath            string
+	StatePath         string
+	CaddyURL          string
+	Logger            *slog.Logger
+	IngressMgr        ingress.IngressManager
+	MDNSService       *ingress.MDNSService
+	BootMgr           *store.BootManager
+	StorageEngine     *storage.Engine
+	AuthMgr           *auth.Manager
+	HardwareCollector hardware.Collector
+	TelemetryInterval time.Duration
 }
 
 // Server is the appliance core supervisor HTTP daemon.
 type Server struct {
-	cfg           Config
-	db            *store.DB
-	bootMgr       *store.BootManager
-	storageEngine *storage.Engine
-	authMgr       *auth.Manager
-	logger        *slog.Logger
-	router        *http.ServeMux
-	ingressMgr    ingress.IngressManager
-	mdnsService   *ingress.MDNSService
-	mu            sync.RWMutex
+	cfg               Config
+	db                *store.DB
+	bootMgr           *store.BootManager
+	storageEngine     *storage.Engine
+	authMgr           *auth.Manager
+	hardwareCollector hardware.Collector
+	telemetryInterval time.Duration
+	logger            *slog.Logger
+	router            *http.ServeMux
+	ingressMgr        ingress.IngressManager
+	mdnsService       *ingress.MDNSService
+	mu                sync.RWMutex
 }
+
 
 // NewServer initializes the supervisor server, ensures storage directories,
 // connects to SQLite WAL, and initializes ingress/mDNS managers.
@@ -164,21 +187,32 @@ func NewServer(cfg Config) (*Server, error) {
 		}
 	}
 
+	if cfg.HardwareCollector == nil {
+		cfg.HardwareCollector = hardware.NewSystemCollector()
+	}
+
+	if cfg.TelemetryInterval <= 0 {
+		cfg.TelemetryInterval = 5 * time.Second
+	}
+
 	s := &Server{
-		cfg:           cfg,
-		db:            db,
-		bootMgr:       cfg.BootMgr,
-		storageEngine: cfg.StorageEngine,
-		authMgr:       cfg.AuthMgr,
-		logger:        cfg.Logger,
-		router:        http.NewServeMux(),
-		ingressMgr:    cfg.IngressMgr,
-		mdnsService:   cfg.MDNSService,
+		cfg:               cfg,
+		db:                db,
+		bootMgr:           cfg.BootMgr,
+		storageEngine:     cfg.StorageEngine,
+		authMgr:           cfg.AuthMgr,
+		hardwareCollector: cfg.HardwareCollector,
+		telemetryInterval: cfg.TelemetryInterval,
+		logger:            cfg.Logger,
+		router:            http.NewServeMux(),
+		ingressMgr:        cfg.IngressMgr,
+		mdnsService:       cfg.MDNSService,
 	}
 
 	s.routes()
 	return s, nil
 }
+
 
 // StartBackgroundServices initializes background supervisor routines:
 // starts mDNS responder broadcasting sovereign.local, and launches
@@ -276,6 +310,13 @@ func (s *Server) AuthManager() *auth.Manager {
 	return s.authMgr
 }
 
+// HardwareCollector returns the active hardware collector.
+func (s *Server) HardwareCollector() hardware.Collector {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.hardwareCollector
+}
+
 // Close closes database handles and frees ingress/mDNS/storage resources.
 func (s *Server) Close() error {
 	s.mu.Lock()
@@ -323,6 +364,8 @@ func (s *Server) routes() {
 	s.router.HandleFunc("GET /api/v1/health", s.handleHealth)
 	s.router.HandleFunc("GET /api/v1/system/boot-status", s.handleBootStatus)
 	s.router.HandleFunc("GET /api/v1/system/ingress", s.handleIngressStatus)
+	s.router.HandleFunc("GET /api/v1/system/events", s.handleEvents)
+	s.router.HandleFunc("GET /api/events", s.handleEvents)
 	s.router.HandleFunc("GET /api/v1/storage/disks", s.handleStorageDisks)
 	s.router.HandleFunc("POST /api/v1/storage/initialize", s.requireSetupOrAdmin(s.handleStorageInitialize))
 	s.router.HandleFunc("POST /api/v1/storage/nas/test", s.requireSetupOrAdmin(s.handleStorageNASTest))
@@ -340,6 +383,7 @@ func (s *Server) routes() {
 	s.router.Handle("GET /api/v1/settings", s.authMgr.RequireAdmin(http.HandlerFunc(s.handleGetSettings)))
 	s.router.Handle("POST /api/v1/settings", s.authMgr.RequireAdmin(http.HandlerFunc(s.handleUpdateSettings)))
 }
+
 
 // isAllowedOrigin checks if the origin is trusted (localhost, 127.0.0.1, sovereign.local, or matching host/LAN IP).
 func isAllowedOrigin(origin, host string) bool {
@@ -504,7 +548,110 @@ func (s *Server) handleIngressStatus(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (s *Server) getTelemetryUpdate(ctx context.Context) TelemetryUpdate {
+	s.mu.RLock()
+	hwCollector := s.hardwareCollector
+	storageEng := s.storageEngine
+	s.mu.RUnlock()
+
+	var cpuPercent float64 = 5.0
+	var memUsed, memTotal uint64
+	if hwCollector != nil {
+		if snap, err := hwCollector.CollectSnapshot(ctx); err == nil && snap != nil {
+			cpuPercent = snap.CPUUsagePercent
+			memUsed = snap.MemoryUsedBytes
+			memTotal = snap.MemoryTotalBytes
+		}
+	}
+
+	var storageUsed, storageTotal uint64
+	var storagePercent float64
+	nasStatus := "not_configured"
+	nasMessage := "No network storage configured"
+	overallStatus := "operational"
+
+	if storageEng != nil {
+		st := storageEng.GetStorageStatus(ctx)
+		storageUsed = st.UsedBytes
+		storageTotal = st.TotalBytes
+		if storageTotal > 0 {
+			storagePercent = math.Round((float64(storageUsed)/float64(storageTotal))*1000) / 10
+		}
+		if st.NAS != nil && st.NAS.Configured {
+			nasStatus = st.NAS.Status
+			nasMessage = st.NAS.Message
+		}
+		if st.Status == "degraded" || nasStatus == "degraded" {
+			overallStatus = "degraded"
+		} else if st.Status == "error" || nasStatus == "error" {
+			overallStatus = "error"
+		}
+	}
+
+	return TelemetryUpdate{
+		CPUPercent:        cpuPercent,
+		MemoryUsedBytes:   memUsed,
+		MemoryTotalBytes:  memTotal,
+		StorageUsedBytes:  storageUsed,
+		StorageTotalBytes: storageTotal,
+		StoragePercent:    storagePercent,
+		NASStatus:         nasStatus,
+		NASMessage:        nasMessage,
+		OverallStatus:     overallStatus,
+		OpticalStatus:     "Idle · Ready for disc",
+		GPUStatus:         "Daytime (AI Priority)",
+		Timestamp:         time.Now().UTC().Format(time.RFC3339),
+	}
+}
+
+func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "Streaming unsupported", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
+
+	// Push initial event immediately on connection
+	initEvt := s.getTelemetryUpdate(r.Context())
+	if data, err := json.Marshal(initEvt); err == nil {
+		if _, err := fmt.Fprintf(w, "event: telemetry.update\ndata: %s\n\n", data); err != nil {
+			return
+		}
+		flusher.Flush()
+	}
+
+	interval := s.telemetryInterval
+	if interval <= 0 {
+		interval = 5 * time.Second
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case <-ticker.C:
+			evt := s.getTelemetryUpdate(r.Context())
+			data, err := json.Marshal(evt)
+			if err != nil {
+				continue
+			}
+			if _, err := fmt.Fprintf(w, "event: telemetry.update\ndata: %s\n\n", data); err != nil {
+				return
+			}
+			flusher.Flush()
+		}
+	}
+}
+
 func (s *Server) handleStorageDisks(w http.ResponseWriter, r *http.Request) {
+
 	s.mu.RLock()
 	storageEng := s.storageEngine
 	s.mu.RUnlock()

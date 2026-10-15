@@ -75,6 +75,37 @@ paths:
               schema:
                 $ref: '#/components/schemas/ProblemDetails'
 
+  /api/v1/system/events:
+    get:
+      summary: Real-time SSE telemetry event stream
+      description: |
+        Streams real-time hardware telemetry updates (CPU, RAM, storage, NAS, optical, GPU)
+        via Server-Sent Events formatted as `event: telemetry.update`.
+      operationId: getSystemEvents
+      responses:
+        '200':
+          description: Continuous Server-Sent Events telemetry stream.
+          content:
+            text/event-stream:
+              schema:
+                type: string
+                description: SSE stream emitting telemetry.update events.
+
+  /api/events:
+    get:
+      summary: Real-time SSE telemetry stream alias
+      description: Convenience root alias for /api/v1/system/events.
+      operationId: getEvents
+      responses:
+        '200':
+          description: Continuous Server-Sent Events telemetry stream.
+          content:
+            text/event-stream:
+              schema:
+                type: string
+                description: SSE stream emitting telemetry.update events.
+
+
   /api/v1/storage/disks:
     get:
       summary: Enumerate available block devices
@@ -921,5 +952,68 @@ components:
         features:
           type: string
           example: video,audio,dms,ai
+
+    TelemetryUpdate:
+      type: object
+      required:
+        - cpu_percent
+        - memory_used_bytes
+        - memory_total_bytes
+        - storage_used_bytes
+        - storage_total_bytes
+        - storage_percent
+        - nas_status
+        - nas_message
+        - overall_status
+        - optical_status
+        - gpu_status
+        - timestamp
+      properties:
+        cpu_percent:
+          type: number
+          format: float
+          example: 14.2
+        memory_used_bytes:
+          type: integer
+          format: int64
+          example: 3221225472
+        memory_total_bytes:
+          type: integer
+          format: int64
+          example: 8589934592
+        storage_used_bytes:
+          type: integer
+          format: int64
+          example: 150081429227
+        storage_total_bytes:
+          type: integer
+          format: int64
+          example: 1000204886016
+        storage_percent:
+          type: number
+          format: float
+          example: 15.0
+        nas_status:
+          type: string
+          enum: [connected, degraded, disconnected, not_configured, error]
+          example: connected
+        nas_message:
+          type: string
+          example: Connected
+        overall_status:
+          type: string
+          enum: [operational, healthy, degraded, error]
+          example: operational
+        optical_status:
+          type: string
+          example: Idle · Ready for disc
+        gpu_status:
+          type: string
+          example: Daytime (AI Priority)
+        timestamp:
+          type: string
+          format: date-time
+          example: '2026-10-15T15:30:00Z'
+
 
 

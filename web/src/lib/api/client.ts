@@ -24,6 +24,7 @@ export type LoginRequest = components["schemas"]["LoginRequest"];
 export type SessionResponse = components["schemas"]["SessionResponse"];
 export type LogoutResponse = components["schemas"]["LogoutResponse"];
 export type SettingsResponse = components["schemas"]["SettingsResponse"];
+export type TelemetryUpdate = components["schemas"]["TelemetryUpdate"];
 
 /**
  * ProblemDetailsError represents an RFC 7807 problem details error thrown by the daemon API.
@@ -255,7 +256,15 @@ export class SovereignApiClient {
       body: JSON.stringify(settings),
     });
   }
+
+  /**
+   * Returns the endpoint URL for real-time SSE telemetry streaming.
+   */
+  getEventsUrl(): string {
+    return this.baseUrl ? `${this.baseUrl}/api/v1/system/events` : "/api/v1/system/events";
+  }
 }
+
 
 // Export singleton instance initialized with environment defaults
 export const apiClient = new SovereignApiClient();

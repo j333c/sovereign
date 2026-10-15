@@ -13,10 +13,12 @@ import (
 	"testing"
 	"time"
 
+	"sovereign/internal/hardware"
 	"sovereign/internal/ingress"
 	"sovereign/internal/storage"
 	"sovereign/internal/store"
 )
+
 
 func setupTestServer(t *testing.T) (*Server, string) {
 	t.Helper()
@@ -1259,6 +1261,151 @@ func TestServer_AuthAndSetupWizardFlow(t *testing.T) {
 		t.Fatalf("expected 401 after logout session revocation, got: %d", wRevokedCheck.Code)
 	}
 }
+
+func TestServer_SSE_TelemetryStreaming(t *testing.T) {
+	tempDir := t.TempDir()
+	dataDir := filepath.Join(tempDir, "data")
+	stateDir := filepath.Join(dataDir, "state")
+	_ = os.MkdirAll(stateDir, 0755)
+	_ = os.WriteFile(filepath.Join(stateDir, "boot_state.json"), []byte(`{"clean_shutdown": true}`), 0644)
+
+	mockHw := &hardware.MockCollector{
+		Snapshot: &hardware.TelemetrySnapshot{
+			CPUUsagePercent:    18.5,
+			MemoryUsedBytes:    4294967296, // 4 GB
+			MemoryTotalBytes:   17179869184, // 16 GB
+			StorageUsedBytes:   1099511627776, // 1 TB
+			StorageTotalBytes:  2199023255552, // 2 TB
+			TemperatureCelsius: 41.2,
+		},
+	}
+
+	srv, err := NewServer(Config{
+		DataDir:           dataDir,
+		HardwareCollector: mockHw,
+		TelemetryInterval: 50 * time.Millisecond, // Fast ticker for testing
+	})
+	if err != nil {
+		t.Fatalf("failed to create server: %v", err)
+	}
+	defer srv.Close()
+
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	// 1. Unauthenticated client can stream /api/v1/system/events
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, ts.URL+"/api/v1/system/events", nil)
+	if err != nil {
+		t.Fatalf("failed to create request: %v", err)
+	}
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("failed to connect to SSE stream: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK, got: %d", resp.StatusCode)
+	}
+
+	ct := resp.Header.Get("Content-Type")
+	if !strings.HasPrefix(ct, "text/event-stream") {
+		t.Fatalf("expected text/event-stream content type, got: %s", ct)
+	}
+
+	// Read initial SSE message
+	buf := make([]byte, 1024)
+
+	var fullText string
+	for {
+		n, err := resp.Body.Read(buf)
+		if n > 0 {
+			fullText += string(buf[:n])
+			if strings.Contains(fullText, "\n\n") {
+				break
+			}
+		}
+		if err != nil {
+			t.Fatalf("error reading SSE stream: %v", err)
+		}
+	}
+
+	splitLines := strings.Split(fullText, "\n")
+	var eventName, dataJSON string
+	for _, l := range splitLines {
+		if strings.HasPrefix(l, "event:") {
+			eventName = strings.TrimSpace(strings.TrimPrefix(l, "event:"))
+		} else if strings.HasPrefix(l, "data:") {
+			dataJSON = strings.TrimSpace(strings.TrimPrefix(l, "data:"))
+		}
+	}
+
+	if eventName != "telemetry.update" {
+		t.Fatalf("expected event: telemetry.update, got: %s", eventName)
+	}
+
+	var update TelemetryUpdate
+	if err := json.Unmarshal([]byte(dataJSON), &update); err != nil {
+		t.Fatalf("failed to unmarshal telemetry update JSON: %v, raw=%s", err, dataJSON)
+	}
+
+	if update.CPUPercent != 18.5 {
+		t.Errorf("expected CPU 18.5, got %f", update.CPUPercent)
+	}
+	if update.MemoryUsedBytes != 4294967296 {
+		t.Errorf("expected MemoryUsedBytes 4294967296, got %d", update.MemoryUsedBytes)
+	}
+	if update.MemoryTotalBytes != 17179869184 {
+		t.Errorf("expected MemoryTotalBytes 17179869184, got %d", update.MemoryTotalBytes)
+	}
+	if update.OverallStatus == "" {
+		t.Errorf("expected non-empty overall status")
+	}
+	if update.Timestamp == "" {
+		t.Errorf("expected non-empty timestamp")
+	}
+	if update.OpticalStatus == "" {
+		t.Errorf("expected non-empty optical status")
+	}
+	if update.GPUStatus == "" {
+		t.Errorf("expected non-empty GPU status")
+	}
+}
+
+func TestServer_SSE_EventsAlias(t *testing.T) {
+	srv, _ := setupTestServer(t)
+	defer srv.Close()
+
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, ts.URL+"/api/events", nil)
+	if err != nil {
+		t.Fatalf("failed to create request: %v", err)
+	}
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("failed to connect to /api/events alias: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK on /api/events alias, got: %d", resp.StatusCode)
+	}
+	ct := resp.Header.Get("Content-Type")
+	if !strings.HasPrefix(ct, "text/event-stream") {
+		t.Fatalf("expected text/event-stream content type, got: %s", ct)
+	}
+}
+
 
 
 

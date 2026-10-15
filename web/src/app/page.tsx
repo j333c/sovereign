@@ -1,12 +1,27 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import { apiClient as defaultApiClient, SovereignApiClient, ProblemDetailsError } from "@/lib/api";
+import {
+  apiClient as defaultApiClient,
+  SovereignApiClient,
+  TelemetryUpdate,
+} from "@/lib/api";
+import { Language, translations } from "@/lib/i18n";
+import { useTelemetry } from "@/lib/useTelemetry";
+import { AppHeader } from "@/components/AppHeader";
+import { TelemetryBar } from "@/components/TelemetryBar";
+import { ServiceCard } from "@/components/ServiceCard";
+import { AdminLoginModal } from "@/components/AdminLoginModal";
+import { StatusLevel } from "@/components/StatusBadge";
 
 export interface HomePageProps {
   apiClientOverride?: SovereignApiClient;
   routerOverride?: { replace: (url: string) => void };
+  initialTelemetry?: TelemetryUpdate | null;
+  eventSourceFactory?: (url: string) => EventSource;
+  initialLanguage?: Language;
+  initialAuthenticated?: boolean;
 }
 
 export function HomeScreen(props: HomePageProps) {
@@ -48,10 +63,26 @@ export async function checkBootAndSetup(
 function HomeScreenContent({
   apiClientOverride,
   router,
+  initialTelemetry = null,
+  eventSourceFactory,
+  initialLanguage = "en",
+  initialAuthenticated = false,
 }: HomePageProps & { router?: { replace: (url: string) => void } }) {
   const client = apiClientOverride ?? defaultApiClient;
   const [isReady, setIsReady] = useState(false);
+  const [language, setLanguage] = useState<Language>(initialLanguage);
+  const [isAuthenticated, setIsAuthenticated] = useState(initialAuthenticated);
+  const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
+  const [pendingAction, setPendingAction] = useState<string | null>(null);
 
+  // Subscribe to real-time SSE telemetry
+  const { telemetry } = useTelemetry({
+    client,
+    initialTelemetry,
+    eventSourceFactory,
+  });
+
+  // Verify boot status and setup state on initial mount
   useEffect(() => {
     let isMounted = true;
 
@@ -61,43 +92,171 @@ function HomeScreenContent({
       }
     });
 
+    // Check if session is already active
+    void client
+      .getSession()
+      .then((res) => {
+        if (isMounted && res.authenticated) {
+          setIsAuthenticated(true);
+        }
+      })
+      .catch(() => {
+        // Unauthenticated LAN caller is completely valid
+      });
+
     return () => {
       isMounted = false;
     };
   }, [client, router]);
 
+  const handleSettingsClick = useCallback(() => {
+    if (isAuthenticated) {
+      router?.replace("/settings");
+    } else {
+      setPendingAction("settings");
+      setIsLoginModalOpen(true);
+    }
+  }, [isAuthenticated, router]);
+
+  const handleRequireAdmin = useCallback((actionName: string) => {
+    setPendingAction(actionName);
+    setIsLoginModalOpen(true);
+  }, []);
+
+  const handleLoginSuccess = useCallback(() => {
+    setIsAuthenticated(true);
+    setIsLoginModalOpen(false);
+
+    if (pendingAction === "settings") {
+      setPendingAction(null);
+      router?.replace("/settings");
+    } else if (pendingAction) {
+      setPendingAction(null);
+    }
+  }, [pendingAction, router]);
+
   if (!isReady) {
     return null;
   }
 
-  return (
-    <main className="flex min-h-screen flex-col items-center justify-center p-8 bg-[var(--canvas)]">
-      <div className="w-full max-w-xl rounded-lg border border-[var(--border)] bg-[var(--surface)] p-8 shadow-sm">
-        <div className="flex items-center justify-between pb-6 border-b border-[var(--border)]">
-          <div>
-            <h1 className="text-xl font-semibold tracking-tight text-[var(--text-primary)]">
-              Sovereign Appliance
-            </h1>
-            <p className="text-sm text-[var(--text-muted)] mt-1">
-              Core supervisor control plane
-            </p>
-          </div>
-          <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-800 border border-emerald-200">
-            <span className="h-2 w-2 rounded-full bg-emerald-500" />
-            Operational
-          </span>
-        </div>
+  const t = translations[language];
 
-        <div className="mt-6 space-y-4">
-          <div className="rounded-md bg-[var(--border-subtle)] p-4 text-xs font-mono text-[var(--text-faint)]">
-            GET /api/v1/health &bull; GET /api/v1/system/boot-status
-          </div>
-          <p className="text-sm text-[var(--text-muted)] leading-relaxed">
-            Appliance supervisor daemon and decoupled presentation frontend are operational with SQLite WAL durability and OpenAPI contract boundaries.
-          </p>
+  // Aggregate health derived from telemetry or default to operational
+  const rawStatus = telemetry?.overall_status ?? "operational";
+  let aggregateStatus: StatusLevel = "operational";
+  if (rawStatus === "degraded") {
+    aggregateStatus = "degraded";
+  } else if (rawStatus === "error") {
+    aggregateStatus = "error";
+  }
+
+
+  // Determine individual service states based on subsystem telemetry
+  const nasIsDegraded = telemetry?.nas_status === "degraded" || telemetry?.nas_status === "disconnected";
+
+  const services = [
+    {
+      id: "video",
+      name: t.videoTitle,
+      techSubtitle: t.videoSubtitle,
+      icon: "🎬",
+      status: (nasIsDegraded ? "degraded" : "healthy") as StatusLevel,
+      metric: t.videoMetric,
+      secondaryDescriptor: t.videoDesc,
+      actionUrl: "/media",
+      actionLabel: t.videoAction,
+    },
+    {
+      id: "audio",
+      name: t.audioTitle,
+      techSubtitle: t.audioSubtitle,
+      icon: "🎵",
+      status: (nasIsDegraded ? "degraded" : "healthy") as StatusLevel,
+      metric: t.audioMetric,
+      secondaryDescriptor: t.audioDesc,
+      actionUrl: "/music",
+      actionLabel: t.audioAction,
+    },
+    {
+      id: "dms",
+      name: t.dmsTitle,
+      techSubtitle: t.dmsSubtitle,
+      icon: "📑",
+      status: "healthy" as StatusLevel,
+      metric: t.dmsMetric,
+      secondaryDescriptor: t.dmsDesc,
+      actionUrl: "/docs",
+      actionLabel: t.dmsAction,
+    },
+    {
+      id: "ai",
+      name: t.aiTitle,
+      techSubtitle: t.aiSubtitle,
+      icon: "⚡",
+      status: "healthy" as StatusLevel,
+      metric: t.aiMetric,
+      secondaryDescriptor: t.aiDesc,
+      actionUrl: "/chat",
+      actionLabel: t.aiAction,
+    },
+  ];
+
+  return (
+    <div className="flex min-h-screen flex-col bg-[#F8F9FA] text-[#0F172A] lg:h-screen lg:overflow-hidden">
+      {/* Persistent 64px Header */}
+      <AppHeader
+        currentLanguage={language}
+        onLanguageChange={setLanguage}
+        aggregateStatus={aggregateStatus}
+        onSettingsClick={handleSettingsClick}
+      />
+
+      {/* Main Single-Viewport / Scrollable Service Grid Container */}
+      <main className="flex-1 overflow-y-auto px-4 py-6 sm:px-8 sm:py-8 pb-20 lg:pb-20">
+        <div className="mx-auto max-w-[1440px]">
+          {/* Services Grid (Single-col mobile, 2-col tablet, 4-col desktop) */}
+          <section aria-label="Services Overview">
+            <div
+              className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4 sm:gap-6"
+              data-testid="services-grid"
+            >
+              {services.map((svc) => (
+                <ServiceCard
+                  key={svc.id}
+                  id={svc.id}
+                  name={svc.name}
+                  techSubtitle={svc.techSubtitle}
+                  icon={svc.icon}
+                  status={svc.status}
+                  metric={svc.metric}
+                  secondaryDescriptor={svc.secondaryDescriptor}
+                  actionUrl={svc.actionUrl}
+                  actionLabel={svc.actionLabel}
+                  currentLanguage={language}
+                  onRequireAdmin={handleRequireAdmin}
+                  isAuthenticated={isAuthenticated}
+                />
+              ))}
+            </div>
+          </section>
         </div>
-      </div>
-    </main>
+      </main>
+
+      {/* Pinned 56px Telemetry Bar */}
+      <TelemetryBar telemetry={telemetry} currentLanguage={language} />
+
+      {/* Accessible Administrator Login Modal */}
+      <AdminLoginModal
+        isOpen={isLoginModalOpen}
+        onClose={() => {
+          setIsLoginModalOpen(false);
+          setPendingAction(null);
+        }}
+        onSuccess={handleLoginSuccess}
+        apiClient={client}
+        currentLanguage={language}
+      />
+    </div>
   );
 }
 

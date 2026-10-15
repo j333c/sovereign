@@ -64,6 +64,47 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/system/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Real-time SSE telemetry event stream
+         * @description Streams real-time hardware telemetry updates (CPU, RAM, storage, NAS, optical, GPU)
+         *     via Server-Sent Events formatted as `event: telemetry.update`.
+         */
+        get: operations["getSystemEvents"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Real-time SSE telemetry stream alias
+         * @description Convenience root alias for /api/v1/system/events.
+         */
+        get: operations["getEvents"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/storage/disks": {
         parameters: {
             query?: never;
@@ -602,6 +643,59 @@ export interface components {
             /** @example video,audio,dms,ai */
             features?: string;
         };
+        TelemetryUpdate: {
+            /**
+             * Format: float
+             * @example 14.2
+             */
+            cpu_percent: number;
+            /**
+             * Format: int64
+             * @example 3221225472
+             */
+            memory_used_bytes: number;
+            /**
+             * Format: int64
+             * @example 8589934592
+             */
+            memory_total_bytes: number;
+            /**
+             * Format: int64
+             * @example 150081429227
+             */
+            storage_used_bytes: number;
+            /**
+             * Format: int64
+             * @example 1000204886016
+             */
+            storage_total_bytes: number;
+            /**
+             * Format: float
+             * @example 15
+             */
+            storage_percent: number;
+            /**
+             * @example connected
+             * @enum {string}
+             */
+            nas_status: "connected" | "degraded" | "disconnected" | "not_configured" | "error";
+            /** @example Connected */
+            nas_message: string;
+            /**
+             * @example operational
+             * @enum {string}
+             */
+            overall_status: "operational" | "healthy" | "degraded" | "error";
+            /** @example Idle · Ready for disc */
+            optical_status: string;
+            /** @example Daytime (AI Priority) */
+            gpu_status: string;
+            /**
+             * Format: date-time
+             * @example 2026-10-15T15:30:00Z
+             */
+            timestamp: string;
+        };
     };
     responses: never;
     parameters: never;
@@ -703,6 +797,46 @@ export interface operations {
                 };
                 content: {
                     "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    getSystemEvents: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Continuous Server-Sent Events telemetry stream. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/event-stream": string;
+                };
+            };
+        };
+    };
+    getEvents: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Continuous Server-Sent Events telemetry stream. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/event-stream": string;
                 };
             };
         };
