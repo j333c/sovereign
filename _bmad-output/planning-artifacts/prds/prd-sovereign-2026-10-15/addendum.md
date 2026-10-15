@@ -1,6 +1,6 @@
 # Sovereign PRD Addendum: Technical Notes & Candidate Architecture
 
-This addendum preserves technical depth, architectural ideas, candidate software components, and downstream operational details volunteered during discovery.
+This addendum preserves technical depth, architectural ideas, candidate software components, and downstream operational details volunteered during discovery. For formal binding architectural choices, see [Architecture Decision Records (ADRs)](architecture-decisions.md).
 
 ## 1. Candidate Software Stack
 
