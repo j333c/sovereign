@@ -1,0 +1,530 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sovereign — Visual Design Directions Comparison (Hero Screen)</title>
+  <style>
+    /*
+     * Sovereign Visual Design Directions — Master Comparison Suite
+     *
+     * DIRECTION A: Modern Appliance
+     * - Background: #F8F9FA
+     * - Cards: #FFFFFF
+     * - Border: #E5E7EB
+     * - Text Primary: #0F172A
+     * - Text Secondary: #475569
+     * - Action Primary: #0F172A
+     * - Healthy / Emerald: #059669
+     * - Amber: #D97706
+     *
+     * DIRECTION B: Obsidian Zinc
+     * - Background: #09090b
+     * - Cards: #18181b
+     * - Border: #27272a
+     * - Text Primary: #f4f4f5
+     * - Text Secondary: #a1a1aa
+     * - Action Primary: #fafafa
+     * - Healthy / Glowing Emerald: #10b981
+     * - Amber: #f59e0b
+     *
+     * DIRECTION C: Warm Sanctuary
+     * - Background: #F7F6F2
+     * - Cards: #FFFFFF
+     * - Border: #EAE6DF
+     * - Text Primary: #2D2A26
+     * - Text Secondary: #5C564F
+     * - Action Primary: #38493A
+     * - Healthy / Sage: #3E724F
+     * - Amber: #B86B1E
+     */
+
+    *, *::before, *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      background: #0f1115;
+      color: #e2e8f0;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* Top Control Bar */
+    header.control-bar {
+      background: #181a20;
+      border-bottom: 1px solid #2d3139;
+      padding: 10px 20px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      flex-shrink: 0;
+      z-index: 100;
+    }
+
+    .bar-title-group {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .badge-hub {
+      background: #2563eb;
+      color: #ffffff;
+      font-size: 11px;
+      font-weight: 700;
+      padding: 3px 8px;
+      border-radius: 4px;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+    }
+
+    .bar-title {
+      font-size: 14.5px;
+      font-weight: 600;
+      color: #ffffff;
+    }
+
+    .bar-subtitle {
+      font-size: 12px;
+      color: #94a3b8;
+    }
+
+    /* Controls */
+    .controls-group {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .segmented-control {
+      display: inline-flex;
+      background: #0f1115;
+      border: 1px solid #2d3139;
+      border-radius: 6px;
+      padding: 2px;
+    }
+
+    .seg-btn {
+      background: transparent;
+      border: none;
+      color: #94a3b8;
+      font-size: 12px;
+      font-weight: 500;
+      padding: 5px 12px;
+      border-radius: 4px;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      transition: all 0.15s ease;
+    }
+
+    .seg-btn:hover {
+      color: #ffffff;
+    }
+
+    .seg-btn.active {
+      background: #2563eb;
+      color: #ffffff;
+      font-weight: 600;
+    }
+
+    .view-control .seg-btn.active {
+      background: #334155;
+    }
+
+    /* Direction Details Sub-bar */
+    .details-bar {
+      background: #14161b;
+      border-bottom: 1px solid #242831;
+      padding: 8px 20px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 12px;
+      flex-shrink: 0;
+    }
+
+    .details-left {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .personality-name {
+      font-weight: 700;
+      color: #f1f5f9;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .personality-desc {
+      color: #94a3b8;
+    }
+
+    .swatches-list {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .swatch {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 11px;
+      font-family: ui-monospace, Menlo, monospace;
+      color: #cbd5e1;
+      background: #1a1d24;
+      padding: 2px 6px;
+      border-radius: 4px;
+      border: 1px solid #2d3139;
+    }
+
+    .swatch-color {
+      width: 10px;
+      height: 10px;
+      border-radius: 2px;
+      border: 1px solid rgba(255, 255, 255, 0.2);
+    }
+
+    /* Main Preview Stage */
+    .preview-stage {
+      flex: 1;
+      background: #090a0d;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+      overflow: hidden;
+      padding: 12px;
+    }
+
+    /* Frame styles */
+    .frame-container {
+      width: 100%;
+      height: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+      transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    /* 1. Desktop Full Frame */
+    .frame-desktop {
+      width: 100%;
+      height: 100%;
+      border-radius: 8px;
+      overflow: hidden;
+      border: 1px solid #262930;
+      box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
+    }
+
+    .frame-desktop iframe {
+      width: 100%;
+      height: 100%;
+      border: none;
+      display: block;
+    }
+
+    /* 2. Mobile Frame (390px) */
+    .frame-mobile {
+      width: 390px;
+      height: 844px;
+      max-height: 94%;
+      background: #000000;
+      border-radius: 44px;
+      border: 8px solid #2d3139;
+      box-shadow: 0 25px 60px rgba(0, 0, 0, 0.8), 0 0 0 1px #475569;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      position: relative;
+    }
+
+    .mobile-notch {
+      width: 120px;
+      height: 20px;
+      background: #2d3139;
+      border-bottom-left-radius: 12px;
+      border-bottom-right-radius: 12px;
+      position: absolute;
+      top: 0;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 10;
+    }
+
+    .frame-mobile iframe {
+      width: 100%;
+      height: 100%;
+      border: none;
+      display: block;
+      padding-top: 10px;
+    }
+
+    /* 3. Split 3-Up Side-by-Side */
+    .split-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 12px;
+      width: 100%;
+      height: 100%;
+    }
+
+    .split-column {
+      display: flex;
+      flex-direction: column;
+      background: #181a20;
+      border: 1px solid #262930;
+      border-radius: 8px;
+      overflow: hidden;
+    }
+
+    .split-col-header {
+      padding: 8px 12px;
+      background: #14161b;
+      border-bottom: 1px solid #262930;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 11.5px;
+      font-weight: 600;
+    }
+
+    .split-column iframe {
+      flex: 1;
+      width: 100%;
+      height: 100%;
+      border: none;
+    }
+
+    /* Hidden utility */
+    .hidden {
+      display: none !important;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Top Control Bar -->
+  <header class="control-bar">
+    <div class="bar-title-group">
+      <span class="badge-hub">Sovereign UX</span>
+      <div>
+        <div class="bar-title">Hero Screen Visual Design Directions</div>
+        <div class="bar-subtitle">Single-viewport 1080p Appliance Dashboard vs Fluid Mobile</div>
+      </div>
+    </div>
+
+    <div class="controls-group">
+      <!-- Direction Picker -->
+      <div class="segmented-control" id="direction-picker">
+        <button class="seg-btn active" onclick="setDirection('appliance')">
+          <span>A: Modern Appliance</span>
+        </button>
+        <button class="seg-btn" onclick="setDirection('zinc')">
+          <span>B: Obsidian Zinc</span>
+        </button>
+        <button class="seg-btn" onclick="setDirection('warm')">
+          <span>C: Warm Sanctuary</span>
+        </button>
+      </div>
+
+      <!-- View Mode Picker -->
+      <div class="segmented-control view-control" id="view-picker">
+        <button class="seg-btn active" onclick="setViewMode('desktop')">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+          <span>Desktop 1080p Fit</span>
+        </button>
+        <button class="seg-btn" onclick="setViewMode('mobile')">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="2" width="14" height="20" rx="2"/><line x1="12" y1="18" x2="12.01" y2="18"/></svg>
+          <span>Mobile (390px)</span>
+        </button>
+        <button class="seg-btn" onclick="setViewMode('split')">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="3" x2="9" y2="21"/><line x1="15" y1="3" x2="15" y2="21"/></svg>
+          <span>3-Up Split</span>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- Details / Spec Banner -->
+  <div class="details-bar" id="details-bar">
+    <div class="details-left">
+      <span class="personality-name" id="dir-name">Direction A: Modern Appliance</span>
+      <span class="personality-desc" id="dir-desc">Sleek Nordic / Braun minimalism, crisp light mode, hairline borders, zero clutter.</span>
+    </div>
+
+    <div class="swatches-list" id="swatches-container">
+      <!-- Injected via JS based on active direction -->
+    </div>
+  </div>
+
+  <!-- Main Live Preview Stage -->
+  <main class="preview-stage">
+    
+    <!-- Single Frame Mode (Desktop or Mobile) -->
+    <div class="frame-container" id="single-frame-container">
+      <div class="frame-desktop" id="main-frame-wrapper">
+        <div class="mobile-notch hidden" id="mobile-notch"></div>
+        <iframe id="main-iframe" src="./direction-appliance.html"></iframe>
+      </div>
+    </div>
+
+    <!-- 3-Up Side-by-Side Split View Mode -->
+    <div class="split-grid hidden" id="split-grid-container">
+      <div class="split-column">
+        <div class="split-col-header">
+          <span>Direction A: Modern Appliance</span>
+          <span style="color:#94a3b8;">#F8F9FA</span>
+        </div>
+        <iframe src="./direction-appliance.html"></iframe>
+      </div>
+      <div class="split-column">
+        <div class="split-col-header">
+          <span>Direction B: Obsidian Zinc</span>
+          <span style="color:#a1a1aa;">#09090b</span>
+        </div>
+        <iframe src="./direction-zinc.html"></iframe>
+      </div>
+      <div class="split-column">
+        <div class="split-col-header">
+          <span>Direction C: Warm Sanctuary</span>
+          <span style="color:#8C857B;">#F7F6F2</span>
+        </div>
+        <iframe src="./direction-warm.html"></iframe>
+      </div>
+    </div>
+
+  </main>
+
+  <script>
+    const directionsData = {
+      appliance: {
+        name: "Direction A: Modern Appliance",
+        desc: "Sleek Nordic / Braun minimalism, crisp light mode, hairline borders, zero clutter.",
+        file: "./direction-appliance.html",
+        swatches: [
+          { name: "Canvas", hex: "#F8F9FA" },
+          { name: "Surface", hex: "#FFFFFF" },
+          { name: "Border", hex: "#E5E7EB" },
+          { name: "Primary", hex: "#0F172A" },
+          { name: "Healthy", hex: "#059669" },
+          { name: "Amber", hex: "#D97706" }
+        ]
+      },
+      zinc: {
+        name: "Direction B: Obsidian Zinc",
+        desc: "shadcn/ui dark mode, deep #09090b canvas, glowing emerald/amber telemetry, prosumer precision.",
+        file: "./direction-zinc.html",
+        swatches: [
+          { name: "Canvas", hex: "#09090b" },
+          { name: "Surface", hex: "#18181b" },
+          { name: "Border", hex: "#27272a" },
+          { name: "Primary", hex: "#fafafa" },
+          { name: "Healthy Glow", hex: "#10b981" },
+          { name: "Amber Glow", hex: "#f59e0b" }
+        ]
+      },
+      warm: {
+        name: "Direction C: Warm Sanctuary",
+        desc: "Soft warm stone/linen neutrals, calming pine & sage accents, serene domestic feel.",
+        file: "./direction-warm.html",
+        swatches: [
+          { name: "Canvas", hex: "#F7F6F2" },
+          { name: "Surface", hex: "#FFFFFF" },
+          { name: "Border", hex: "#EAE6DF" },
+          { name: "Primary", hex: "#38493A" },
+          { name: "Sage", hex: "#3E724F" },
+          { name: "Ochre", hex: "#B86B1E" }
+        ]
+      }
+    };
+
+    let currentDirection = 'appliance';
+    let currentView = 'desktop';
+
+    function setDirection(dirKey) {
+      currentDirection = dirKey;
+      const data = directionsData[dirKey];
+
+      // Update active button state
+      const dirBtns = document.querySelectorAll('#direction-picker .seg-btn');
+      dirBtns.forEach((btn, idx) => {
+        const keys = ['appliance', 'zinc', 'warm'];
+        if (keys[idx] === dirKey) {
+          btn.classList.add('active');
+        } else {
+          btn.classList.remove('active');
+        }
+      });
+
+      // Update text & swatches
+      document.getElementById('dir-name').innerText = data.name;
+      document.getElementById('dir-desc').innerText = data.desc;
+
+      const swatchCont = document.getElementById('swatches-container');
+      swatchCont.innerHTML = '';
+      data.swatches.forEach(s => {
+        const span = document.createElement('span');
+        span.className = 'swatch';
+        span.innerHTML = `<span class="swatch-color" style="background:${s.hex}"></span>${s.name}: ${s.hex}`;
+        swatchCont.appendChild(span);
+      });
+
+      // Update iframe source
+      document.getElementById('main-iframe').src = data.file;
+    }
+
+    function setViewMode(viewMode) {
+      currentView = viewMode;
+
+      // Update view control active button
+      const viewBtns = document.querySelectorAll('#view-picker .seg-btn');
+      const viewKeys = ['desktop', 'mobile', 'split'];
+      viewBtns.forEach((btn, idx) => {
+        if (viewKeys[idx] === viewMode) {
+          btn.classList.add('active');
+        } else {
+          btn.classList.remove('active');
+        }
+      });
+
+      const singleContainer = document.getElementById('single-frame-container');
+      const splitGrid = document.getElementById('split-grid-container');
+      const frameWrapper = document.getElementById('main-frame-wrapper');
+      const notch = document.getElementById('mobile-notch');
+
+      if (viewMode === 'split') {
+        singleContainer.classList.add('hidden');
+        splitGrid.classList.remove('hidden');
+      } else {
+        splitGrid.classList.add('hidden');
+        singleContainer.classList.remove('hidden');
+
+        if (viewMode === 'mobile') {
+          frameWrapper.className = 'frame-mobile';
+          notch.classList.remove('hidden');
+        } else {
+          frameWrapper.className = 'frame-desktop';
+          notch.classList.add('hidden');
+        }
+      }
+    }
+
+    // Initialize swatches on load
+    setDirection('appliance');
+  </script>
+</body>
+</html>

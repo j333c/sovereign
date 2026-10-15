@@ -1,0 +1,895 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sovereign — Direction A: Modern Appliance</title>
+  <style>
+    /*
+     * Visual Direction A: "Modern Appliance"
+     * Aesthetic: Sleek Nordic / Braun minimalism, light mode, clean crisp white/slate palette, hairline borders.
+     * 
+     * Palette Hex Values:
+     * - Background canvas: #F8F9FA (cool appliance off-white)
+     * - Card surface: #FFFFFF (pure clinical white)
+     * - Border hairline: #E5E7EB (zinc 200)
+     * - Border subtle: #CBD5E1 (slate 300)
+     * - Text Primary: #0F172A (slate 900)
+     * - Text Secondary: #475569 (slate 600)
+     * - Text Muted: #94A3B8 (slate 400)
+     * - Primary Action: #0F172A (graphite black) / hover #1E293B
+     * - Emerald Healthy: #059669 (emerald 600) / bg #ECFDF5
+     * - Amber Status: #D97706 (amber 600) / bg #FEF3C7
+     * - Accent Soft: #F1F5F9 (slate 100)
+     */
+
+    *, *::before, *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    :root {
+      --bg-canvas: #F8F9FA;
+      --surface-card: #FFFFFF;
+      --border-hairline: #E5E7EB;
+      --border-medium: #CBD5E1;
+      --text-primary: #0F172A;
+      --text-secondary: #475569;
+      --text-muted: #94A3B8;
+      --action-primary: #0F172A;
+      --action-hover: #1E293B;
+      --status-green: #059669;
+      --status-green-bg: #ECFDF5;
+      --status-amber: #D97706;
+      --status-amber-bg: #FEF3C7;
+      --status-amber-border: #FDE68A;
+      --radius-sm: 6px;
+      --radius-md: 10px;
+      --radius-lg: 14px;
+      --font-stack: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    }
+
+    html, body {
+      height: 100%;
+      font-family: var(--font-stack);
+      background-color: var(--bg-canvas);
+      color: var(--text-primary);
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+    }
+
+    /* Single-viewport 100vh container on desktop (>= 1024px) */
+    .dashboard-container {
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      max-width: 1440px;
+      margin: 0 auto;
+      padding: 20px 28px;
+      gap: 16px;
+      overflow: hidden; /* Strict no scroll on 1080p desktop */
+    }
+
+    /* Header */
+    header.dash-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      height: 52px;
+      padding: 0 16px;
+      background: var(--surface-card);
+      border: 1px solid var(--border-hairline);
+      border-radius: var(--radius-md);
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
+      flex-shrink: 0;
+    }
+
+    .brand-section {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+
+    .brand-logo {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      text-decoration: none;
+      color: var(--text-primary);
+    }
+
+    .brand-icon {
+      width: 28px;
+      height: 28px;
+      background: #0F172A;
+      border-radius: 6px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #FFFFFF;
+    }
+
+    .brand-icon svg {
+      width: 16px;
+      height: 16px;
+    }
+
+    .brand-name {
+      font-size: 15px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--text-primary);
+    }
+
+    .brand-sub {
+      font-size: 11px;
+      color: var(--text-muted);
+      font-weight: 500;
+      padding-left: 6px;
+      border-left: 1px solid var(--border-hairline);
+    }
+
+    .header-actions {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .status-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      background: var(--status-green-bg);
+      color: var(--status-green);
+      padding: 5px 12px;
+      border-radius: 20px;
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: -0.01em;
+      border: 1px solid rgba(5, 150, 105, 0.2);
+    }
+
+    .status-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background-color: var(--status-green);
+      box-shadow: 0 0 0 2px rgba(5, 150, 105, 0.2);
+    }
+
+    .lang-switcher {
+      display: flex;
+      align-items: center;
+      background: #F1F5F9;
+      border-radius: 6px;
+      padding: 2px;
+      border: 1px solid var(--border-hairline);
+    }
+
+    .lang-btn {
+      border: none;
+      background: transparent;
+      padding: 3px 8px;
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text-secondary);
+      border-radius: 4px;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+
+    .lang-btn.active {
+      background: #FFFFFF;
+      color: var(--text-primary);
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+    }
+
+    .icon-btn {
+      background: transparent;
+      border: 1px solid var(--border-hairline);
+      width: 32px;
+      height: 32px;
+      border-radius: 6px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      color: var(--text-secondary);
+      position: relative;
+      transition: background 0.15s;
+    }
+
+    .icon-btn:hover {
+      background: #F1F5F9;
+      color: var(--text-primary);
+    }
+
+    .icon-btn .badge-dot {
+      position: absolute;
+      top: 6px;
+      right: 6px;
+      width: 6px;
+      height: 6px;
+      background: #3B82F6;
+      border-radius: 50%;
+    }
+
+    /* Main Grid: 4 Service Cards */
+    .services-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      grid-template-rows: repeat(2, minmax(0, 1fr));
+      gap: 16px;
+      flex: 1; /* Takes majority of vertical space dynamically */
+      min-height: 0; /* Prevents overflow */
+    }
+
+    .service-card {
+      background: var(--surface-card);
+      border: 1px solid var(--border-hairline);
+      border-radius: var(--radius-lg);
+      padding: 20px 22px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.02);
+      transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+      position: relative;
+    }
+
+    .service-card:hover {
+      border-color: #94A3B8;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.04);
+      transform: translateY(-1px);
+    }
+
+    .card-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+    }
+
+    .service-header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .service-icon-box {
+      width: 42px;
+      height: 42px;
+      border-radius: var(--radius-md);
+      background: #F8FAFC;
+      border: 1px solid var(--border-hairline);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--text-primary);
+      flex-shrink: 0;
+    }
+
+    .service-title-wrap h2 {
+      font-size: 16px;
+      font-weight: 600;
+      color: var(--text-primary);
+      line-height: 1.25;
+    }
+
+    .service-subtitle {
+      font-size: 12px;
+      color: var(--text-secondary);
+      font-weight: 400;
+      margin-top: 2px;
+    }
+
+    .card-status-pill {
+      font-size: 11px;
+      font-weight: 600;
+      padding: 4px 9px;
+      border-radius: 12px;
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+    }
+
+    .card-status-pill.healthy {
+      background: var(--status-green-bg);
+      color: var(--status-green);
+      border: 1px solid rgba(5, 150, 105, 0.2);
+    }
+
+    .card-status-pill.amber {
+      background: var(--status-amber-bg);
+      color: var(--status-amber);
+      border: 1px solid var(--status-amber-border);
+      animation: gentle-pulse 2s infinite ease-in-out;
+    }
+
+    @keyframes gentle-pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.75; }
+    }
+
+    .card-body {
+      margin: 12px 0 8px;
+    }
+
+    .stat-text {
+      font-size: 13px;
+      color: var(--text-secondary);
+      font-weight: 500;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .stat-number {
+      font-weight: 700;
+      color: var(--text-primary);
+    }
+
+    .alert-banner {
+      margin-top: 8px;
+      background: #FFFBEB;
+      border: 1px solid #FDE68A;
+      color: #92400E;
+      padding: 6px 10px;
+      border-radius: var(--radius-sm);
+      font-size: 11.5px;
+      font-weight: 500;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .amber-progress-wrap {
+      margin-top: 8px;
+    }
+
+    .amber-progress-bar {
+      height: 4px;
+      background: #FEF3C7;
+      border-radius: 2px;
+      overflow: hidden;
+      margin-top: 6px;
+    }
+
+    .amber-progress-fill {
+      height: 100%;
+      width: 45%;
+      background: var(--status-amber);
+      border-radius: 2px;
+      animation: pulse-fill 1.8s infinite ease-in-out;
+    }
+
+    @keyframes pulse-fill {
+      0% { width: 20%; }
+      50% { width: 65%; }
+      100% { width: 20%; }
+    }
+
+    .card-footer {
+      display: flex;
+      justify-content: flex-end;
+      align-items: center;
+      padding-top: 10px;
+      border-top: 1px solid #F1F5F9;
+    }
+
+    .btn-action {
+      background: var(--action-primary);
+      color: #FFFFFF;
+      border: none;
+      padding: 8px 16px;
+      font-size: 12.5px;
+      font-weight: 600;
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      text-decoration: none;
+      transition: background 0.15s ease;
+    }
+
+    .btn-action:hover {
+      background: var(--action-hover);
+    }
+
+    .btn-action.btn-secondary {
+      background: #FFFFFF;
+      color: var(--text-primary);
+      border: 1px solid var(--border-medium);
+    }
+
+    .btn-action.btn-secondary:hover {
+      background: #F8FAFC;
+    }
+
+    /* Media Dropzone */
+    .dropzone-container {
+      background: #FFFFFF;
+      border: 1.5px dashed var(--border-medium);
+      border-radius: var(--radius-md);
+      padding: 12px 20px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      flex-shrink: 0;
+      transition: border-color 0.15s, background 0.15s;
+    }
+
+    .dropzone-container:hover {
+      border-color: #64748B;
+      background: #FAFAFC;
+    }
+
+    .dropzone-left {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .dropzone-icon {
+      width: 36px;
+      height: 36px;
+      border-radius: 50%;
+      background: #F1F5F9;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--text-secondary);
+      flex-shrink: 0;
+    }
+
+    .dropzone-text h3 {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text-primary);
+    }
+
+    .dropzone-text p {
+      font-size: 11.5px;
+      color: var(--text-muted);
+      margin-top: 2px;
+    }
+
+    .dropzone-path {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 11px;
+      background: #F1F5F9;
+      color: var(--text-secondary);
+      padding: 4px 8px;
+      border-radius: 4px;
+      border: 1px solid var(--border-hairline);
+    }
+
+    /* System & Hardware Bar */
+    .system-bar {
+      background: var(--surface-card);
+      border: 1px solid var(--border-hairline);
+      border-radius: var(--radius-md);
+      padding: 12px 20px;
+      display: grid;
+      grid-template-columns: 1.4fr 1fr 1.2fr;
+      align-items: center;
+      gap: 24px;
+      flex-shrink: 0;
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.02);
+    }
+
+    .sys-item {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .sys-icon-wrap {
+      width: 32px;
+      height: 32px;
+      border-radius: 6px;
+      background: #F8FAFC;
+      border: 1px solid var(--border-hairline);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--text-secondary);
+      flex-shrink: 0;
+    }
+
+    .sys-info {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .sys-label {
+      font-size: 11px;
+      color: var(--text-muted);
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .sys-value {
+      font-size: 12.5px;
+      font-weight: 600;
+      color: var(--text-primary);
+      margin-top: 1px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .progress-bar-wrap {
+      width: 100%;
+      height: 4px;
+      background: #E2E8F0;
+      border-radius: 2px;
+      overflow: hidden;
+      margin-top: 5px;
+    }
+
+    .progress-bar-fill {
+      width: 52.5%;
+      height: 100%;
+      background: #0F172A;
+      border-radius: 2px;
+    }
+
+    .badge-subtle {
+      font-size: 10.5px;
+      font-weight: 600;
+      padding: 2px 6px;
+      border-radius: 4px;
+      background: #F1F5F9;
+      color: var(--text-secondary);
+    }
+
+    /* Responsive adjustments for mobile */
+    @media (max-width: 899px) {
+      body {
+        overflow-y: auto;
+      }
+
+      .dashboard-container {
+        height: auto;
+        min-height: 100vh;
+        overflow: visible;
+        padding: 16px;
+      }
+
+      .services-grid {
+        grid-template-columns: 1fr;
+        grid-template-rows: auto;
+        flex: none;
+      }
+
+      .system-bar {
+        grid-template-columns: 1fr;
+        gap: 14px;
+      }
+
+      .dropzone-container {
+        flex-direction: column;
+        align-items: flex-start;
+      }
+    }
+  </style>
+</head>
+<body>
+
+  <div class="dashboard-container">
+    
+    <!-- 1. Header -->
+    <header class="dash-header">
+      <div class="brand-section">
+        <a href="#" class="brand-logo">
+          <div class="brand-icon">
+            <!-- Sovereign Minimal Monolith Crest SVG -->
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="4" y="3" width="16" height="18" rx="2" />
+              <line x1="9" y1="8" x2="15" y2="8" />
+              <line x1="9" y1="12" x2="15" y2="12" />
+              <line x1="9" y1="16" x2="11" y2="16" />
+            </svg>
+          </div>
+          <span class="brand-name">Sovereign</span>
+          <span class="brand-sub">Home Server</span>
+        </a>
+      </div>
+
+      <div class="header-actions">
+        <!-- Status Badge -->
+        <div class="status-badge">
+          <span class="status-dot"></span>
+          <span>All Systems Operational</span>
+        </div>
+
+        <!-- Language Switcher -->
+        <div class="lang-switcher">
+          <button class="lang-btn active">EN</button>
+          <button class="lang-btn">DE</button>
+          <button class="lang-btn">ES</button>
+          <button class="lang-btn">FR</button>
+        </div>
+
+        <!-- Notification Bell -->
+        <button class="icon-btn" title="System Notifications">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path>
+            <path d="M13.73 21a2 2 0 0 1-3.46 0"></path>
+          </svg>
+          <span class="badge-dot"></span>
+        </button>
+      </div>
+    </header>
+
+    <!-- 2. Services Grid (4 Cards) -->
+    <main class="services-grid">
+
+      <!-- Card 1: Jellyfin (Video Streaming) -->
+      <section class="service-card">
+        <div>
+          <div class="card-top">
+            <div class="service-header">
+              <div class="service-icon-box">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <rect x="2" y="3" width="20" height="14" rx="2" />
+                  <polygon points="10 8 16 11.5 10 15 10 8" fill="currentColor" />
+                  <line x1="8" y1="21" x2="16" y2="21" />
+                  <line x1="12" y1="17" x2="12" y2="21" />
+                </svg>
+              </div>
+              <div class="service-title-wrap">
+                <h2>Video Streaming</h2>
+                <div class="service-subtitle">Jellyfin Media Server</div>
+              </div>
+            </div>
+            <span class="card-status-pill healthy">
+              <span class="status-dot" style="width:5px; height:5px;"></span> Healthy
+            </span>
+          </div>
+
+          <div class="card-body">
+            <div class="stat-text">
+              <span class="stat-number">124</span> Movies <span style="color:var(--text-muted);">&bull;</span> <span class="stat-number">48</span> TV Shows
+            </div>
+          </div>
+        </div>
+
+        <div class="card-footer">
+          <a href="#" class="btn-action">
+            Open Streaming
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="9 18 15 12 9 6"></polyline>
+            </svg>
+          </a>
+        </div>
+      </section>
+
+      <!-- Card 2: Navidrome / Audiobookshelf (Audio) -->
+      <section class="service-card">
+        <div>
+          <div class="card-top">
+            <div class="service-header">
+              <div class="service-icon-box">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M9 18V5l12-2v13" />
+                  <circle cx="6" cy="18" r="3" />
+                  <circle cx="18" cy="16" r="3" />
+                </svg>
+              </div>
+              <div class="service-title-wrap">
+                <h2>Audiobooks & Music</h2>
+                <div class="service-subtitle">Navidrome & Audiobookshelf</div>
+              </div>
+            </div>
+            <span class="card-status-pill healthy">
+              <span class="status-dot" style="width:5px; height:5px;"></span> Running
+            </span>
+          </div>
+
+          <div class="card-body">
+            <div class="stat-text">
+              <span class="stat-number">1,420</span> Tracks indexed <span style="color:var(--text-muted);">&bull;</span> High Fidelity Lossless
+            </div>
+          </div>
+        </div>
+
+        <div class="card-footer">
+          <a href="#" class="btn-action">
+            Open Audio
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="9 18 15 12 9 6"></polyline>
+            </svg>
+          </a>
+        </div>
+      </section>
+
+      <!-- Card 3: Paperless-ngx (Document Archive) -->
+      <section class="service-card">
+        <div>
+          <div class="card-top">
+            <div class="service-header">
+              <div class="service-icon-box">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                  <polyline points="14 2 14 8 20 8"></polyline>
+                  <line x1="16" y1="13" x2="8" y2="13"></line>
+                  <line x1="16" y1="17" x2="8" y2="17"></line>
+                  <polyline points="10 9 9 9 8 9"></polyline>
+                </svg>
+              </div>
+              <div class="service-title-wrap">
+                <h2>Document Archive</h2>
+                <div class="service-subtitle">Paperless-ngx</div>
+              </div>
+            </div>
+            <span class="card-status-pill healthy">
+              <span class="status-dot" style="width:5px; height:5px;"></span> Healthy
+            </span>
+          </div>
+
+          <div class="card-body">
+            <div class="stat-text">
+              <span class="stat-number">142</span> Documents archived
+            </div>
+            <div class="alert-banner">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
+                <line x1="12" y1="9" x2="12" y2="13"></line>
+                <line x1="12" y1="17" x2="12.01" y2="17"></line>
+              </svg>
+              <span>Car insurance renewal due in 10 days</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="card-footer">
+          <a href="#" class="btn-action">
+            Open Archive
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="9 18 15 12 9 6"></polyline>
+            </svg>
+          </a>
+        </div>
+      </section>
+
+      <!-- Card 4: Local AI (Open WebUI) -->
+      <section class="service-card">
+        <div>
+          <div class="card-top">
+            <div class="service-header">
+              <div class="service-icon-box" style="background:#FFFBEB; border-color:#FDE68A; color:#D97706;">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/>
+                </svg>
+              </div>
+              <div class="service-title-wrap">
+                <h2>Local AI</h2>
+                <div class="service-subtitle">Open WebUI</div>
+              </div>
+            </div>
+            <span class="card-status-pill amber">
+              <span class="status-dot" style="background:#D97706; width:5px; height:5px;"></span> Reloading
+            </span>
+          </div>
+
+          <div class="card-body">
+            <div class="stat-text" style="color:var(--status-amber);">
+              Starting AI Model... (Reloading into VRAM)
+            </div>
+            <div class="amber-progress-wrap">
+              <div class="amber-progress-bar">
+                <div class="amber-progress-fill"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card-footer">
+          <a href="#" class="btn-action btn-secondary">
+            Open AI Chat
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="9 18 15 12 9 6"></polyline>
+            </svg>
+          </a>
+        </div>
+      </section>
+
+    </main>
+
+    <!-- 3. Media Landing Dropzone -->
+    <section class="dropzone-container">
+      <div class="dropzone-left">
+        <div class="dropzone-icon">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+            <polyline points="17 8 12 3 7 8"></polyline>
+            <line x1="12" y1="3" x2="12" y2="15"></line>
+          </svg>
+        </div>
+        <div class="dropzone-text">
+          <h3>Drop media files here or copy to network share</h3>
+          <p>Automatic intake: media files tagged and routed to appropriate library immediately</p>
+        </div>
+      </div>
+      <div>
+        <span class="dropzone-path">\\sovereign\drop</span>
+      </div>
+    </section>
+
+    <!-- 4. System & Hardware Bar -->
+    <footer class="system-bar">
+      <!-- Storage -->
+      <div class="sys-item">
+        <div class="sys-icon-wrap">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="22" y1="12" x2="2" y2="12"></line>
+            <path d="M5.45 5.11L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"></path>
+            <line x1="6" y1="16" x2="6.01" y2="16"></line>
+            <line x1="10" y1="16" x2="10.01" y2="16"></line>
+          </svg>
+        </div>
+        <div class="sys-info">
+          <div class="sys-label">Storage Pool</div>
+          <div class="sys-value">
+            <span>4.2 TB / 8 TB</span>
+            <span class="badge-subtle">NVMe</span>
+            <span style="font-size:11px; color:var(--status-green); font-weight:500;">+ NAS Connected</span>
+          </div>
+          <div class="progress-bar-wrap">
+            <div class="progress-bar-fill"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Optical Drive -->
+      <div class="sys-item">
+        <div class="sys-icon-wrap">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="10"></circle>
+            <circle cx="12" cy="12" r="3"></circle>
+          </svg>
+        </div>
+        <div class="sys-info">
+          <div class="sys-label">Optical Drive</div>
+          <div class="sys-value">
+            <span>Idle</span>
+            <span class="badge-subtle">Ready for disc</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- GPU / Day-Night Schedule -->
+      <div class="sys-item">
+        <div class="sys-icon-wrap">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="5"></circle>
+            <line x1="12" y1="1" x2="12" y2="3"></line>
+            <line x1="12" y1="21" x2="12" y2="23"></line>
+            <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+            <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+            <line x1="1" y1="12" x2="3" y2="12"></line>
+            <line x1="21" y1="12" x2="23" y2="12"></line>
+            <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+            <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+          </svg>
+        </div>
+        <div class="sys-info">
+          <div class="sys-label">Hardware Profile</div>
+          <div class="sys-value">
+            <span>Daytime Mode</span>
+            <span class="badge-subtle" style="background:#ECFDF5; color:#065F46;">AI Priority</span>
+          </div>
+        </div>
+      </div>
+    </footer>
+
+  </div>
+
+</body>
+</html>
