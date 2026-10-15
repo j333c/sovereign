@@ -111,8 +111,8 @@ For most households, the promise of the "personal cloud" and "smart home" has re
 - **Landing Zone**: A local network drop folder (SMB/NFS) and web upload component allowing users to drop media files for automated metadata enrichment and database ingestion.
 - **Optical Disc Automation**: The background subsystem that detects inserted Blu-ray, DVD, or Audio CD media, executes unattended ripping and metadata tagging, and auto-ejects the disc.
 - **Transcoding Queue**: The scheduled background worker that converts raw media imports into standardized in-house streamable files and optimized offline mobile profiles.
-- **DMS (Document Management System)**: The dedicated document archiving engine (Paperless-ngx) responsible for OCR, document categorization, and full-text indexing.
-- **Local AI Service**: The local inference engine (e.g., Ollama / vLLM) and chat UI (Open WebUI) running on local hardware without cloud dependencies.
+- **Local AI Subsystem**: The privacy-first, offline local artificial intelligence architecture comprising two distinct tiers: an end-user conversational application layer (Open WebUI) and an underlying high-performance LLM inference backend (candidate: `llama.cpp` / `llama-server`).
+- **LLM Inference Backend**: The managed engine responsible for local GGUF model storage, CPU/GPU tensor layer offloading, dynamic VRAM lifecycle management, and serving internal OpenAI-compatible endpoints (`/v1`).
 - **RAG (Retrieval-Augmented Generation)**: The architecture whereby the Local AI directly queries the DMS repository to answer user questions using verified private records.
 - **GPU Arbitration**: The resource governor that balances GPU memory and compute between local LLM execution and real-time hardware-accelerated video transcoding.
 - **Rollback Engine**: The automated and manual mechanism that preserves container image versions and volume snapshots, reverting immediately if an update fails health checks.
@@ -239,39 +239,56 @@ The system can dispatch urgent alerts to Home Assistant and email when documents
 ---
 
 ### 4.5 Local AI & Document Knowledge (RAG)
-**Description**: Fully local, private conversational AI interface with direct document retrieval (RAG) and active hardware resource arbitration. Realizes UJ-4.
+**Description**: Fully local, private conversational AI interface with direct document retrieval (RAG), dedicated managed LLM backend administration, and active hardware resource arbitration. Realizes UJ-4.
 
 #### FR-14: Browser-Based Local AI Chat Interface
-The user can interact with local AI models through a pre-integrated Open WebUI interface accessible via standard web browsers. Realizes UJ-4.
+The user can interact with local AI models through a pre-integrated Open WebUI interface accessible via standard web browsers, served by the managed LLM inference backend. Realizes UJ-4.
 - **Consequences (testable)**:
   - Provides conversational chat, persona selection, and chat history.
   - Accessible on desktop and mobile web browsers without installing custom native software.
-  - Connects to a local LLM runtime (e.g., Ollama container) operating 100% offline.
+  - Connects out-of-the-box to the internal managed `llama.cpp` backend container operating 100% offline.
   - Provides a pre-configured standard system customization prompt that sets the response language matching the user's configured locale and embeds country-specific regulations, legal frameworks, and cultural habits (e.g., standard billing periods, cancellation notice windows, document formatting conventions).
 
-#### FR-15: Single-Source-of-Truth RAG
+#### FR-15: Managed LLM Inference Backend & Turnkey Default Setup
+The system can manage a dedicated high-performance LLM inference engine backend (candidate: `llama.cpp` / `llama-server`) with turnkey default configuration, automated hardware acceleration detection, and appliance-grade administrative controls. Realizes UJ-4.
+- **Consequences (testable)**:
+  - **Turnkey Default Setup**: On initial provisioning of the Local AI subsystem, Sovereign automatically deploys a pre-configured `llama.cpp` backend service with a verified, balanced default quantized GGUF model (e.g., standard Q4_K_M model such as Qwen 2.5 7B Instruct or Llama 3.2), autodetects hardware acceleration capabilities (Nvidia CUDA, Vulkan, Intel SYCL, or CPU fallback), and establishes internal connectivity with zero manual configuration.
+  - **Model Storage & Administration**: Dedicated local volume (`/data/models`) stores GGUF models. The Admin Interface provides an appliance administration surface to:
+    - View the currently loaded active model and its memory footprint (RAM/VRAM).
+    - Select and switch active models from local storage with one click.
+    - Trigger background downloads of recommended default or alternative curated GGUF models with progress reporting.
+  - **Backend Resource & Execution Tuning**: Admin interface allows users to adjust:
+    - GPU Layer Offloading (`-ngl` / `--n-gpu-layers`): Auto-calculated default with manual override slider (0 to 100% offload).
+    - Context Window Size (`-c`): Configurable presets (2048, 4096, 8192 tokens) balanced against memory constraints.
+    - CPU Thread Allocation (`-t`): Auto-pinned to optimal physical core count.
+  - **Operational Lifecycle & Health**:
+    - Reports granular backend status: Operational/Ready, Warm-up/Loading weights into memory, Inferencing, Idle/Unloaded, Error.
+    - Exposes "Reload Backend" and "View Inference Logs" directly in the appliance settings without terminal access.
+    - Supports configurable dynamic idle surrender timeout to unload model weights when idle and free VRAM for video transcoding.
+
+#### FR-16: Single-Source-of-Truth RAG
 The local AI system can query the document management system directly to answer user questions without requiring duplicate document uploads. Realizes UJ-4. [ASSUMPTION: Paperless-ngx API and metadata provide adequate search and text extraction performance for direct local LLM retrieval without requiring a separate standalone vector database for small-to-medium household libraries (< 10,000 documents).]
 - **Consequences (testable)**:
   - Queries execute directly against the DMS search API / vector embeddings.
   - System enforces zero redundant data storage: documents are neither duplicated into the chat UI database nor stored in multiple locations.
   - Chat responses cite the specific document title and page number used to generate the answer.
 
-#### FR-16: Standardized Shared AI Platform API
-The system can expose an internal OpenAI-compatible API endpoint and automatically configure installed features to leverage local AI. Realizes UJ-4.
+#### FR-17: Standardized Shared AI Platform API
+The system can expose an internal OpenAI-compatible API endpoint directly from the managed LLM backend and automatically configure installed features to leverage local AI. Realizes UJ-4.
 - **Consequences (testable)**:
-  - Exposes an internal HTTP endpoint (e.g., `http://sovereign-ai:11434/v1`) accessible to other Sovereign containers.
-  - When activating a feature that supports AI integrations (e.g., DMS auto-tagging or summarization), Sovereign automatically provisions the internal endpoint URL and credentials into the feature container's configuration.
+  - Exposes an internal HTTP endpoint (e.g., `http://sovereign-ai-backend:8080/v1` or reverse-proxied internally) accessible to Open WebUI, Paperless-ngx, and other Sovereign feature containers.
+  - When activating a feature that supports AI integrations (e.g., DMS auto-tagging or document analysis), Sovereign automatically provisions the internal endpoint URL and credentials into the feature container's configuration.
 
-#### FR-17: Active GPU & VRAM Arbitration & Day/Night Scheduling
-The system can dynamically manage GPU memory and compute resources to prevent local AI models from starving or crashing video transcoding sessions, reserving daytime GPU availability for interactive user requests. Realizes UJ-3, UJ-4. [ASSUMPTION: Intel QuickSync (via 8th gen+ Core CPUs) or Nvidia GPUs with NVENC support are the primary hardware acceleration targets for video transcoding.]
+#### FR-18: Active GPU & VRAM Arbitration & Day/Night Scheduling
+The system can dynamically manage GPU memory and compute resources across the managed LLM backend (llama.cpp) and media transcoders to prevent inference from starving or crashing video playback sessions, reserving daytime GPU availability for interactive user requests. Realizes UJ-3, UJ-4. [ASSUMPTION: Intel QuickSync (via 8th gen+ Core CPUs) or Nvidia GPUs with NVENC support are the primary hardware acceleration targets for video transcoding.]
 - **Consequences (testable)**:
   - **Daytime Priority for AI**: During daytime hours (default: 07:00 to 01:00), the system actively reserves GPU compute and VRAM for interactive user AI queries. Heavy background video transcoding, disc rips, and non-urgent batch tasks are withheld or throttled.
   - **Nighttime Batch Window**: Heavy batch video transcoding and background OCR processing run during scheduled off-peak nighttime/early morning hours (default: 01:00 to 07:00).
   - **Visible Admin UI Setting**: The Admin Interface provides a clear, user-facing schedule setting where users can inspect and customize daytime vs. nighttime GPU allocation and task priorities.
-  - **Resource Arbitration**:
+  - **Resource Arbitration with llama.cpp**:
     - If a single GPU is shared between local LLMs and real-time streaming:
-      - LLM service enforces idle model unloading (`OLLAMA_KEEP_ALIVE` configured to 5 minutes or less) to release VRAM.
-      - System reserves minimum VRAM overhead (`OLLAMA_GPU_OVERHEAD`) ensuring video encoder buffers remain available.
+      - LLM backend enforces dynamic idle model unloading / process surrender (timeout configurable to 5 minutes or less) to release VRAM back to the system.
+      - System reserves minimum VRAM overhead ensuring video encoder buffers remain available during concurrent usage, adjusting `-ngl` offload layer budget accordingly.
     - In systems equipped with hybrid GPUs (e.g., Intel iGPU with QuickSync + discrete Nvidia GPU), video transcoding is automatically pinned to the iGPU while LLM inference is pinned to the dGPU.
 
 ---
@@ -279,20 +296,20 @@ The system can dynamically manage GPU memory and compute resources to prevent lo
 ### 4.6 Localization, Governance & Web Presence
 **Description**: Multilingual accessibility, public documentation, project marketing, and compliance.
 
-#### FR-18: Multi-Language UI & Documentation
+#### FR-19: Multi-Language UI & Documentation
 The system can display all admin interfaces, setup wizards, and user documentation in four primary launch languages.
 - **Consequences (testable)**:
   - Admin UI provides an instant language selector for English (EN), German (DE), Spanish (ES), and French (FR).
   - Setup Wizard automatically detects browser language preferences.
   - Bundled short guides and comprehensive documentation are fully translated across all four languages.
 
-#### FR-19: Project Marketing Site & GitHub Presence
+#### FR-20: Project Marketing Site & GitHub Presence
 The project can maintain a public marketing website and an open-source GitHub repository detailing project creation and attribution.
 - **Consequences (testable)**:
   - Marketing website highlights feature capabilities, minimum hardware guidelines, and directs users to the GitHub repository.
   - GitHub README documents project architecture, acknowledges creation via the BMad Method, transparently notes AI assistance, and gives prominent attribution and license compliance notices for all bundled open-source projects.
 
-#### FR-20: Minimum Hardware Specification Guidance & Future Hardware Roadmap
+#### FR-21: Minimum Hardware Specification Guidance & Future Hardware Roadmap
 The platform can publish concrete minimum hardware profiles by feature tier and prepare for future hardware appliance sales.
 - **Consequences (testable)**:
   - Documentation and marketing site specify 3 distinct hardware tiers:
@@ -338,7 +355,9 @@ The platform can publish concrete minimum hardware profiles by feature tier and 
 
 ### 6.1 In Scope (v1)
 - Core Admin Web Interface with First-Run Wizard and mDNS discovery (`sovereign.local`).
-- One-click container lifecycle management for Jellyfin (Video), Navidrome/Audiobookshelf (Audio), Paperless-ngx (DMS), and Open WebUI + Ollama (Local AI).
+- One-click container lifecycle management for Jellyfin (Video), Navidrome/Audiobookshelf (Audio), Paperless-ngx (DMS), and Local AI (Open WebUI user interface + managed `llama.cpp` backend).
+- Turnkey default setup for LLM backend with pre-configured default GGUF model, autodetected hardware acceleration, and internal OpenAI-compatible API.
+- Appliance Admin UI controls for LLM backend administration (model selection, GPU layer offloading, context length, idle surrender).
 - Traffic-light status monitoring (Green/Yellow/Red) with automated failure rollback and one-click manual rollback.
 - Storage setup: internal drive pool or external NAS mount.
 - Media Landing Zone drop folder (SMB + Web upload).
@@ -365,7 +384,7 @@ The platform can publish concrete minimum hardware profiles by feature tier and 
 ### Primary Success Metrics
 - **SM-1 (Setup Completion Rate)**: $\ge 90\%$ of first-time home users complete the First-Run Wizard from power-on to their first active **Green** feature in under 10 minutes without consulting external command-line guides. Validates FR-1, FR-2.
 - **SM-2 (Zero Terminal Operation)**: $100\%$ of standard feature installations, updates, and rollbacks execute cleanly through the Admin Interface with zero required shell or terminal commands. Validates FR-2, FR-3.
-- **SM-3 (RAG Answer Accuracy & Integrity)**: $\ge 95\%$ of test queries against the DMS via Local AI cite correct document sources and page numbers with zero cross-document hallucinations. Validates FR-14, FR-15.
+- **SM-3 (RAG Answer Accuracy & Integrity)**: $\ge 95\%$ of test queries against the DMS via Local AI cite correct document sources and page numbers with zero cross-document hallucinations. Validates FR-14, FR-15, FR-16.
 - **SM-4 (Dirty-Shutdown Recovery)**: $100\%$ clean boot and database integrity recovery after 20 consecutive simulated ungraceful power disconnections during active transcode/write operations. Validates FR-4.
 
 ### Secondary Success Metrics
@@ -375,7 +394,7 @@ The platform can publish concrete minimum hardware profiles by feature tier and 
 ### Counter-Metrics (Do NOT Optimize)
 - **SM-C1: App Store Catalog Sprawl**: Do not optimize for the total number of installable apps. A catalog of 100 poorly maintained, unvetted containers degrades the appliance experience. Prioritize deep, robust integration of the core curated stack over raw quantity. Counterbalances feature count growth.
 - **SM-C2: Aggressive Cold Boot Time at the Expense of Disk Verification**: Do not optimize boot time below 10 seconds if it requires skipping filesystem journal verification or database consistency checks. Power-loss resilience always trumps raw boot speed. Counterbalances FR-4.
-- **SM-C3: Maximum Continuous LLM VRAM Retention**: Do not optimize for instant LLM response latency by keeping model weights permanently pinned in VRAM if doing so starves video transcoding streams. Counterbalances FR-17.
+- **SM-C3: Maximum Continuous LLM VRAM Retention**: Do not optimize for instant LLM response latency by keeping model weights permanently pinned in VRAM if doing so starves video transcoding streams. Counterbalances FR-15, FR-18.
 
 ---
 
@@ -391,5 +410,5 @@ The platform can publish concrete minimum hardware profiles by feature tier and 
 - `[ASSUMPTION: §4.1 FR-1]`: Standard consumer home routers allow mDNS multicast traffic (`.local` domain resolution); for routers with mDNS disabled, DHCP IP fallback is sufficient.
 - `[ASSUMPTION: §4.2 FR-7]`: The server hardware contains a compatible SATA or USB optical drive with read support for CD, DVD, and Blu-ray media.
 - `[ASSUMPTION: §4.4 FR-12]`: The household has an active email account supporting standard IMAP/SSL connections for automated invoice retrieval.
-- `[ASSUMPTION: §4.5 FR-15]`: Paperless-ngx API and metadata provide adequate search and text extraction performance for direct local LLM retrieval without requiring a separate standalone vector database for small-to-medium household libraries (< 10,000 documents).
-- `[ASSUMPTION: §4.5 FR-17]`: Intel QuickSync (via 8th gen+ Core CPUs) or Nvidia GPUs with NVENC support are the primary hardware acceleration targets for video transcoding.
+- `[ASSUMPTION: §4.5 FR-16]`: Paperless-ngx API and metadata provide adequate search and text extraction performance for direct local LLM retrieval without requiring a separate standalone vector database for small-to-medium household libraries (< 10,000 documents).
+- `[ASSUMPTION: §4.5 FR-18]`: Intel QuickSync (via 8th gen+ Core CPUs) or Nvidia GPUs with NVENC support are the primary hardware acceleration targets for video transcoding.

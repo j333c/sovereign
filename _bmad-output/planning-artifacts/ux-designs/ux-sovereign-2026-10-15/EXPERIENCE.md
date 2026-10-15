@@ -23,7 +23,7 @@ Sovereign is a single-surface responsive web application operating as the **Appl
 - **Component Base**: `shadcn/ui` conventions on Next.js with Tailwind CSS semantics.
 - **Visual Reference**: `DESIGN.md` governs all visual tokens, colors, shapes, and typography.
 - **Scope Boundary**: Strict separation between the Sovereign Appliance Management Layer and installed third-party applications:
-  - **Sovereign Owns**: First-run provisioning wizard, central admin dashboard, central settings hub, standalone media dropzone, boot diagnostics screen, service lifecycle toggles, and safe rollback orchestration.
+  - **Sovereign Owns**: First-run provisioning wizard, central admin dashboard, central settings hub (including **LLM Backend Administration**: active GGUF model switcher, turnkey default model status, context window sizing, GPU offload layer slider, dynamic idle surrender timeout, model reload, backend logs), standalone media dropzone, boot diagnostics screen, service lifecycle toggles, and safe rollback orchestration.
   - **Installed Applications Own**: Media streaming and playback UI (Jellyfin), document filing and OCR tagging UI (Paperless-ngx), interactive local AI chat UI (Open WebUI), music streaming UI (Navidrome/Audiobookshelf).
   - **Home Automation Owns**: Family wall tablet ambient cards and push notifications (Home Assistant via Sovereign webhooks/MQTT).
 
@@ -34,8 +34,8 @@ Sovereign is a single-surface responsive web application operating as the **Appl
 | Surface | Reached From | Purpose & Primary Actions | States Covered |
 | :--- | :--- | :--- | :--- |
 | **First-Run Setup Wizard** (`/setup`) | First visit or unconfigured state | 5-step guided wizard: Language &rarr; Network &rarr; Storage (Local format or NAS mount) &rarr; Feature checklist &rarr; Alert email. Completes with seamless transition to dashboard. | Cold-load, Empty, In-Progress, Testing NAS connection, Formatting, Complete. |
-| **Central Admin Dashboard** (`/`) | Default home URL (`http://sovereign.local`) | Single-viewport appliance status dashboard: <br>• Extensible service cards (Jellyfin, Paperless, Audio, AI, + future add-ons).<br>• Primary "Open Service UI" buttons (open in new tab).<br>• Service overflow menus (`•••`) for restart, rollback, logs.<br>• Telemetry bar (Storage, NAS, Disc drive, GPU schedule). | Operational (Green), Attention Required (Amber), Error (Red), AI Warm-up (Amber), Offline/Reconnecting. |
-| **Central Settings View** (`/settings`) | Dashboard header &rarr; Settings gear | Extensible modular system settings hub with tabbed navigation: Services & Add-ons, Storage & Pools, Hardware & GPU schedule, Maintenance & Rollback, System. | Read, Edit, Testing connection, Confirmation dialogs. |
+| **Central Admin Dashboard** (`/`) | Default home URL (`http://sovereign.local`) | Single-viewport appliance status dashboard: <br>• Extensible service cards (Jellyfin, Paperless, Audio, Local AI with Open WebUI + llama.cpp, + future add-ons).<br>• Primary "Open Service UI" buttons (open in new tab).<br>• Service overflow menus (`•••`) for restart, rollback, logs.<br>• Telemetry bar (Storage, NAS, Disc drive, GPU schedule). | Operational (Green), Attention Required (Amber), Error (Red), AI Warm-up (Amber), Offline/Reconnecting. |
+| **Central Settings View** (`/settings`) | Dashboard header &rarr; Settings gear | Extensible modular system settings hub with tabbed navigation: Services & Add-ons, AI Backend & Models (`llama.cpp`), Smart Hardware Sharing, Storage & Pools, Maintenance & Rollback, Home Automation, System. | Read, Edit, Testing connection, Confirmation dialogs. |
 | **Standalone Media Dropzone** (`/drop`) | Direct URL (`http://sovereign.local/drop`) or dashboard link | Household upload surface without admin privileges. Category selector (`Movies` \| `TV` \| `Music` \| `Audiobooks`), drag-and-drop target, copyable LAN path (`\\sovereign\drop`). | Idle, Drag-over, Uploading (Progress), Success, Duplicate/Error. |
 | **Boot Diagnostics Screen** (`/boot`) | Automatic on startup post-power outage | Reassuring status screen displayed within 15s of kernel boot: *"Checking system safety after power outage... your files are secure."* Progress ring + auto-redirect. | Checking journals, Verifying database, Redirecting, Unrecoverable Hardware Alert. |
 
@@ -54,8 +54,9 @@ Sovereign speaks with **reassuring consumer clarity**. It protects family data a
 | **Update Failed Check** | `"Docker healthcheck failed: image rolled back to sha256:7b1e..."` | `"Update couldn't start properly. We've safely restored your previous working version."` |
 | **NAS Disconnected** | `"mount.nfs: Connection refused (errno 111) on 192.168.1.50"` | `"Home NAS storage is unreachable. Please verify that your NAS is powered on and connected to your Wi-Fi."` |
 | **AI Model Loading** | `"Loading quantized GGUF weights into CUDA VRAM..."` | `"Starting AI model..."` |
-| **AI Card Metric** | `"Private RAG with Ollama & Open WebUI"` | `"Private Family Search"` |
+| **AI Card Metric** | `"Private RAG with Open WebUI & llama.cpp"` | `"Private Family Search"` |
 | **AI Warm-up Subtitle**| `"Reloading model into GPU VRAM (<=5s)"` | `"Warming up private AI (ready in 5s)"` |
+| **AI Backend Config** | `"llama-server --model qwen2.5-7b.gguf -ngl 33 -c 4096"` | `"Default Model: Qwen 2.5 7B · 100% GPU Offload"` |
 | **Audio Sync Metric** | `"Subsonic API Active on port 4533"` | `"Mobile Phone Sync Ready"` |
 | **DMS Sync Metric** | `"OCR Active · Mail Polling Connected"` | `"Automatic Text Search Active · Mailbox Connected"` |
 | **Hardware Schedule**| `"GPU Arbitration Scheduler"` | `"Smart Hardware Sharing"` |
@@ -117,8 +118,18 @@ Sovereign speaks with **reassuring consumer clarity**. It protects family data a
 ### SettingsNavigation
 - **Visual reference**: `DESIGN.md.components.SettingsNavigation`.
 - **Behavior**: Sidebar navigation menu.
-  - Synchronizes active tab with browser URL hash (`#services`, `#gpu`, `#storage`, `#maintenance`).
+  - Synchronizes active tab with browser URL hash (`#services`, `#ai-backend`, `#gpu`, `#storage`, `#maintenance`, `#automation`, `#system`).
   - Supports arrow key (`Up`/`Down`) keyboard navigation.
+
+### AIBackendSettings
+- **Visual reference**: `DESIGN.md.components.AIBackendCard`.
+- **Behavior**:
+  - Displays turnkey default setup badge: *"Default Setup: Qwen 2.5 7B (Q4_K_M) · Autodetected GPU Offload Active"*.
+  - **Active Model Selector**: Dropdown showing available `.gguf` files in storage; switching model triggers graceful reload with progress spinner.
+  - **Context Window Sizing**: Segmented button pills for `2048`, `4096` (default), and `8192` tokens; displays estimated memory usage badge.
+  - **GPU Acceleration Slider**: Range slider controlling transformer layer offload (`-ngl`) from `0% (CPU Only)` to `100% (Full GPU Offload)`.
+  - **Dynamic Idle Surrender Toggle**: Accessible switch with caption: *"Release GPU memory after 5 minutes of inactivity (reserves VRAM for video streaming)"*.
+  - **Operational Actions**: Buttons for *"Reload Backend Engine"* and *"View Inference Logs"*, executing inline without page navigation.
 
 ### RollbackModal
 - **Visual reference**: `DESIGN.md.components.RollbackModal`.

@@ -124,6 +124,11 @@ components:
     width: '240px'
     borderRadius: '{rounded.lg}'
     gap: '{spacing.1}'
+  AIBackendCard:
+    background: '{colors.surface}'
+    border: '1px solid {colors.border}'
+    borderRadius: '{rounded.lg}'
+    padding: '{spacing.6}'
   RollbackModal:
     background: '{colors.surface}'
     borderRadius: '{rounded.xl}'
@@ -260,6 +265,14 @@ Sovereign avoids deep or fuzzy shadows. Visual hierarchy is established through 
 - Width: `{components.SettingsNavigation.width}` (240px).
 - Radius: `{rounded.lg}`.
 - Active item: Background `{colors.surface}`, border 1px solid `{colors.border}`, bold text. Hover item: Background `{colors.border-subtle}`.
+
+### AIBackendCard
+- Background: `{components.AIBackendCard.background}`
+- Border: 1px solid `{colors.border}`, Radius: `{rounded.lg}`
+- Anatomy:
+  1. Header: Section heading ("AI Backend & Inference Engine") + turnkey default badge (`{colors.status-green-bg}`, `{colors.status-green-fg}`, green ● dot).
+  2. Setting Rows: Model selector dropdown, segmented context window button pills, GPU offload slider with percentage readout, idle surrender switch.
+  3. Action Footer: Secondary action buttons ("Reload Engine", "View Logs") with standard AA contrast and keyboard focus rings.
 
 ### RollbackModal
 - Max-width: `{components.RollbackModal.maxWidth}` (480px).

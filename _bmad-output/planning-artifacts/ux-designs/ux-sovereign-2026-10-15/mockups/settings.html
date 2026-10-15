@@ -248,8 +248,9 @@
     <!-- Sidebar Navigation (Extensible) -->
     <nav class="settings-nav" aria-label="Settings categories">
       <button class="nav-item active" aria-current="page">Services & Add-ons</button>
-      <button class="nav-item">Storage & Pools</button>
+      <button class="nav-item">AI Backend & Models</button>
       <button class="nav-item">Smart Hardware Sharing</button>
+      <button class="nav-item">Storage & Pools</button>
       <button class="nav-item">Maintenance & Rollback</button>
       <button class="nav-item">Home Automation</button>
       <button class="nav-item">System & Network</button>
@@ -289,10 +290,68 @@
 
         <div class="setting-row">
           <div>
-            <div id="lbl-ai" class="setting-label">Local AI Engine (Open WebUI & Ollama)</div>
-            <div class="setting-description">Private on-premise AI search and document querying without cloud leaks.</div>
+            <div id="lbl-ai" class="setting-label">Local AI Engine (Open WebUI & llama.cpp)</div>
+            <div class="setting-description">Private on-premise AI chat, document search, and RAG querying.</div>
           </div>
           <label class="switch"><input type="checkbox" checked aria-labelledby="lbl-ai"><span class="slider"></span></label>
+        </div>
+      </section>
+
+      <!-- AI Backend & Inference Engine Management -->
+      <section class="settings-card" aria-labelledby="card-ai-backend">
+        <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 4px;">
+          <h2 id="card-ai-backend" class="card-heading" style="margin-bottom: 0;">AI Inference Engine (llama.cpp)</h2>
+          <span style="display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 9999px; font-size: 12px; font-weight: 600; background: #ECFDF5; color: #065F46; border: 1px solid #A7F3D0;">
+            <span style="font-size: 8px;">●</span> Default Setup Active
+          </span>
+        </div>
+        <div class="card-subheading">Administer the local inference engine powering Open WebUI and Paperless-ngx document intelligence.</div>
+
+        <div class="setting-row">
+          <div>
+            <label for="select-model" class="setting-label">Active Model</label>
+            <div class="setting-description">Current GGUF model loaded in memory for local queries.</div>
+          </div>
+          <select id="select-model" style="padding: 6px 12px; border-radius: 6px; border: 1px solid #CBD5E1; font-size: 13px; font-weight: 500; color: #0F172A; background: #FFFFFF;">
+            <option selected>Qwen 2.5 7B Instruct (Q4_K_M) — Default</option>
+            <option>Llama 3.2 3B Instruct (Q4_K_M)</option>
+            <option>Mistral 7B Instruct v0.3 (Q4_K_M)</option>
+          </select>
+        </div>
+
+        <div class="setting-row">
+          <div>
+            <div class="setting-label">Context Window Size</div>
+            <div class="setting-description">Maximum conversation and document memory length.</div>
+          </div>
+          <div style="display: flex; gap: 6px;">
+            <button type="button" style="padding: 4px 10px; border-radius: 6px; border: 1px solid #CBD5E1; font-size: 12px; font-weight: 500; background: #FFFFFF; cursor: pointer;">2048</button>
+            <button type="button" style="padding: 4px 10px; border-radius: 6px; border: 1px solid #0F172A; font-size: 12px; font-weight: 600; background: #0F172A; color: #FFFFFF; cursor: pointer;">4096 (Default)</button>
+            <button type="button" style="padding: 4px 10px; border-radius: 6px; border: 1px solid #CBD5E1; font-size: 12px; font-weight: 500; background: #FFFFFF; cursor: pointer;">8192</button>
+          </div>
+        </div>
+
+        <div class="setting-row">
+          <div>
+            <div class="setting-label">GPU Layer Offload (-ngl)</div>
+            <div class="setting-description">Transformer layers offloaded to GPU VRAM (auto-tuned for hardware transcode headroom).</div>
+          </div>
+          <div style="display: flex; align-items: center; gap: 10px;">
+            <span style="font-size: 12px; font-weight: 600; color: #0F172A;">33 / 33 layers (100% GPU)</span>
+          </div>
+        </div>
+
+        <div class="setting-row">
+          <div>
+            <div id="lbl-idle-release" class="setting-label">Dynamic Idle Memory Release</div>
+            <div class="setting-description">Surrender GPU VRAM after 5 minutes of inactivity so video transcoding has full headroom.</div>
+          </div>
+          <label class="switch"><input type="checkbox" checked aria-labelledby="lbl-idle-release"><span class="slider"></span></label>
+        </div>
+
+        <div style="display: flex; gap: 10px; margin-top: 18px; padding-top: 14px; border-top: 1px solid #F1F5F9;">
+          <button type="button" style="padding: 8px 14px; border-radius: 6px; border: 1px solid #CBD5E1; background: #F8F9FA; font-size: 13px; font-weight: 600; color: #0F172A; cursor: pointer;">Reload Backend Engine</button>
+          <button type="button" style="padding: 8px 14px; border-radius: 6px; border: 1px solid #CBD5E1; background: #FFFFFF; font-size: 13px; font-weight: 500; color: #475569; cursor: pointer;">View Inference Logs</button>
         </div>
       </section>
 
