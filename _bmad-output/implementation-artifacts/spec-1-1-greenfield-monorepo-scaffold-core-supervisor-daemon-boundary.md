@@ -2,7 +2,7 @@
 title: 'Story 1.1: Greenfield Monorepo Scaffold & Core Supervisor Daemon Boundary'
 type: 'feature'
 created: '2026-10-15'
-status: 'review'
+status: 'in-review'
 baseline_commit: 'ebaca11d28fa65fdb90b31390cef38c02cf2fec9'
 route: 'dispatch'
 review_loop_iteration: 0
@@ -91,6 +91,35 @@ context:
 ## Spec Change Log
 
 ## Review Triage Log
+
+| ID | Layer | Finding | Verdict | Evidence / Disposition |
+|---|---|---|---|---|
+| B1 | blind-hunter | `web/Dockerfile` missing `output: 'standalone'` in `next.config.ts` | medium | Docker container build fails because `.next/standalone` is not emitted. Route: patch. |
+| B2 | blind-hunter | `web/Dockerfile` copies missing `/app/public` | medium | `web/public` does not exist in repo; docker build will fail. Route: patch. |
+| B3 | blind-hunter | `web/Dockerfile` uses `npm install` without package-lock.json | low | Fails deterministic installation in container builds. Route: patch. |
+| B4 | blind-hunter | Missing `.dockerignore` files | low | Unnecessary local build artifacts copied into build context. Route: patch. |
+| B5 | blind-hunter | `docker-compose.yml` NEXT_PUBLIC_API_URL inaccessible from browser | low | In Story 1.1 dev environment, client needs fallback to localhost:8080 when outside ingress. Route: patch. |
+| B6 | blind-hunter | `cmd/sovereign-daemon/server.go` lacks CORS headers | medium | Browser requests from web UI (port 3000) to daemon (port 8080) blocked by CORS. Route: patch. |
+| B7 | blind-hunter | Unmapped routes return plain text instead of RFC 7807 | low | Plain text error on API paths deviates from problem details contract. Route: patch. |
+| B8 | blind-hunter | `client.ts` uses handwritten paths instead of schema route keys | false | Refuted: Method return types are strictly bound to generated OpenAPI schema `paths`. |
+| B9 | blind-hunter | `main.go` does not track boot cycles or clean shutdowns | false | Refuted: Out of scope for Story 1.1; explicitly scheduled for Epic 1 Story 1.3. |
+| B10 | blind-hunter | `db.SetMaxOpenConns(1)` serializes all queries | low | Single connection avoids lock contention in modernc.org/sqlite; acceptable for scaffold. Route: reject (negligible). |
+| B11 | blind-hunter | `globals.css` font-sans not applied to body | low | Missing font-sans class on body tag. Route: patch. |
+| B12 | blind-hunter | `page.tsx` hardcodes status without calling API | false | Refuted: Real-time dashboard telemetry integration is explicitly scheduled for Story 1.6. |
+| B13 | blind-hunter | `docker-compose.yml` binds port 8080 to 0.0.0.0 | low | Insecure LAN exposure without ingress boundary. Route: patch. |
+| B14 | blind-hunter | `.gitignore` does not ignore media, models, documents subdirs | medium | Risks accidental git commit of large model and media files. Route: patch. |
+| B15 | blind-hunter | Missing healthchecks in compose file | low | Healthcheck definition enhances container orchestration. Route: patch. |
+| V1 | verification-gap | Docker Compose socket isolation lacks automated test | medium | Gap verified: AC requires socket isolation; regression test needed. Route: patch. |
+| V2 | verification-gap | Boot status DB failure path lacks test coverage | medium | Gap verified: GET /api/v1/system/boot-status failure path untested. Route: patch. |
+| V3 | verification-gap | TestServer_BootStatus omits assertion on message property | low | Gap verified: Message property required by OpenAPI schema but not asserted in test. Route: patch. |
+| V4 | verification-gap | Non-RFC 7807 JSON errors produce undefined title and status | medium | Verified: generic JSON error without RFC 7807 fields results in undefined error properties. Route: patch. |
+| V5 | verification-gap | Server returns 503 instead of 500 on boot-status DB error | low | Verified: OpenAPI schema defines 500 for internal error on /system/boot-status. Route: patch. |
+| V6 | verification-gap | Base URL trailing slash creates double slashes | low | Verified: trailing slash in baseUrl results in //api/v1 URLs. Route: patch. |
+| E1 | edge-case-hunter | Docker build fails copying nonexistent /app/public | medium | Duplicate of B2. Route: patch. |
+| E2 | edge-case-hunter | Docker build fails missing .next/standalone | medium | Duplicate of B1. Route: patch. |
+| E3 | edge-case-hunter | Client error response lacking RFC 7807 properties | medium | Duplicate of V4. Route: patch. |
+| E4 | edge-case-hunter | Trailing slash in baseUrl causes malformed URLs | low | Duplicate of V6. Route: patch. |
+| E5 | edge-case-hunter | SSR fetch with relative URL throws TypeError in Node.js | medium | Verified: Node.js fetch requires absolute URL. Route: patch. |
 
 ## Design Notes
 

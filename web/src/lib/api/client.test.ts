@@ -125,4 +125,63 @@ describe("SovereignApiClient", () => {
       }
     );
   });
+
+  it("normalizes trailing slashes in baseUrl", async () => {
+    let requestedUrl = "";
+    const mockFetch: typeof fetch = async (input) => {
+      requestedUrl = String(input);
+      return new Response(JSON.stringify({ status: "ok", version: "0.1.0", database: "connected" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    };
+
+    const client = new SovereignApiClient({
+      baseUrl: "http://localhost:8080///",
+      fetchFn: mockFetch,
+    });
+
+    assert.equal(client.baseUrl, "http://localhost:8080");
+    await client.getHealth();
+    assert.equal(requestedUrl, "http://localhost:8080/api/v1/health");
+  });
+
+  it("defaults baseUrl to http://localhost:8080 in node environment when options are omitted", () => {
+    const client = new SovereignApiClient();
+    assert.equal(client.baseUrl, "http://localhost:8080");
+  });
+
+  it("safely falls back when receiving non-RFC7807 JSON error response", async () => {
+    const mockFetch: typeof fetch = async () => {
+      return new Response(
+        JSON.stringify({
+          error: "Unauthorized action",
+        }),
+        {
+          status: 401,
+          statusText: "Unauthorized",
+          headers: { "Content-Type": "application/json" },
+        }
+      );
+    };
+
+    const client = new SovereignApiClient({
+      baseUrl: "http://localhost:8080",
+      fetchFn: mockFetch,
+    });
+
+    await assert.rejects(
+      async () => {
+        await client.getHealth();
+      },
+      (err: unknown) => {
+        assert.ok(err instanceof ProblemDetailsError);
+        assert.equal(err.status, 401);
+        assert.equal(err.title, "Unauthorized");
+        assert.equal(err.detail, "Unauthorized action");
+        assert.equal(err.instance, "/api/v1/health");
+        return true;
+      }
+    );
+  });
 });

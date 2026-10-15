@@ -16,7 +16,7 @@ services:
       - SOVEREIGN_ADDR=:8080
       - SOVEREIGN_DATA_DIR=/data
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
     networks:
       - sovereign-control
       - sovereign-ingress

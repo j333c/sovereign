@@ -1,0 +1,10 @@
+.git
+.gitignore
+.dockerignore
+node_modules
+web/node_modules
+web/.next
+web/out
+data
+bin
+*.db*

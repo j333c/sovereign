@@ -108,9 +108,20 @@ func (s *Server) routes() {
 	s.router.HandleFunc("GET /api/v1/system/boot-status", s.handleBootStatus)
 }
 
-// Handler returns the HTTP handler for the server.
+// Handler returns the HTTP handler for the server with CORS middleware.
 func (s *Server) Handler() http.Handler {
-	return s.router
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, Accept")
+
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+
+		s.router.ServeHTTP(w, r)
+	})
 }
 
 func (s *Server) writeJSON(w http.ResponseWriter, status int, data any) {
@@ -164,7 +175,7 @@ func (s *Server) handleBootStatus(w http.ResponseWriter, r *http.Request) {
 	s.mu.RUnlock()
 
 	if dbHandle == nil {
-		s.writeProblem(w, http.StatusServiceUnavailable, "Service Unavailable", "Database is not initialized", r.URL.Path)
+		s.writeProblem(w, http.StatusInternalServerError, "Internal Server Error", "Database is not initialized", r.URL.Path)
 		return
 	}
 

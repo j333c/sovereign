@@ -1,4 +1,4 @@
-import type { components, paths } from "./schema";
+import type { components } from "./schema";
 
 export type HealthResponse = components["schemas"]["HealthResponse"];
 export type BootStatusResponse = components["schemas"]["BootStatusResponse"];
@@ -35,16 +35,27 @@ export interface ApiClientOptions {
  * with the sovereign-daemon core supervisor.
  */
 export class SovereignApiClient {
-  private readonly baseUrl: string;
+  readonly baseUrl: string;
   private readonly fetchFn: typeof fetch;
 
   constructor(options: ApiClientOptions = {}) {
-    this.baseUrl = options.baseUrl ?? (typeof process !== "undefined" && process.env?.NEXT_PUBLIC_API_URL ? process.env.NEXT_PUBLIC_API_URL : "");
+    let base = options.baseUrl;
+    if (base === undefined) {
+      const envUrl = typeof process !== "undefined" ? process.env?.NEXT_PUBLIC_API_URL : undefined;
+      if (envUrl) {
+        base = envUrl;
+      } else if (typeof window === "undefined") {
+        base = "http://localhost:8080";
+      } else {
+        base = "";
+      }
+    }
+    this.baseUrl = base.replace(/\/+$/, "");
     this.fetchFn = options.fetchFn ?? fetch.bind(globalThis);
   }
 
   private async request<T>(path: string, init?: RequestInit): Promise<T> {
-    const url = `${this.baseUrl}${path}`;
+    const url = this.baseUrl ? `${this.baseUrl}${path}` : path;
     const response = await this.fetchFn(url, {
       ...init,
       headers: {
@@ -56,7 +67,20 @@ export class SovereignApiClient {
     if (!response.ok) {
       let problem: ProblemDetails;
       try {
-        problem = await response.json();
+        const body = (await response.json()) as Record<string, unknown> | null;
+        problem = {
+          type: typeof body?.type === "string" ? body.type : "https://sovereign.local/errors/unknown",
+          title: typeof body?.title === "string" ? body.title : (response.statusText || "HTTP Error"),
+          status: typeof body?.status === "number" ? body.status : response.status,
+          detail: typeof body?.detail === "string"
+            ? body.detail
+            : typeof body?.message === "string"
+            ? body.message
+            : typeof body?.error === "string"
+            ? body.error
+            : `Request to ${path} failed with HTTP status ${response.status}`,
+          instance: typeof body?.instance === "string" ? body.instance : path,
+        };
       } catch {
         problem = {
           type: "https://sovereign.local/errors/unknown",

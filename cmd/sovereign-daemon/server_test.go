@@ -139,6 +139,56 @@ func TestServer_BootStatus(t *testing.T) {
 	if !res.DiagnosticsCompleted {
 		t.Errorf("expected diagnostics_completed = true")
 	}
+	if res.Message != "All systems operational" {
+		t.Errorf("expected message 'All systems operational', got %q", res.Message)
+	}
+}
+
+func TestServer_BootStatus_Failure(t *testing.T) {
+	srv, _ := setupTestServer(t)
+	// Close database to simulate failure
+	_ = srv.Close()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/system/boot-status", nil)
+	w := httptest.NewRecorder()
+
+	srv.Handler().ServeHTTP(w, req)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("expected status 500, got %d", w.Code)
+	}
+
+	contentType := w.Header().Get("Content-Type")
+	if contentType != "application/problem+json" {
+		t.Errorf("expected Content-Type application/problem+json, got %q", contentType)
+	}
+
+	var prob ProblemDetails
+	if err := json.Unmarshal(w.Body.Bytes(), &prob); err != nil {
+		t.Fatalf("failed to parse problem details: %v", err)
+	}
+
+	if prob.Status != http.StatusInternalServerError {
+		t.Errorf("expected problem status 500, got %d", prob.Status)
+	}
+}
+
+func TestServer_CORS(t *testing.T) {
+	srv, _ := setupTestServer(t)
+	defer srv.Close()
+
+	req := httptest.NewRequest(http.MethodOptions, "/api/v1/health", nil)
+	w := httptest.NewRecorder()
+
+	srv.Handler().ServeHTTP(w, req)
+
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("expected status 204 for OPTIONS preflight, got %d", w.Code)
+	}
+
+	if origin := w.Header().Get("Access-Control-Allow-Origin"); origin != "*" {
+		t.Errorf("expected Access-Control-Allow-Origin *, got %q", origin)
+	}
 }
 
 func TestServer_UnwritableDirectory(t *testing.T) {
