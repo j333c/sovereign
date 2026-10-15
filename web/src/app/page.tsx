@@ -21,6 +21,30 @@ function HomeScreenWithRouter(props: HomePageProps) {
   return <HomeScreenContent {...props} router={router} />;
 }
 
+export async function checkBootAndSetup(
+  client: SovereignApiClient,
+  router?: { replace: (url: string) => void }
+): Promise<boolean> {
+  try {
+    const status = await client.getBootStatus();
+    if (status.mode !== "operational") {
+      router?.replace("/boot");
+      return false;
+    }
+
+    const setup = await client.getSetupStatus();
+    if (!setup.is_configured) {
+      router?.replace("/setup");
+      return false;
+    }
+
+    return true;
+  } catch {
+    router?.replace("/boot");
+    return false;
+  }
+}
+
 function HomeScreenContent({
   apiClientOverride,
   router,
@@ -31,44 +55,11 @@ function HomeScreenContent({
   useEffect(() => {
     let isMounted = true;
 
-    const checkBootMode = async () => {
-      try {
-        const status = await client.getBootStatus();
-        if (!isMounted) return;
-
-        if (status.mode !== "operational") {
-          if (router) {
-            router.replace("/boot");
-          }
-          return;
-        }
-
-        const setup = await client.getSetupStatus();
-        if (!isMounted) return;
-
-        if (!setup.is_configured) {
-          if (router) {
-            router.replace("/setup");
-          }
-          return;
-        }
-      } catch (err: unknown) {
-        if (!isMounted) return;
-
-        if (err instanceof ProblemDetailsError && err.status === 503) {
-          if (router) {
-            router.replace("/boot");
-          }
-          return;
-        }
-      }
-
-      if (isMounted) {
+    void checkBootAndSetup(client, router).then((ready) => {
+      if (isMounted && ready) {
         setIsReady(true);
       }
-    };
-
-    void checkBootMode();
+    });
 
     return () => {
       isMounted = false;

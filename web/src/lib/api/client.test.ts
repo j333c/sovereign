@@ -679,5 +679,65 @@ describe("SovereignApiClient", () => {
 
     assert.equal(calls.length, 3);
   });
+
+  it("always sends credentials: include on API requests", async () => {
+    let capturedCredentials: RequestCredentials | undefined;
+    const mockFetch: typeof fetch = async (input, init) => {
+      capturedCredentials = init?.credentials;
+      return new Response(JSON.stringify({ status: "ok", version: "0.1.0", database: "connected" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    };
+
+    const client = new SovereignApiClient({ baseUrl: "http://localhost:8080", fetchFn: mockFetch });
+    await client.getHealth();
+    assert.equal(capturedCredentials, "include");
+  });
+
+  it("safely handles HTTP 204 No Content or empty responses", async () => {
+    const mockFetch: typeof fetch = async () => {
+      return new Response(null, { status: 204 });
+    };
+
+    const client = new SovereignApiClient({ baseUrl: "http://localhost:8080", fetchFn: mockFetch });
+    const res = await client.logout();
+    assert.deepEqual(res, {});
+  });
+
+  it("successfully calls getSettings and updateSettings", async () => {
+    let updatedPayload: unknown = null;
+    const mockFetch: typeof fetch = async (input, init) => {
+      const url = String(input);
+      if (url.endsWith("/settings") && init?.method === "POST") {
+        updatedPayload = JSON.parse(String(init.body));
+        return new Response(JSON.stringify({ status: "ok" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      if (url.endsWith("/settings")) {
+        return new Response(
+          JSON.stringify({
+            language: "de",
+            admin_email: "alex@family.net",
+            hostname: "sovereign.local",
+            features: "video,audio,dms,ai",
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      throw new Error(`Unexpected endpoint: ${url}`);
+    };
+
+    const client = new SovereignApiClient({ baseUrl: "http://localhost:8080", fetchFn: mockFetch });
+    const settings = await client.getSettings();
+    assert.equal(settings.language, "de");
+    assert.equal(settings.hostname, "sovereign.local");
+
+    const updateRes = await client.updateSettings({ language: "en" });
+    assert.equal(updateRes.status, "ok");
+    assert.deepEqual(updatedPayload, { language: "en" });
+  });
 });
 

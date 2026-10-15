@@ -310,3 +310,113 @@ func TestRBACMiddleware(t *testing.T) {
 		t.Fatalf("ClearSessionCookie did not expire cookie: %s", clearHeader)
 	}
 }
+
+func TestVerifyPasswordEdgeCases(t *testing.T) {
+	db := newTestDB(t)
+	mgr := fastTestManager(t, db)
+
+	// 1. Zero cost parameters must return false, not panic
+	zeroCostHash := "$argon2id$v=19$m=0,t=0,p=0$c29tZXNhbHQ$dGVzdGhhc2g"
+	if mgr.VerifyPassword("password", zeroCostHash) {
+		t.Fatalf("expected false for zero-cost parameters")
+	}
+
+	// 2. Empty salt must return false
+	emptySaltHash := "$argon2id$v=19$m=65536,t=1,p=4$$dGVzdGhhc2g"
+	if mgr.VerifyPassword("password", emptySaltHash) {
+		t.Fatalf("expected false for empty salt")
+	}
+
+	// 3. Empty hash component must return false
+	emptyHashComponent := "$argon2id$v=19$m=65536,t=1,p=4$c29tZXNhbHQ$"
+	if mgr.VerifyPassword("password", emptyHashComponent) {
+		t.Fatalf("expected false for empty hash component")
+	}
+
+	// 4. Excessive password length (> 256) rejected
+	longPassword := strings.Repeat("A", 300)
+	_, err := mgr.HashPassword(longPassword)
+	if err != auth.ErrPasswordTooLong {
+		t.Fatalf("expected ErrPasswordTooLong for 300-char password, got: %v", err)
+	}
+}
+
+func TestRoleHierarchy(t *testing.T) {
+	db := newTestDB(t)
+	mgr := fastTestManager(t, db)
+	ctx := context.Background()
+
+	adminSess, _ := mgr.CreateSession(ctx, "admin", auth.RoleAdmin)
+	userSess, _ := mgr.CreateSession(ctx, "user", auth.RoleUser)
+	guestSess, _ := mgr.CreateSession(ctx, "guest", auth.RoleGuest)
+
+	userLevelHandler := mgr.RequireRole(auth.RoleUser)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("user-level-ok"))
+	}))
+
+	// Admin accesses user level -> 200 OK
+	reqAdmin := httptest.NewRequest(http.MethodGet, "/api/v1/user/resource", nil)
+	reqAdmin.AddCookie(&http.Cookie{Name: auth.SessionCookieName, Value: adminSess.Token})
+	rrAdmin := httptest.NewRecorder()
+	userLevelHandler.ServeHTTP(rrAdmin, reqAdmin)
+	if rrAdmin.Code != http.StatusOK {
+		t.Fatalf("expected Admin to access RoleUser endpoint, got: %d", rrAdmin.Code)
+	}
+
+	// User accesses user level -> 200 OK
+	reqUser := httptest.NewRequest(http.MethodGet, "/api/v1/user/resource", nil)
+	reqUser.AddCookie(&http.Cookie{Name: auth.SessionCookieName, Value: userSess.Token})
+	rrUser := httptest.NewRecorder()
+	userLevelHandler.ServeHTTP(rrUser, reqUser)
+	if rrUser.Code != http.StatusOK {
+		t.Fatalf("expected User to access RoleUser endpoint, got: %d", rrUser.Code)
+	}
+
+	// Guest accesses user level -> 403 Forbidden
+	reqGuest := httptest.NewRequest(http.MethodGet, "/api/v1/user/resource", nil)
+	reqGuest.AddCookie(&http.Cookie{Name: auth.SessionCookieName, Value: guestSess.Token})
+	rrGuest := httptest.NewRecorder()
+	userLevelHandler.ServeHTTP(rrGuest, reqGuest)
+	if rrGuest.Code != http.StatusForbidden {
+		t.Fatalf("expected Guest to be forbidden from RoleUser endpoint, got: %d", rrGuest.Code)
+	}
+}
+
+func TestPruneExpiredSessions(t *testing.T) {
+	db := newTestDB(t)
+	mgr := fastTestManager(t, db)
+	ctx := context.Background()
+
+	// 1. Create a valid session and an expired session
+	validSess, err := mgr.CreateSession(ctx, "valid_user", auth.RoleAdmin)
+	if err != nil {
+		t.Fatalf("failed to create session: %v", err)
+	}
+
+	expiredToken := "expired-token-to-prune"
+	_, err = db.Exec("INSERT INTO sessions (token, username, role, expires_at) VALUES (?, ?, ?, ?)",
+		expiredToken, "expired_user", "admin", time.Now().Add(-2*time.Hour).Unix())
+	if err != nil {
+		t.Fatalf("failed to insert expired session: %v", err)
+	}
+
+	// 2. Prune expired sessions
+	if err := mgr.PruneExpiredSessions(ctx); err != nil {
+		t.Fatalf("PruneExpiredSessions failed: %v", err)
+	}
+
+	// 3. Valid session should still exist
+	valSess, err := mgr.ValidateSession(ctx, validSess.Token)
+	if err != nil || valSess == nil {
+		t.Fatalf("expected valid session to remain, got err: %v", err)
+	}
+
+	// 4. Expired session should have been deleted from SQLite
+	var count int
+	_ = db.QueryRow("SELECT COUNT(*) FROM sessions WHERE token = ?", expiredToken).Scan(&count)
+	if count != 0 {
+		t.Fatalf("expected expired session to be pruned, found count: %d", count)
+	}
+}
+

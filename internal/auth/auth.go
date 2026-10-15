@@ -30,6 +30,7 @@ import (
 
 var (
 	ErrPasswordTooShort   = errors.New("password must be at least 8 characters")
+	ErrPasswordTooLong    = errors.New("password must not exceed 256 characters")
 	ErrInvalidEmail       = errors.New("invalid email address format")
 	ErrAlreadyConfigured  = errors.New("appliance first-run setup has already been completed")
 	ErrInvalidCredentials = errors.New("invalid username or password")
@@ -45,6 +46,7 @@ const (
 	DefaultArgon2Threads uint8  = 4
 	DefaultArgon2KeyLen  uint32 = 32
 	DefaultSaltLen       uint32 = 16
+	MaxPasswordLength           = 256
 	SessionCookieName           = "sovereign_session"
 	DefaultSessionMaxAge        = 2592000 // 30 days in seconds
 )
@@ -238,6 +240,10 @@ func (m *Manager) EnsureSchema(ctx context.Context) error {
 
 // HashPassword generates a cryptographically secure Argon2id hash with a random salt.
 func (m *Manager) HashPassword(password string) (string, error) {
+	if len(password) > MaxPasswordLength {
+		return "", ErrPasswordTooLong
+	}
+
 	salt := make([]byte, m.saltLen)
 	if _, err := rand.Read(salt); err != nil {
 		return "", fmt.Errorf("failed to generate random salt: %w", err)
@@ -254,7 +260,7 @@ func (m *Manager) HashPassword(password string) (string, error) {
 
 // VerifyPassword checks if a plaintext password matches an Argon2id PHC hash.
 func (m *Manager) VerifyPassword(password, encodedHash string) bool {
-	if password == "" || encodedHash == "" {
+	if password == "" || encodedHash == "" || len(password) > MaxPasswordLength {
 		return false
 	}
 
@@ -278,14 +284,17 @@ func (m *Manager) VerifyPassword(password, encodedHash string) bool {
 	if _, err := fmt.Sscanf(parts[3], "m=%d,t=%d,p=%d", &memory, &t, &p); err != nil {
 		return false
 	}
+	if memory == 0 || t == 0 || p == 0 {
+		return false
+	}
 
 	salt, err := base64.RawStdEncoding.DecodeString(parts[4])
-	if err != nil {
+	if err != nil || len(salt) == 0 {
 		return false
 	}
 
 	expectedHash, err := base64.RawStdEncoding.DecodeString(parts[5])
-	if err != nil {
+	if err != nil || len(expectedHash) == 0 {
 		return false
 	}
 
@@ -320,6 +329,9 @@ func (m *Manager) CompleteSetup(ctx context.Context, req SetupRequest) (*Session
 	if len(req.Password) < 8 {
 		return nil, ErrPasswordTooShort
 	}
+	if len(req.Password) > MaxPasswordLength {
+		return nil, ErrPasswordTooLong
+	}
 
 	if !IsValidEmail(req.Email) {
 		return nil, ErrInvalidEmail
@@ -345,6 +357,13 @@ func (m *Manager) CompleteSetup(ctx context.Context, req SetupRequest) (*Session
 		return nil, fmt.Errorf("failed to begin setup transaction: %w", err)
 	}
 	defer tx.Rollback()
+
+	// Verify setup_completed inside transaction to prevent TOCTOU race
+	var existingSetup string
+	err = tx.QueryRowContext(ctx, "SELECT value FROM settings WHERE key = 'setup_completed'").Scan(&existingSetup)
+	if err == nil && existingSetup == "true" {
+		return nil, ErrAlreadyConfigured
+	}
 
 	_, err = tx.ExecContext(ctx, `
 		INSERT INTO users (username, password_hash, role, email, updated_at)
@@ -393,7 +412,7 @@ func (m *Manager) CompleteSetup(ctx context.Context, req SetupRequest) (*Session
 // Authenticate verifies username and password, returning an active session upon success.
 func (m *Manager) Authenticate(ctx context.Context, username, password string) (*Session, error) {
 	username = strings.TrimSpace(username)
-	if username == "" || password == "" {
+	if username == "" || password == "" || len(password) > MaxPasswordLength {
 		return nil, ErrInvalidCredentials
 	}
 
@@ -402,6 +421,9 @@ func (m *Manager) Authenticate(ctx context.Context, username, password string) (
 		SELECT password_hash, role FROM users WHERE username = ?
 	`, username).Scan(&hash, &roleStr)
 	if err == sql.ErrNoRows {
+		// Run a dummy Argon2id verification to equalize execution time and prevent username enumeration
+		dummyHash := "$argon2id$v=19$m=65536,t=1,p=4$c29tZXNhbHQxMjM0NTY3OA$dGVzdGhhc2hkdW1teTEyMzQ1Njc4OWFiY2RlZg"
+		_ = m.VerifyPassword(password, dummyHash)
 		return nil, ErrInvalidCredentials
 	}
 	if err != nil {
@@ -535,6 +557,15 @@ func (m *Manager) ClearSessionCookie(w http.ResponseWriter) {
 	})
 }
 
+// PruneExpiredSessions removes stale sessions whose expires_at is before now.
+func (m *Manager) PruneExpiredSessions(ctx context.Context) error {
+	_, err := m.db.ExecContext(ctx, "DELETE FROM sessions WHERE expires_at < ?", time.Now().Unix())
+	if err != nil {
+		return fmt.Errorf("failed to prune expired sessions: %w", err)
+	}
+	return nil
+}
+
 // RequireRole returns middleware checking that the caller has at least the specified role.
 func (m *Manager) RequireRole(role Role) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
@@ -545,8 +576,21 @@ func (m *Manager) RequireRole(role Role) func(http.Handler) http.Handler {
 				return
 			}
 
-			if role == RoleAdmin && session.Role != RoleAdmin {
-				writeProblem(w, http.StatusForbidden, "Forbidden", "Administrative privileges required", r.URL.Path)
+			// Role hierarchy: Admin (highest) > User > Guest (lowest)
+			allowed := false
+			switch role {
+			case RoleAdmin:
+				allowed = session.Role == RoleAdmin
+			case RoleUser:
+				allowed = session.Role == RoleAdmin || session.Role == RoleUser
+			case RoleGuest:
+				allowed = session.Role == RoleAdmin || session.Role == RoleUser || session.Role == RoleGuest
+			default:
+				allowed = false
+			}
+
+			if !allowed {
+				writeProblem(w, http.StatusForbidden, "Forbidden", "Insufficient privileges", r.URL.Path)
 				return
 			}
 

@@ -23,6 +23,7 @@ export type SessionInfo = components["schemas"]["SessionInfo"];
 export type LoginRequest = components["schemas"]["LoginRequest"];
 export type SessionResponse = components["schemas"]["SessionResponse"];
 export type LogoutResponse = components["schemas"]["LogoutResponse"];
+export type SettingsResponse = components["schemas"]["SettingsResponse"];
 
 /**
  * ProblemDetailsError represents an RFC 7807 problem details error thrown by the daemon API.
@@ -114,7 +115,14 @@ export class SovereignApiClient {
       throw new ProblemDetailsError(problem);
     }
 
-    return (await response.json()) as T;
+    if (response.status === 204) {
+      return {} as T;
+    }
+    const text = await response.text();
+    if (!text || text.trim() === "") {
+      return {} as T;
+    }
+    return JSON.parse(text) as T;
   }
 
   /**
@@ -228,6 +236,24 @@ export class SovereignApiClient {
    */
   async getSession(): Promise<SessionResponse> {
     return this.request<SessionResponse>("/api/v1/auth/session");
+  }
+
+  /**
+   * Retrieve administrative settings.
+   */
+  async getSettings(): Promise<SettingsResponse> {
+    return this.request<SettingsResponse>("/api/v1/settings");
+  }
+
+  /**
+   * Update administrative settings.
+   */
+  async updateSettings(settings: Record<string, string>): Promise<{ status: string }> {
+    return this.request<{ status: string }>("/api/v1/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(settings),
+    });
   }
 }
 

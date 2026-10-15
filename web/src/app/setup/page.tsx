@@ -323,8 +323,39 @@ export function SetupScreen(props: SetupPageProps) {
   const client = props.apiClientOverride ?? defaultApiClient;
 
   const [step, setStep] = useState<number>(props.initialStep ?? 1);
-  const [language, setLanguage] = useState<SupportedLanguage>(props.initialLanguage ?? "en");
+  const [language, setLanguage] = useState<SupportedLanguage>(() => {
+    if (props.initialLanguage) return props.initialLanguage;
+    if (typeof navigator !== "undefined" && navigator.language) {
+      const code = navigator.language.slice(0, 2).toLowerCase();
+      if (code === "de" || code === "es" || code === "fr") {
+        return code as SupportedLanguage;
+      }
+    }
+    return "en";
+  });
   const t = translations[language] || translations.en;
+
+  // If already configured, redirect to operational dashboard
+  useEffect(() => {
+    let isMounted = true;
+    client
+      .getSetupStatus()
+      .then((res) => {
+        if (!isMounted) return;
+        if (res.is_configured && router) {
+          if (typeof router.replace === "function") {
+            router.replace("/");
+          } else if (typeof router.push === "function") {
+            router.push("/");
+          }
+        }
+      })
+      .catch(() => {});
+
+    return () => {
+      isMounted = false;
+    };
+  }, [client, router]);
 
   // Step 2 state
   const [hostname, setHostname] = useState("sovereign.local");
@@ -655,7 +686,10 @@ export function SetupScreen(props: SetupPageProps) {
                     </label>
                     <select
                       value={selectedDisk}
-                      onChange={(e) => setSelectedDisk(e.target.value)}
+                      onChange={(e) => {
+                        setSelectedDisk(e.target.value);
+                        setDiskInitSuccess(false);
+                      }}
                       className="w-full rounded-lg border border-[var(--border)] p-3 text-sm text-[var(--text-primary)] bg-[var(--surface)] focus:outline-none focus:ring-2 focus:ring-[var(--focus-ring)]"
                     >
                       {disks.length > 0 ? (
@@ -928,6 +962,24 @@ export function SetupScreen(props: SetupPageProps) {
               type="button"
               onClick={() => {
                 setErrorMsg(null);
+                if (step === 2) {
+                  const trimmed = hostname.trim();
+                  const validHostname = /^[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?)*$/.test(trimmed);
+                  if (!validHostname) {
+                    setErrorMsg("Please enter a valid hostname (e.g. sovereign.local).");
+                    return;
+                  }
+                }
+                if (step === 3) {
+                  if (storageMode === "local" && !diskInitSuccess) {
+                    setErrorMsg("Please initialize your local storage before continuing.");
+                    return;
+                  }
+                  if (storageMode === "nas" && !nasMountSuccess) {
+                    setErrorMsg("Please mount your network storage before continuing.");
+                    return;
+                  }
+                }
                 setStep((s) => s + 1);
               }}
               className="px-5 py-2 text-xs font-medium text-white bg-[var(--action-primary)] hover:bg-slate-800 rounded-lg transition-colors shadow-sm"

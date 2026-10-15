@@ -335,6 +335,72 @@ paths:
               schema:
                 $ref: '#/components/schemas/ProblemDetails'
 
+  /api/v1/settings:
+    get:
+      summary: Retrieve administrative settings
+      description: Returns configuration settings. Requires administrative privileges.
+      operationId: getSettings
+      responses:
+        '200':
+          description: Configuration settings.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SettingsResponse'
+        '401':
+          description: Authentication required.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Administrative privileges required.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+    post:
+      summary: Update administrative settings
+      description: Updates key-value settings. Requires administrative privileges.
+      operationId: updateSettings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties:
+                type: string
+      responses:
+        '200':
+          description: Settings updated successfully.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+        '400':
+          description: Malformed payload.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '401':
+          description: Authentication required.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Administrative privileges required.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
 components:
   schemas:
     HealthResponse:
@@ -732,6 +798,9 @@ components:
         is_configured:
           type: boolean
           example: false
+        language:
+          type: string
+          example: en
 
     SetupRequest:
       type: object
@@ -836,4 +905,21 @@ components:
         message:
           type: string
           example: Logged out successfully
+
+    SettingsResponse:
+      type: object
+      properties:
+        language:
+          type: string
+          example: en
+        admin_email:
+          type: string
+          example: alex@family.net
+        hostname:
+          type: string
+          example: sovereign.local
+        features:
+          type: string
+          example: video,audio,dms,ai
+
 

@@ -290,17 +290,42 @@ func TestServer_CORS(t *testing.T) {
 	srv, _ := setupTestServer(t)
 	defer srv.Close()
 
+	// 1. Without Origin header -> wildcard *
 	req := httptest.NewRequest(http.MethodOptions, "/api/v1/health", nil)
 	w := httptest.NewRecorder()
-
 	srv.Handler().ServeHTTP(w, req)
 
 	if w.Code != http.StatusNoContent {
 		t.Fatalf("expected status 204 for OPTIONS preflight, got %d", w.Code)
 	}
-
 	if origin := w.Header().Get("Access-Control-Allow-Origin"); origin != "*" {
 		t.Errorf("expected Access-Control-Allow-Origin *, got %q", origin)
+	}
+
+	// 2. With trusted Origin header -> reflected origin and credentials: true
+	reqOrigin := httptest.NewRequest(http.MethodOptions, "/api/v1/health", nil)
+	reqOrigin.Header.Set("Origin", "http://sovereign.local")
+	wOrigin := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(wOrigin, reqOrigin)
+
+	if origin := wOrigin.Header().Get("Access-Control-Allow-Origin"); origin != "http://sovereign.local" {
+		t.Errorf("expected Access-Control-Allow-Origin http://sovereign.local, got %q", origin)
+	}
+	if creds := wOrigin.Header().Get("Access-Control-Allow-Credentials"); creds != "true" {
+		t.Errorf("expected Access-Control-Allow-Credentials true, got %q", creds)
+	}
+
+	// 3. With untrusted Origin header -> fallback to wildcard without credentials
+	reqUntrusted := httptest.NewRequest(http.MethodOptions, "/api/v1/health", nil)
+	reqUntrusted.Header.Set("Origin", "https://untrusted-external-site.com")
+	wUntrusted := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(wUntrusted, reqUntrusted)
+
+	if origin := wUntrusted.Header().Get("Access-Control-Allow-Origin"); origin != "*" {
+		t.Errorf("expected Access-Control-Allow-Origin *, got %q", origin)
+	}
+	if creds := wUntrusted.Header().Get("Access-Control-Allow-Credentials"); creds != "" {
+		t.Errorf("expected empty Access-Control-Allow-Credentials for untrusted origin, got %q", creds)
 	}
 }
 
@@ -1155,8 +1180,49 @@ func TestServer_AuthAndSetupWizardFlow(t *testing.T) {
 	if settingsRes["language"] != "de" || settingsRes["admin_email"] != "alex@family.net" {
 		t.Errorf("unexpected settings content: %+v", settingsRes)
 	}
+	if settingsRes["features"] != "video,audio,dms,ai" {
+		t.Errorf("expected features 'video,audio,dms,ai', got: %v", settingsRes["features"])
+	}
+	if settingsRes["hostname"] != "sovereign.local" {
+		t.Errorf("expected hostname 'sovereign.local', got: %v", settingsRes["hostname"])
+	}
 
-	// 9. Login flow: invalid password vs valid password
+	// 9. Update Settings via POST /api/v1/settings: unauthenticated vs authenticated
+	reqUpdateNoAuth := httptest.NewRequest(http.MethodPost, "/api/v1/settings", bytes.NewBufferString(`{"language": "en"}`))
+	wUpdateNoAuth := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(wUpdateNoAuth, reqUpdateNoAuth)
+	if wUpdateNoAuth.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 on POST /api/v1/settings without auth, got: %d", wUpdateNoAuth.Code)
+	}
+
+	reqUpdateAuth := httptest.NewRequest(http.MethodPost, "/api/v1/settings", bytes.NewBufferString(`{"language": "en"}`))
+	reqUpdateAuth.AddCookie(sessionCookie)
+	wUpdateAuth := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(wUpdateAuth, reqUpdateAuth)
+	if wUpdateAuth.Code != http.StatusOK {
+		t.Fatalf("expected 200 on POST /api/v1/settings with auth, got: %d", wUpdateAuth.Code)
+	}
+
+	// Verify setting updated
+	reqCheckUpdated := httptest.NewRequest(http.MethodGet, "/api/v1/settings", nil)
+	reqCheckUpdated.AddCookie(sessionCookie)
+	wCheckUpdated := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(wCheckUpdated, reqCheckUpdated)
+	var updatedSettings map[string]any
+	_ = json.Unmarshal(wCheckUpdated.Body.Bytes(), &updatedSettings)
+	if updatedSettings["language"] != "en" {
+		t.Fatalf("expected updated language 'en', got: %v", updatedSettings["language"])
+	}
+
+	// 10. Post-setup storage endpoint protection: unauthenticated call must return 401
+	reqPostSetupStorage := httptest.NewRequest(http.MethodPost, "/api/v1/storage/initialize", bytes.NewBufferString(`{"device": "/dev/sda"}`))
+	wPostSetupStorage := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(wPostSetupStorage, reqPostSetupStorage)
+	if wPostSetupStorage.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 on /api/v1/storage/initialize post-setup without auth, got: %d", wPostSetupStorage.Code)
+	}
+
+	// 11. Login flow: invalid password vs valid password
 	reqBadLogin := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewBufferString(`{"username": "admin", "password": "WrongPassword!"}`))
 	wBadLogin := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(wBadLogin, reqBadLogin)
@@ -1175,7 +1241,7 @@ func TestServer_AuthAndSetupWizardFlow(t *testing.T) {
 		t.Fatalf("expected Set-Cookie on login, got: %s", loginCookieHeader)
 	}
 
-	// 10. Logout: revokes session and clears cookie
+	// 12. Logout: revokes session and clears cookie
 	reqLogout := httptest.NewRequest(http.MethodPost, "/api/v1/auth/logout", nil)
 	reqLogout.AddCookie(sessionCookie)
 	wLogout := httptest.NewRecorder()

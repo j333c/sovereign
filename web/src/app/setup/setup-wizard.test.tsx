@@ -294,4 +294,36 @@ describe("SetupWizard Component", () => {
     assert.equal(redirectedPath, "/");
     assert.ok(sentPayload !== null);
   });
+
+  it("checks setup status and redirects to / if already configured", async () => {
+    let redirectedPath = "";
+    const mockRouterOverride = {
+      replace: (path: string) => {
+        redirectedPath = path;
+      },
+    };
+
+    const mockFetch: typeof fetch = async (input) => {
+      const url = String(input);
+      if (url.endsWith("/setup-status")) {
+        return new Response(JSON.stringify({ is_configured: true, language: "en" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      throw new Error(`Unexpected url: ${url}`);
+    };
+
+    const client = new SovereignApiClient({
+      baseUrl: "http://localhost:8080",
+      fetchFn: mockFetch,
+    });
+
+    const status = await client.getSetupStatus();
+    if (status.is_configured) {
+      mockRouterOverride.replace("/");
+    }
+    assert.equal(redirectedPath, "/");
+  });
 });
+

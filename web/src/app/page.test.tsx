@@ -2,7 +2,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { HomeScreen } from "./page";
+import { HomeScreen, checkBootAndSetup } from "./page";
 import { SovereignApiClient } from "../lib/api/client";
 
 describe("HomePage Component", () => {
@@ -141,14 +141,30 @@ describe("HomePage Component", () => {
       fetchFn: mockFetch,
     });
 
-    const bootStatus = await client.getBootStatus();
-    if (bootStatus.mode === "operational") {
-      const setupStatus = await client.getSetupStatus();
-      if (!setupStatus.is_configured) {
-        mockRouter.replace("/setup");
-      }
-    }
-
+    const ready = await checkBootAndSetup(client, mockRouter);
+    assert.equal(ready, false);
     assert.equal(redirectedPath, "/setup");
+  });
+
+  it("redirects to /boot when status check encounters an unexpected error", async () => {
+    let redirectedPath = "";
+    const mockRouter = {
+      replace: (path: string) => {
+        redirectedPath = path;
+      },
+    };
+
+    const mockFetch: typeof fetch = async () => {
+      throw new Error("Network unreachable");
+    };
+
+    const client = new SovereignApiClient({
+      baseUrl: "http://localhost:8080",
+      fetchFn: mockFetch,
+    });
+
+    const ready = await checkBootAndSetup(client, mockRouter);
+    assert.equal(ready, false);
+    assert.equal(redirectedPath, "/boot");
   });
 });

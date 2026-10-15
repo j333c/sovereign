@@ -6,7 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -244,6 +246,13 @@ func (s *Server) StartBackgroundServices(ctx context.Context) {
 	if s.storageEngine != nil {
 		s.storageEngine.StartProbing(ctx)
 	}
+
+	// 5. Prune expired auth sessions on startup
+	if s.authMgr != nil {
+		if err := s.authMgr.PruneExpiredSessions(ctx); err != nil {
+			s.logger.Warn("failed to prune expired sessions on startup", "error", err)
+		}
+	}
 }
 
 // BootManager returns the active BootManager instance.
@@ -290,15 +299,34 @@ func (s *Server) Close() error {
 	return nil
 }
 
+// requireSetupOrAdmin allows unauthenticated access during first-run setup, but strictly requires
+// admin authentication once the appliance setup has been completed.
+func (s *Server) requireSetupOrAdmin(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		s.mu.RLock()
+		authMgr := s.authMgr
+		s.mu.RUnlock()
+
+		if authMgr != nil {
+			configured, err := authMgr.IsConfigured(r.Context())
+			if err == nil && configured {
+				authMgr.RequireAdmin(http.HandlerFunc(next)).ServeHTTP(w, r)
+				return
+			}
+		}
+		next(w, r)
+	}
+}
+
 // routes registers HTTP REST handlers.
 func (s *Server) routes() {
 	s.router.HandleFunc("GET /api/v1/health", s.handleHealth)
 	s.router.HandleFunc("GET /api/v1/system/boot-status", s.handleBootStatus)
 	s.router.HandleFunc("GET /api/v1/system/ingress", s.handleIngressStatus)
 	s.router.HandleFunc("GET /api/v1/storage/disks", s.handleStorageDisks)
-	s.router.HandleFunc("POST /api/v1/storage/initialize", s.handleStorageInitialize)
-	s.router.HandleFunc("POST /api/v1/storage/nas/test", s.handleStorageNASTest)
-	s.router.HandleFunc("POST /api/v1/storage/nas/mount", s.handleStorageNASMount)
+	s.router.HandleFunc("POST /api/v1/storage/initialize", s.requireSetupOrAdmin(s.handleStorageInitialize))
+	s.router.HandleFunc("POST /api/v1/storage/nas/test", s.requireSetupOrAdmin(s.handleStorageNASTest))
+	s.router.HandleFunc("POST /api/v1/storage/nas/mount", s.requireSetupOrAdmin(s.handleStorageNASMount))
 	s.router.HandleFunc("GET /api/v1/storage/status", s.handleStorageStatus)
 
 	// Auth and Setup Wizard endpoints
@@ -313,11 +341,35 @@ func (s *Server) routes() {
 	s.router.Handle("POST /api/v1/settings", s.authMgr.RequireAdmin(http.HandlerFunc(s.handleUpdateSettings)))
 }
 
+// isAllowedOrigin checks if the origin is trusted (localhost, 127.0.0.1, sovereign.local, or matching host/LAN IP).
+func isAllowedOrigin(origin, host string) bool {
+	u, err := url.Parse(origin)
+	if err != nil {
+		return false
+	}
+	originHost := u.Hostname()
+	if originHost == "localhost" || originHost == "127.0.0.1" || originHost == "sovereign.local" {
+		return true
+	}
+	reqHost := host
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		reqHost = h
+	}
+	if strings.EqualFold(originHost, reqHost) {
+		return true
+	}
+	ip := net.ParseIP(originHost)
+	if ip != nil && (ip.IsPrivate() || ip.IsLoopback()) {
+		return true
+	}
+	return false
+}
+
 // Handler returns the HTTP handler for the server with CORS middleware.
 func (s *Server) Handler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		origin := r.Header.Get("Origin")
-		if origin != "" {
+		if origin != "" && isAllowedOrigin(origin, r.Host) {
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 			w.Header().Set("Access-Control-Allow-Credentials", "true")
 		} else {
@@ -588,6 +640,7 @@ func (s *Server) handleStorageStatus(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleSetupStatus(w http.ResponseWriter, r *http.Request) {
 	s.mu.RLock()
 	authMgr := s.authMgr
+	dbHandle := s.db
 	s.mu.RUnlock()
 
 	if authMgr == nil {
@@ -602,9 +655,16 @@ func (s *Server) handleSetupStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.writeJSON(w, http.StatusOK, map[string]any{
+	res := map[string]any{
 		"is_configured": configured,
-	})
+	}
+	if configured && dbHandle != nil {
+		if lang, err := dbHandle.GetSetting(r.Context(), "language"); err == nil && lang != "" {
+			res["language"] = lang
+		}
+	}
+
+	s.writeJSON(w, http.StatusOK, res)
 }
 
 func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
