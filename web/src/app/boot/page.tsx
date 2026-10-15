@@ -6,8 +6,10 @@ import { apiClient as defaultApiClient, SovereignApiClient, type BootStatusRespo
 
 export interface BootScreenProps {
   initialStatus?: BootStatusResponse | null;
+  initialError?: string | null;
+  initialStorageDegraded?: boolean;
   apiClientOverride?: SovereignApiClient;
-  routerOverride?: { push: (url: string) => void };
+  routerOverride?: { replace: (url: string) => void; push?: (url: string) => void };
   onRedirect?: () => void;
   redirectDelayMs?: number;
   pollingIntervalMs?: number;
@@ -27,23 +29,26 @@ function BootScreenWithRouter(props: BootScreenProps) {
 
 function BootScreenContent({
   initialStatus = null,
+  initialError = null,
+  initialStorageDegraded = false,
   apiClientOverride,
   router,
   onRedirect,
   redirectDelayMs = 1200,
   pollingIntervalMs = 1000,
-}: BootScreenProps & { router?: { push: (url: string) => void } }) {
+}: BootScreenProps & { router?: { replace: (url: string) => void; push?: (url: string) => void } }) {
   const client = apiClientOverride ?? defaultApiClient;
 
   const [status, setStatus] = useState<BootStatusResponse | null>(initialStatus);
   const [isRedirecting, setIsRedirecting] = useState(false);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [isStorageDegraded, setIsStorageDegraded] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(initialError);
+  const [isStorageDegraded, setIsStorageDegraded] = useState(initialStorageDegraded);
   const hasTriggeredRedirect = useRef(false);
 
   useEffect(() => {
     let isMounted = true;
     let pollTimer: ReturnType<typeof setTimeout> | null = null;
+    let redirectTimer: ReturnType<typeof setTimeout> | null = null;
 
     const checkBootStatus = async () => {
       try {
@@ -59,11 +64,11 @@ function BootScreenContent({
             hasTriggeredRedirect.current = true;
             setIsRedirecting(true);
 
-            setTimeout(() => {
+            redirectTimer = setTimeout(() => {
               if (onRedirect) {
                 onRedirect();
               } else if (router) {
-                router.push("/");
+                router.replace("/");
               }
             }, redirectDelayMs);
           }
@@ -95,6 +100,7 @@ function BootScreenContent({
     return () => {
       isMounted = false;
       if (pollTimer) clearTimeout(pollTimer);
+      if (redirectTimer) clearTimeout(redirectTimer);
     };
   }, [client, onRedirect, redirectDelayMs, pollingIntervalMs, router]);
 

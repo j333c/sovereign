@@ -144,15 +144,30 @@ func (bm *BootManager) RecordCleanShutdown(ctx context.Context) error {
 		return errors.New("boot manager is closed")
 	}
 
+	// Only record clean shutdown when the system is in operational mode.
+	if bm.currentStatus.Mode != BootModeOperational {
+		bm.logger.Warn("skipping clean shutdown marker: system is not in operational mode", "mode", bm.currentStatus.Mode)
+		return nil
+	}
+
 	bm.logger.Info("recording clean shutdown marker", "path", bm.statePath)
 
-	// Flush SQLite WAL if database is open
+	bm.currentStatus.CleanShutdown = true
+	bm.currentStatus.DiagnosticsCompleted = true
+
+	// 1. Insert boot_status record first
 	if bm.db != nil {
+		if err := bm.db.RecordBootStatus(ctx, bm.currentStatus); err != nil {
+			bm.logger.Warn("failed to record clean shutdown status in database", "error", err)
+		}
+
+		// 2. Flush SQLite WAL to ensure record is persisted in main database file
 		if err := bm.db.FlushWAL(ctx); err != nil {
 			bm.logger.Warn("failed to flush WAL during clean shutdown", "error", err)
 		}
 	}
 
+	// 3. Atomically write clean_shutdown = true with UTC timestamp
 	cleanMarker := BootStateFile{
 		CleanShutdown: true,
 		Timestamp:     time.Now().UTC(),
@@ -165,15 +180,6 @@ func (bm *BootManager) RecordCleanShutdown(ctx context.Context) error {
 	if err := atomicWriteFile(bm.statePath, markerBytes, 0644); err != nil {
 		bm.logger.Error("failed to write clean shutdown marker", "path", bm.statePath, "error", err)
 		return fmt.Errorf("failed to write clean shutdown state: %w", err)
-	}
-
-	bm.currentStatus.CleanShutdown = true
-	if bm.currentStatus.Mode == BootModeOperational {
-		bm.currentStatus.DiagnosticsCompleted = true
-	}
-
-	if bm.db != nil {
-		_ = bm.db.RecordBootStatus(ctx, bm.currentStatus)
 	}
 
 	return nil
@@ -203,21 +209,35 @@ func (bm *BootManager) RunIntegrityCheck(ctx context.Context) error {
 		return fmt.Errorf("storage writeability check failed: %w", err)
 	}
 
-	// 2. Run PRAGMA integrity_check on SQLite database
-	if bm.db != nil {
-		ok, result, err := bm.db.CheckIntegrity(ctx)
-		if err != nil || !ok {
-			bm.mu.Lock()
-			bm.currentStatus = &BootStatusInfo{
-				Mode:                 BootModeFailed,
-				CleanShutdown:        false,
-				DiagnosticsCompleted: false,
-				Message:              fmt.Sprintf("System integrity check failed: database corrupted (%s). Automated snapshot restore recommended.", result),
-			}
-			bm.mu.Unlock()
-			bm.logger.Error("database integrity check failed", "result", result, "error", err)
-			return fmt.Errorf("database integrity check failed: %s (err: %w)", result, err)
+	// 2. Guard nil DB handle and run PRAGMA integrity_check on SQLite database
+	if bm.db == nil {
+		bm.mu.Lock()
+		bm.currentStatus = &BootStatusInfo{
+			Mode:                 BootModeFailed,
+			CleanShutdown:        false,
+			DiagnosticsCompleted: false,
+			Message:              "Database handle is not initialized",
 		}
+		bm.mu.Unlock()
+		bm.logger.Error("database handle is nil during integrity check")
+		return errors.New("database handle is nil")
+	}
+
+	ok, result, err := bm.db.CheckIntegrity(ctx)
+	if err != nil || !ok {
+		bm.mu.Lock()
+		bm.currentStatus = &BootStatusInfo{
+			Mode:                 BootModeFailed,
+			CleanShutdown:        false,
+			DiagnosticsCompleted: false,
+			Message:              fmt.Sprintf("System integrity check failed: database corrupted (%s). Automated snapshot restore recommended.", result),
+		}
+		bm.mu.Unlock()
+		bm.logger.Error("database integrity check failed", "result", result, "error", err)
+		if err != nil {
+			return fmt.Errorf("database integrity check failed: %s: %w", result, err)
+		}
+		return fmt.Errorf("database integrity check failed: %s", result)
 	}
 
 	// 3. Mark operational
@@ -233,9 +253,7 @@ func (bm *BootManager) RunIntegrityCheck(ctx context.Context) error {
 
 	bm.logger.Info("boot diagnostics integrity check passed successfully")
 
-	if bm.db != nil {
-		_ = bm.db.RecordBootStatus(ctx, bm.currentStatus)
-	}
+	_ = bm.db.RecordBootStatus(ctx, bm.currentStatus)
 
 	return nil
 }

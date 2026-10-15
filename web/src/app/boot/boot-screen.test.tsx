@@ -5,9 +5,9 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { BootScreen } from "./page";
 import { SovereignApiClient } from "../../lib/api/client";
 
-const mockPush = () => {};
 const mockRouterOverride = {
-  push: mockPush,
+  replace: () => {},
+  push: () => {},
 };
 
 describe("BootScreen Component", () => {
@@ -49,7 +49,7 @@ describe("BootScreen Component", () => {
   });
 
   it("triggers redirect to / within 2 seconds when integrity verification passes", async () => {
-    let redirectCalled = false;
+    let replacedPath = "";
     let redirectTimeMs = 0;
     const startTime = Date.now();
 
@@ -75,14 +75,18 @@ describe("BootScreen Component", () => {
 
     await new Promise<void>((resolve) => {
       const handleRedirect = () => {
-        redirectCalled = true;
+        replacedPath = "/";
         redirectTimeMs = Date.now() - startTime;
         resolve();
       };
 
       // Create a test instance with 100ms redirect delay (well under the 2s constraint)
       const element = React.createElement(BootScreen, {
-        routerOverride: mockRouterOverride,
+        routerOverride: {
+          replace: (path: string) => {
+            replacedPath = path;
+          },
+        },
         apiClientOverride: client,
         onRedirect: handleRedirect,
         redirectDelayMs: 100,
@@ -98,7 +102,7 @@ describe("BootScreen Component", () => {
       });
     });
 
-    assert.ok(redirectCalled, "Redirect callback must be triggered");
+    assert.equal(replacedPath, "/", "Must redirect to root '/'");
     assert.ok(redirectTimeMs < 2000, `Redirect must occur within 2000ms, took ${redirectTimeMs}ms`);
   });
 
@@ -125,23 +129,48 @@ describe("BootScreen Component", () => {
       fetchFn: mockFetch,
     });
 
+    const element = React.createElement(BootScreen, {
+      routerOverride: {
+        replace: () => {
+          redirectCalled = true;
+        },
+      },
+      apiClientOverride: client,
+      onRedirect: () => {
+        redirectCalled = true;
+      },
+      redirectDelayMs: 100,
+      pollingIntervalMs: 50,
+    });
+
+    const html = renderToStaticMarkup(element);
+    assert.ok(html.includes("Checking system safety after power restoration... your files are secure."));
+
     const status = await client.getBootStatus();
     assert.equal(status.mode, "diagnostics");
     assert.equal(status.diagnostics_completed, false);
-    assert.equal(redirectCalled, false, "Should not redirect during active diagnostics");
+    assert.equal(redirectCalled, false, "Must not redirect during diagnostics mode");
   });
 
   it("renders safe non-technical alert on storage degraded HTTP 503 without stack traces", () => {
     const html = renderToStaticMarkup(
       <BootScreen
         routerOverride={mockRouterOverride}
-        initialStatus={null}
+        initialStorageDegraded={true}
+        initialError="Hardware attention needed: A hard drive is reporting errors. Your existing files are locked in read-only safety mode."
       />
     );
 
-    // Initial state renders reassurance copy
-    assert.ok(html.includes("Checking system safety after power restoration... your files are secure."));
-    // Prohibitions hold
+    // Verify consumer-safe degraded alert microcopy
+    assert.ok(
+      html.includes("Hardware attention needed: A hard drive is reporting errors. Your existing files are locked in read-only safety mode."),
+      "HTML must render consumer reassurance copy for degraded storage"
+    );
+    assert.ok(html.includes("Attention Required"), "Must display Attention Required badge");
+
+    // Prohibitions hold: no raw HTTP status codes, device paths or errors
+    assert.ok(!html.includes("503"));
+    assert.ok(!html.includes("/dev/"));
     assert.ok(!html.includes("OOMKilled"));
     assert.ok(!html.includes("errno"));
     assert.ok(!html.includes("Exception"));

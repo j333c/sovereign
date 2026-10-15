@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -162,6 +163,10 @@ func TestBootManager_RecordCleanShutdown_AtomicPersistence(t *testing.T) {
 
 	bm := NewBootManager(statePath, db, nil)
 	_, _ = bm.RecordBoot(context.Background())
+	// Integrity check passes, transitioning to operational mode
+	if err := bm.RunIntegrityCheck(context.Background()); err != nil {
+		t.Fatalf("RunIntegrityCheck failed: %v", err)
+	}
 
 	// Perform graceful shutdown
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -245,6 +250,59 @@ func TestBootManager_RunIntegrityCheck_Success(t *testing.T) {
 	}
 }
 
+func TestBootManager_RecordCleanShutdown_SkippedWhenNotOperational(t *testing.T) {
+	tempDir := t.TempDir()
+	statePath := filepath.Join(tempDir, "state", "boot_state.json")
+	dbPath := filepath.Join(tempDir, "state", "sovereign.db")
+
+	db, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("failed to open db: %v", err)
+	}
+	defer db.Close()
+
+	bm := NewBootManager(statePath, db, nil)
+	// Boot enters diagnostics mode
+	_, _ = bm.RecordBoot(context.Background())
+
+	// Attempt clean shutdown while still in diagnostics mode
+	err = bm.RecordCleanShutdown(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error from RecordCleanShutdown: %v", err)
+	}
+
+	// Verify boot_state.json still has clean_shutdown = false
+	raw, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatalf("failed to read boot_state.json: %v", err)
+	}
+	var state BootStateFile
+	if err := json.Unmarshal(raw, &state); err != nil {
+		t.Fatalf("failed to parse state: %v", err)
+	}
+	if state.CleanShutdown {
+		t.Errorf("clean_shutdown should NOT be recorded as true when mode != operational")
+	}
+}
+
+func TestBootManager_RunIntegrityCheck_NilDB(t *testing.T) {
+	tempDir := t.TempDir()
+	statePath := filepath.Join(tempDir, "state", "boot_state.json")
+
+	bm := NewBootManager(statePath, nil, nil)
+	ctx := context.Background()
+
+	err := bm.RunIntegrityCheck(ctx)
+	if err == nil {
+		t.Fatalf("expected error when DB handle is nil, got nil")
+	}
+
+	status, _, _ := bm.GetStatus()
+	if status.Mode != BootModeFailed {
+		t.Errorf("expected mode failed on nil DB handle, got %q", status.Mode)
+	}
+}
+
 func TestBootManager_RunIntegrityCheck_CorruptedDB(t *testing.T) {
 	tempDir := t.TempDir()
 	stateDir := filepath.Join(tempDir, "state")
@@ -252,30 +310,34 @@ func TestBootManager_RunIntegrityCheck_CorruptedDB(t *testing.T) {
 	statePath := filepath.Join(stateDir, "boot_state.json")
 	dbPath := filepath.Join(stateDir, "sovereign.db")
 
-	// Create valid db first
+	// Create valid db and populate rows so additional b-tree pages are allocated
 	db, err := Open(dbPath)
 	if err != nil {
 		t.Fatalf("failed to open db: %v", err)
 	}
-	bm := NewBootManager(statePath, db, nil)
-	_, _ = bm.RecordBoot(context.Background())
-
-	// Corrupt database file by overwriting pages
+	for i := 0; i < 150; i++ {
+		_, _ = db.Exec("INSERT INTO settings (key, value) VALUES (?, ?)", fmt.Sprintf("key_%d", i), strings.Repeat("A", 200))
+	}
+	_ = db.FlushWAL(context.Background())
 	_ = db.Close()
+
+	// Corrupt database page at offset 4096 (preserving database file header)
 	f, err := os.OpenFile(dbPath, os.O_WRONLY, 0644)
 	if err != nil {
 		t.Fatalf("failed to open db for corruption: %v", err)
 	}
-	// Write corrupt garbage into middle of sqlite database
-	_, _ = f.WriteAt([]byte("CORRUPTED_PAGE_DATA_GARBAGE_BYTES_OVERWRITE"), 100)
+	_, _ = f.WriteAt([]byte("CORRUPTED_PAGE_CONTENT_GARBAGE"), 4096)
 	_ = f.Close()
 
 	// Reopen corrupted db
 	corruptDB, err := Open(dbPath)
-	if err == nil {
-		defer corruptDB.Close()
-		bm.SetDB(corruptDB)
+	if err != nil {
+		t.Fatalf("failed to open corrupted db: %v", err)
 	}
+	defer corruptDB.Close()
+
+	bm := NewBootManager(statePath, corruptDB, nil)
+	_, _ = bm.RecordBoot(context.Background())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -283,6 +345,11 @@ func TestBootManager_RunIntegrityCheck_CorruptedDB(t *testing.T) {
 	err = bm.RunIntegrityCheck(ctx)
 	if err == nil {
 		t.Fatalf("expected error from RunIntegrityCheck on corrupted db, got nil")
+	}
+
+	// Verify error does NOT contain %!w(<nil>)
+	if strings.Contains(err.Error(), "%!w") {
+		t.Errorf("error contains bad formatting string: %v", err)
 	}
 
 	status, _, _ := bm.GetStatus()

@@ -2,7 +2,7 @@
 title: 'Story 1.3: Power-Loss Resilience & Reassuring Boot Diagnostics Screen'
 type: 'feature'
 created: '2026-10-15'
-status: 'review'
+status: 'in-review'
 baseline_commit: '2c7622f2fc5e38a45db9534fb77c823e85e5b4cb'
 route: 'dispatch'
 review_loop_iteration: 0
@@ -82,6 +82,38 @@ context:
 ## Spec Change Log
 
 ## Review Triage Log
+
+| ID | Layer | Finding | Verdict | Evidence / Disposition |
+|---|---|---|---|---|
+| B1 | blind-hunter | Unconditional clean shutdown recording during diagnostics/failed states | high | Overwrites failed state with clean shutdown, bypassing recovery on next boot. Route: patch. |
+| B2 | blind-hunter | WAL checkpoint called before inserting boot_status | low | Leaves new transaction in WAL after checkpoint. Reverse order. Route: patch. |
+| B3 | blind-hunter | DDL migrations run before boot diagnostics | low | SQLite WAL mode automatically recovers journal on open; diagnostics verifies integrity. Route: reject. |
+| B4 | blind-hunter | Missing container gating primitive during diagnostics | low | Upstream containers are introduced in Story 2.1; gating binds there. Route: reject. |
+| B5 | blind-hunter | Missing HTTP 503 response in OpenAPI schema for boot-status | medium | Contract omission for storage degraded problem details. Route: patch. |
+| B6 | blind-hunter | isReady unused in page.tsx causing visual flicker and missing non-diagnostics redirect | medium | Dashboard renders before boot check finishes; failed/recovery modes not redirected. Route: patch. |
+| B7 | blind-hunter | boot-screen.test.tsx relies on static markup without lifecycle testing | medium | Test manually triggers timeout outside component. Route: patch. |
+| B8 | blind-hunter | Uncleaned redirection timer in BootScreenContent | low | setTimeout not cleared on unmount. Route: patch. |
+| B9 | blind-hunter | Polling halts on degraded storage | low | User can refresh or retry; acceptable for initial failure. Route: reject. |
+| B10 | blind-hunter | Internal SQLite corruption details formatted in message | low | Reassuring consumer copy preferred without raw table numbers. Route: patch. |
+| B11 | blind-hunter | Redirection uses router.push instead of router.replace | low | Leaves /boot in browser history stack. Route: patch. |
+| B12 | blind-hunter | Storage writeability check only validates state folder | low | /data/state is root of mutable state. Route: reject. |
+| E1 | edge-case-hunter | Shutdown requested while in Diagnostics/Failed mode | high | Duplicate of B1. Route: patch. |
+| E2 | edge-case-hunter | WAL flush fails during shutdown | low | Guard WAL flush error. Route: patch. |
+| E3 | edge-case-hunter | RunIntegrityCheck with nil DB handle | low | Guard nil DB handle in RunIntegrityCheck. Route: patch. |
+| E4 | edge-case-hunter | Boot status returns failed/recovery or 503 without redirect | medium | Duplicate of B6. Route: patch. |
+| E5 | edge-case-hunter | Dashboard renders before boot status check settles | medium | Duplicate of B6. Route: patch. |
+| E6 | edge-case-hunter | Redirection timer unmount leak | low | Duplicate of B8. Route: patch. |
+| E7 | edge-case-hunter | dbHandle check orphaned in server.go | low | Clean up unused dbHandle in handleBootStatus. Route: patch. |
+| E8 | edge-case-hunter | SSR serves operational dashboard markup | low | Duplicate of B6 (resolved by isReady check). Route: patch. |
+| V1 | verification-gap | Broken verification of BootScreen redirect | medium | Duplicate of B7. Route: patch. |
+| V2 | verification-gap | Broken verification of BootScreen remaining during diagnostics | medium | Missing assertion on component mount. Route: patch. |
+| V3 | verification-gap | Broken verification of degraded storage alert rendering on 503 | medium | Test does not exercise catch block. Route: patch. |
+| V4 | verification-gap | Regression gap on HomePage redirect to /boot | medium | Missing test for HomePage redirect. Route: patch. |
+| V5 | verification-gap | Broken verification of DB corruption detection | medium | Test tested closed DB instead of corruption report. Route: patch. |
+| V6 | verification-gap | Regression gap on automatic integrity check trigger | medium | Scheduled in main() without test coverage in server_test.go. Route: patch. |
+| V7 | verification-gap | %!w(<nil>) formatted on nil error | low | Guard formatting when err is nil. Route: patch. |
+| V8 | verification-gap | Shutdown context timeout exhaustion | low | Dedicated context for RecordCleanShutdown. Route: patch. |
+
 
 ## Design Notes
 

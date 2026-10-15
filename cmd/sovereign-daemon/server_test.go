@@ -490,3 +490,42 @@ func TestServer_StartBackgroundServices(t *testing.T) {
 	}
 }
 
+func TestServer_StartBackgroundServices_DiagnosticsAutoIntegrityCheck(t *testing.T) {
+	tempDir := t.TempDir()
+	dataDir := filepath.Join(tempDir, "data")
+	// No boot_state.json -> Server initializes in DiagnosticsMode
+
+	srv, err := NewServer(Config{
+		DataDir: dataDir,
+	})
+	if err != nil {
+		t.Fatalf("failed to create server: %v", err)
+	}
+	defer srv.Close()
+
+	if !srv.BootManager().IsDiagnosticsMode() {
+		t.Fatalf("expected server to start in diagnostics mode")
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	srv.StartBackgroundServices(ctx)
+
+	// Wait up to 2 seconds for background integrity check routine to complete
+	deadline := time.Now().Add(2 * time.Second)
+	completed := false
+	for time.Now().Before(deadline) {
+		status, _, err := srv.BootManager().GetStatus()
+		if err == nil && status.Mode == "operational" && status.DiagnosticsCompleted {
+			completed = true
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	if !completed {
+		t.Fatalf("expected background services to automatically run integrity check and transition to operational")
+	}
+}
+

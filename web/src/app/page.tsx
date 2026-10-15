@@ -2,10 +2,30 @@
 
 import React, { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { apiClient } from "@/lib/api";
+import { apiClient as defaultApiClient, SovereignApiClient, ProblemDetailsError } from "@/lib/api";
 
-export default function HomePage() {
+export interface HomePageProps {
+  apiClientOverride?: SovereignApiClient;
+  routerOverride?: { replace: (url: string) => void };
+}
+
+export function HomeScreen(props: HomePageProps) {
+  if (props.routerOverride) {
+    return <HomeScreenContent {...props} router={props.routerOverride} />;
+  }
+  return <HomeScreenWithRouter {...props} />;
+}
+
+function HomeScreenWithRouter(props: HomePageProps) {
   const router = useRouter();
+  return <HomeScreenContent {...props} router={router} />;
+}
+
+function HomeScreenContent({
+  apiClientOverride,
+  router,
+}: HomePageProps & { router?: { replace: (url: string) => void } }) {
+  const client = apiClientOverride ?? defaultApiClient;
   const [isReady, setIsReady] = useState(false);
 
   useEffect(() => {
@@ -13,16 +33,26 @@ export default function HomePage() {
 
     const checkBootMode = async () => {
       try {
-        const status = await apiClient.getBootStatus();
+        const status = await client.getBootStatus();
         if (!isMounted) return;
 
-        if (status.mode === "diagnostics") {
-          router.replace("/boot");
+        if (status.mode !== "operational") {
+          if (router) {
+            router.replace("/boot");
+          }
           return;
         }
-      } catch {
-        // If boot-status probe fails, proceed to render dashboard fallback
+      } catch (err: unknown) {
+        if (!isMounted) return;
+
+        if (err instanceof ProblemDetailsError && err.status === 503) {
+          if (router) {
+            router.replace("/boot");
+          }
+          return;
+        }
       }
+
       if (isMounted) {
         setIsReady(true);
       }
@@ -33,7 +63,11 @@ export default function HomePage() {
     return () => {
       isMounted = false;
     };
-  }, [router]);
+  }, [client, router]);
+
+  if (!isReady) {
+    return null;
+  }
 
   return (
     <main className="flex min-h-screen flex-col items-center justify-center p-8 bg-[var(--canvas)]">
@@ -64,4 +98,8 @@ export default function HomePage() {
       </div>
     </main>
   );
+}
+
+export default function HomePage() {
+  return <HomeScreen />;
 }

@@ -194,6 +194,20 @@ func (s *Server) StartBackgroundServices(ctx context.Context) {
 			}
 		}()
 	}
+
+	// 3. Automatic integrity check trigger during diagnostics mode
+	if s.bootMgr != nil && s.bootMgr.IsDiagnosticsMode() {
+		go func() {
+			s.logger.Info("unclean shutdown detected: initializing in diagnostics mode and running integrity checks")
+			diagCtx, diagCancel := context.WithTimeout(ctx, 15*time.Second)
+			defer diagCancel()
+			if err := s.bootMgr.RunIntegrityCheck(diagCtx); err != nil {
+				s.logger.Error("diagnostics integrity check failed", "error", err)
+			} else {
+				s.logger.Info("boot diagnostics integrity check succeeded, system operational")
+			}
+		}()
+	}
 }
 
 // BootManager returns the active BootManager instance.
@@ -293,16 +307,10 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleBootStatus(w http.ResponseWriter, r *http.Request) {
 	s.mu.RLock()
 	bootMgr := s.bootMgr
-	dbHandle := s.db
 	s.mu.RUnlock()
 
 	if bootMgr == nil {
 		s.writeProblem(w, http.StatusInternalServerError, "Internal Server Error", "Boot manager is not initialized", r.URL.Path)
-		return
-	}
-
-	if dbHandle == nil {
-		s.writeProblem(w, http.StatusInternalServerError, "Internal Server Error", "Database is not initialized", r.URL.Path)
 		return
 	}
 
