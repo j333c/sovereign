@@ -100,3 +100,10 @@ This addendum preserves technical depth, architectural ideas, candidate software
     - Reload backend model or restart container with a single click.
     - Inspect backend inference and error logs without CLI access.
   - **Zero-Touch Feature Integration**: Any installed feature supporting AI integration automatically inherits the internal API URL and mock token during container provisioning.
+
+## 8. Cascading Failure Prevention & Workload Isolation
+
+- **Two-Lane AI Request Arbitration**: The internal proxy prioritizes interactive human chat requests (Open WebUI) over automated background tasks (Paperless OCR metadata extractions, night batch digests), preventing bulk document scanning from introducing user chat latency.
+- **Pre-flight Storage Safety Guard**: Model downloads strictly enforce a `model_size + 5.0 GB safety reserve` disk headroom check. Downloads exceeding this floor are blocked before initiation to protect SQLite WAL flushes in Jellyfin, Paperless, and Navidrome from experiencing catastrophic disk-full errors.
+- **Watchdog Dampening & Health Debounce**: Health check probes require 3 consecutive failures over 60 seconds with exponential backoff before declaring a service degraded or initiating automated recovery, preventing transient I/O or swap spikes from triggering cascade reboot loops.
+- **OCR Concurrency Throttling**: Tesseract OCR worker processes in Paperless-ngx are capped to `max(1, physical_cores / 2)` and run with low CPU priority (`nice -n 10`), preserving host responsiveness for interactive AI and streaming.

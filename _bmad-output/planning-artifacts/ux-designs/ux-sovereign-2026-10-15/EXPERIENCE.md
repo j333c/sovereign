@@ -128,7 +128,7 @@ Sovereign speaks with **reassuring consumer clarity**. It protects family data a
   - **FlashAttention Status**: Pill badge displaying *"FlashAttention Active · KV Cache Optimized"*.
   - **Active Model Selector**: Dropdown showing available `.gguf` files in storage; switching model triggers graceful reload with progress spinner.
   - **Generation Intent Presets**: Segmented button pills (*"Precise & Factual"* · *"Balanced Assistant"* · *"Creative Drafting"*) providing intuitive consumer presets for temperature and sampling without technical dials.
-  - **Model Download Lifecycle**: Integrated download progress indicator showing transfer rate, ETA, and automatic SHA-256 verification badge, with inline "Resume Download" action on network interruption.
+  - **Model Download Lifecycle**: Integrated download progress indicator showing transfer rate, ETA, and automatic SHA-256 verification badge, with inline "Resume Download" action on network interruption. Pre-flight storage check blocks downloads exceeding the safety floor with an explicit banner (*"Insufficient storage: 4.7 GB model requires at least 9.7 GB free space (5 GB system safety reserve)"*).
   - **Context Window Sizing**: Segmented button pills for `2048`, `4096` (default), and `8192` tokens; displays estimated memory usage badge.
   - **GPU Acceleration Slider**: Range slider controlling transformer layer offload (`-ngl`) from `0% (CPU Only)` to `100% (Full GPU Offload)`; automatically locked to CPU-only on headless systems without dedicated hardware.
   - **Dynamic Idle Surrender Toggle**: Accessible switch with caption: *"Release GPU memory after 5 minutes of inactivity (reserves VRAM for video streaming)"*.
@@ -160,11 +160,13 @@ Sovereign speaks with **reassuring consumer clarity**. It protects family data a
 4. **Error / Stopped (Red ▲)**: Card provides immediate "Restart Service" and "Roll Back" options.
 5. **Background Updating**: Status badge displays subtle rotating indicator: *"Updating to latest release..."*.
 6. **Outage Recovery**: Boot diagnostics screen renders within 15 seconds of power restoration with reassuring status message.
+7. **Watchdog Debounced State**: Transient I/O or swap spikes do not immediately trigger amber/red alarms; the system requires 3 consecutive failed health probes over 60 seconds before altering display status or initiating automated container recovery.
 
 ### 2. Edge & Lifecycle States
 1. **Cold-Load / First-Run State**: On initial unprovisioned boot, root URL `/` automatically routes to `/setup`. Services are unconfigured; wizard presents step 1 with browser language pre-selected.
 2. **Offline / LAN Reconnecting State**: If local network connectivity drops, header displays persistent banner: *"Reconnecting to Sovereign appliance..."* with automatic reconnection polling every 3 seconds.
 3. **Unrecoverable Hardware Alert State**: If storage pool reports hardware block failures post-outage, screen displays: *"Hardware attention needed: A hard drive is reporting errors. Your existing files are locked in read-only safety mode."* Includes direct email notification dispatch.
+4. **Storage Headroom Warning State**: When free host disk space falls below 10%, the telemetry bar displays an Amber warning (*"Storage low: Background imports paused to protect system databases"*), preventing SQLite database locks.
 
 ---
 

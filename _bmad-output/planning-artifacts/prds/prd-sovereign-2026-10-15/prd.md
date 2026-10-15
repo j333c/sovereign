@@ -135,10 +135,10 @@ The system can guide a first-time user through initial configuration on first bo
 #### FR-2: Feature Activation & Container Lifecycle
 The user can activate, deactivate, and view the status of software features with a single click. Realizes UJ-1.
 - **Consequences (testable)**:
-  - Activating a feature pulls the designated official OCI container image in the background and starts it with guarded network and persistent storage bindings.
+  - Activating a feature pulls the designated official OCI container image in the background and starts it with guarded network and persistent storage bindings, bounded memory limits (`mem_limit`), and soft reservation limits to prevent any single workload from exhausting host memory.
   - Deactivating a feature stops and removes the container runtime while preserving user data and configuration volumes.
   - Each feature card presents a direct link to the service's web UI once the status reaches **Green**.
-  - Feature health state is displayed via a standardized traffic-light indicator (Green / Yellow with explanatory message / Red).
+  - Feature health state is displayed via a standardized traffic-light indicator (Green / Yellow with explanatory message / Red). Health probes enforce watchdog dampening (requiring 3 consecutive failures over 60 seconds with exponential backoff before flagging degraded status or triggering automated restarts), preventing transient I/O or swap spikes from inducing restart loops.
 
 #### FR-3: Automated Maintenance & Rollback Engine
 The system can execute scheduled background updates with automated failure rollback and provide manual one-click rollbacks. Realizes UJ-5.
@@ -219,7 +219,7 @@ The system can manage and stream personal music libraries, collaborative party p
 #### FR-11: Centralized Document Management
 The system can store, OCR, categorize, and index household documents via an integrated Paperless-ngx container. Realizes UJ-2.
 - **Consequences (testable)**:
-  - Performs automated OCR on incoming PDF, PNG, JPEG, and TIFF files.
+  - Performs automated OCR on incoming PDF, PNG, JPEG, and TIFF files. Background OCR worker concurrency is capped to `max(1, physical_cores / 2)` and scheduled at low priority (`nice -n 10` / low CPU shares), preventing bulk document intake from starving interactive AI chat or system health probes.
   - Generates full-text search indexes allowing queries across text content, tags, correspondents, and dates.
   - Stores all documents in standard, non-proprietary filesystem directory structures.
 
@@ -257,8 +257,10 @@ The system can manage a dedicated high-performance LLM inference engine backend 
     - View the currently loaded active model, FlashAttention status, and memory footprint (RAM/VRAM).
     - Select and switch active models from local storage with one click.
     - Trigger background downloads of recommended default or alternative curated GGUF models with progress reporting. Model acquisition delegates to backend-native mechanisms where available; otherwise the system enforces atomic staging (`.downloading` staging file, SHA-256 validation, and atomic rename to `.gguf`) with resumable HTTP range downloads and UI retry controls.
+    - Enforces a **Pre-flight Storage Reservation Guard**: before initiating any download, Sovereign verifies free space on `/data/models`. If `free_space < (model_size + 5.0 GB safety reserve)`, the download is rejected immediately with an explicit alert (*"Insufficient storage: Requires X GB plus a 5 GB system safety reserve"*), preventing database lockups or host disk exhaustion.
   - **Backend Resource & Execution Tuning**: Admin interface allows users to adjust:
     - Generation Intent Presets: Pre-calibrated sampling profiles (*Precise & Factual* at temperature 0.1 for document QA and contract analysis; *Balanced Assistant* at temperature 0.7 for conversational tasks; *Creative Drafting* at temperature 0.85) replacing complex machine learning hyperparameters.
+    - Two-Lane Priority Request Governor: Internal API proxy enforces strict priority arbitration where interactive human queries (Open WebUI) take front-of-line priority over automated background tasks (Paperless OCR / metadata hooks), preventing batch document processing from stalling user chat.
     - GPU Layer Offloading (`-ngl` / `--n-gpu-layers`): Auto-calculated default with manual override slider (0 to 100% offload).
     - Context Window Size (`-c`): Configurable presets (2048, 4096, 8192 tokens) balanced against memory constraints and protected by FlashAttention.
     - CPU Thread Allocation (`-t`): Auto-pinned to optimal physical core count; on zero-GPU / CPU-only hosts, threads are automatically capped to `max(1, physical_cores - 2)` to guarantee uninterrupted OS, DNS, and storage operations, accompanied by a dedicated "CPU-Optimized Mode" UI indicator and 3B model recommendation.
