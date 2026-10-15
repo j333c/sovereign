@@ -171,7 +171,7 @@ func (c *CaddyClient) BuildCaddyConfig(routes []RouteConfig) map[string]any {
 	// Add dedicated port reverse proxy servers for spokes
 	seenPorts := make(map[int]bool)
 	for _, r := range routes {
-		if r.Port > 0 && r.Port != 80 && r.Port != 443 && !seenPorts[r.Port] {
+		if r.Port > 0 && r.Port != 80 && r.Port != 443 && r.Port != 2019 && !seenPorts[r.Port] {
 			seenPorts[r.Port] = true
 			serverID := fmt.Sprintf("srv_%d", r.Port)
 			upstreamHost := r.Service

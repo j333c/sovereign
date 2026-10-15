@@ -36,6 +36,11 @@ func TestCaddyClient_BuildConfigurationPayload(t *testing.T) {
 			Port:    7001,
 			Subpath: "/media",
 		},
+		{
+			Service: "caddy-internal",
+			Port:    2019,
+			Subpath: "/admin-api",
+		},
 	}
 
 	cfg := client.BuildCaddyConfig(routes)
@@ -73,9 +78,10 @@ func TestCaddyClient_BuildConfigurationPayload(t *testing.T) {
 	// Route 0: /api and /api/* -> sovereign-daemon:8080
 	// Route 1: /media -> jellyfin:8096
 	// Route 2: /docs -> paperless:8000
-	// Route 3: fallback -> sovereign-web:3000
-	if len(caddyRoutes) != 4 {
-		t.Fatalf("expected 4 routes in caddy config, got %d", len(caddyRoutes))
+	// Route 3: /admin-api -> caddy-internal:2019
+	// Route 4: fallback -> sovereign-web:3000
+	if len(caddyRoutes) != 5 {
+		t.Fatalf("expected 5 routes in caddy config, got %d", len(caddyRoutes))
 	}
 
 	// Verify route 0: API
@@ -119,10 +125,40 @@ func TestCaddyClient_BuildConfigurationPayload(t *testing.T) {
 		t.Errorf("missing proxy forwarded headers: %v", setHeaders)
 	}
 
-	// Verify route 3: Web Fallback
-	webRoute := caddyRoutes[3]
+	// Verify fallback route (last route)
+	webRoute := caddyRoutes[len(caddyRoutes)-1]
 	if webRoute["@id"] != "route-web" {
 		t.Errorf("expected last route to be route-web, got %v", webRoute["@id"])
+	}
+
+	// Verify dedicated spoke listener srv_8096
+	srv8096, ok := servers["srv_8096"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected servers to contain srv_8096 for direct Jellyfin listener")
+	}
+	listen, ok := srv8096["listen"].([]string)
+	if !ok || len(listen) != 1 || listen[0] != ":8096" {
+		t.Errorf("expected srv_8096 listen [:8096], got %v", srv8096["listen"])
+	}
+	directRoutes, ok := srv8096["routes"].([]map[string]any)
+	if !ok || len(directRoutes) == 0 {
+		t.Fatalf("expected routes in srv_8096")
+	}
+	directHandles, ok := directRoutes[0]["handle"].([]map[string]any)
+	if !ok || len(directHandles) == 0 {
+		t.Fatalf("expected handle in srv_8096 route")
+	}
+	if directHandles[0]["handler"] != "reverse_proxy" {
+		t.Errorf("expected reverse_proxy handler in direct spoke listener, got %v", directHandles[0]["handler"])
+	}
+	directUpstreams, ok := directHandles[0]["upstreams"].([]map[string]any)
+	if !ok || len(directUpstreams) == 0 || directUpstreams[0]["dial"] != "sovereign-jellyfin:8096" {
+		t.Errorf("expected upstream dial sovereign-jellyfin:8096, got %v", directHandles[0]["upstreams"])
+	}
+
+	// Verify port 2019 is strictly excluded from spoke servers
+	if _, exists := servers["srv_2019"]; exists {
+		t.Errorf("port 2019 must not have a dedicated spoke listener because it is the Caddy admin port")
 	}
 }
 

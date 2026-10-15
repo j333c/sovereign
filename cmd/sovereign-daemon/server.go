@@ -271,7 +271,7 @@ func (s *Server) StartBackgroundServices(ctx context.Context) {
 
 			// Try initial sync immediately
 			syncCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
-			err := s.ingressMgr.SyncRoutes(syncCtx, nil)
+			err := s.syncIngressRoutes(syncCtx)
 			cancel()
 			if err == nil {
 				s.logger.Info("initial caddy route synchronization succeeded")
@@ -285,7 +285,7 @@ func (s *Server) StartBackgroundServices(ctx context.Context) {
 					return
 				case <-ticker.C:
 					retryCtx, retryCancel := context.WithTimeout(ctx, 3*time.Second)
-					err := s.ingressMgr.SyncRoutes(retryCtx, nil)
+					err := s.syncIngressRoutes(retryCtx)
 					retryCancel()
 					if err == nil {
 						s.logger.Info("caddy route synchronization succeeded after retry")
@@ -1305,6 +1305,10 @@ func (s *Server) handleRefreshService(w http.ResponseWriter, r *http.Request) {
 			s.writeProblem(w, http.StatusNotFound, "Service Not Found", fmt.Sprintf("Service '%s' is not defined", id), r.URL.Path)
 			return
 		}
+		if errors.Is(err, supervisor.ErrInvalidOperation) {
+			s.writeProblem(w, http.StatusBadRequest, "Invalid Operation", err.Error(), r.URL.Path)
+			return
+		}
 		if errors.Is(err, supervisor.ErrServiceInactive) || errors.Is(err, supervisor.ErrInactiveService) {
 			s.writeProblem(w, http.StatusServiceUnavailable, "Service Inactive", fmt.Sprintf("Service '%s' is not active", id), r.URL.Path)
 			return
@@ -1321,30 +1325,32 @@ func (s *Server) handleRefreshService(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *Server) syncIngressRoutes(ctx context.Context) {
+func (s *Server) syncIngressRoutes(ctx context.Context) error {
 	s.mu.RLock()
 	ingressMgr := s.ingressMgr
 	mgr := s.serviceMgr
 	s.mu.RUnlock()
 
-	if ingressMgr == nil || mgr == nil {
-		return
-	}
-
-	services, err := mgr.ListServices(ctx)
-	if err != nil {
-		s.logger.Warn("failed to list services for ingress route sync", "error", err)
-		return
+	if ingressMgr == nil {
+		return nil
 	}
 
 	var routes []ingress.RouteConfig
-	for _, svc := range services {
-		if svc.Status == supervisor.StatusRunning {
-			routes = append(routes, ingress.RouteConfig{
-				Service: svc.ID,
-				Port:    svc.Port,
-				Subpath: svc.Subpath,
-			})
+	if mgr != nil {
+		services, err := mgr.ListServices(ctx)
+		if err != nil {
+			s.logger.Warn("failed to list services for ingress route sync", "error", err)
+			return err
+		}
+
+		for _, svc := range services {
+			if svc.Status == supervisor.StatusRunning {
+				routes = append(routes, ingress.RouteConfig{
+					Service: svc.ID,
+					Port:    svc.Port,
+					Subpath: svc.Subpath,
+				})
+			}
 		}
 	}
 
@@ -1352,5 +1358,7 @@ func (s *Server) syncIngressRoutes(ctx context.Context) {
 	defer cancel()
 	if err := ingressMgr.SyncRoutes(syncCtx, routes); err != nil {
 		s.logger.Warn("failed to sync ingress routes with caddy", "error", err)
+		return err
 	}
+	return nil
 }

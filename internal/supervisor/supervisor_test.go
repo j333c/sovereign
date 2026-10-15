@@ -154,6 +154,11 @@ func TestSupervisor_EnforceMemoryBounds(t *testing.T) {
 			if containerInfo.Spec.MemoryReservationBytes != tc.expectedRes {
 				t.Errorf("container spec reservation mismatch: expected %d, got %d", tc.expectedRes, containerInfo.Spec.MemoryReservationBytes)
 			}
+			if tc.id == ServiceJellyfin {
+				if containerInfo.Spec.UDPPorts[7359] != 7359 || containerInfo.Spec.UDPPorts[1900] != 1900 {
+					t.Errorf("container spec missing UDP ports for Jellyfin: %v", containerInfo.Spec.UDPPorts)
+				}
+			}
 
 			// Verify synthesized Compose YAML on disk
 			composeFile := filepath.Join(tempDir, "state", "compose", tc.id+".yaml")

@@ -104,8 +104,8 @@ func TestJellyfin_DirectPlayConfigGeneration_Default(t *testing.T) {
 	if !strings.Contains(sysContent, "<EnableUPnP>true</EnableUPnP>") {
 		t.Errorf("system.xml missing EnableUPnP: %s", sysContent)
 	}
-	if !strings.Contains(sysContent, "<IsStartupWizardCompleted>true</IsStartupWizardCompleted>") {
-		t.Errorf("system.xml missing IsStartupWizardCompleted: %s", sysContent)
+	if !strings.Contains(sysContent, "<IsStartupWizardCompleted>false</IsStartupWizardCompleted>") {
+		t.Errorf("system.xml missing IsStartupWizardCompleted false: %s", sysContent)
 	}
 
 	// 2. Verify encoding.xml prioritizes direct-play
@@ -193,8 +193,8 @@ func TestJellyfin_HardwareDetection_IntelDRM(t *testing.T) {
 	if hw.Type != HWAccelQSV {
 		t.Errorf("expected HWAccelQSV for Intel vendor 0x8086, got %s", hw.Type)
 	}
-	if len(hw.Devices) != 1 || hw.Devices[0] != "/dev/dri:/dev/dri" {
-		t.Errorf("expected devices [/dev/dri:/dev/dri], got %v", hw.Devices)
+	if len(hw.Devices) != 1 || hw.Devices[0] != "/dev/dri/renderD128:/dev/dri/renderD128" {
+		t.Errorf("expected devices [/dev/dri/renderD128:/dev/dri/renderD128], got %v", hw.Devices)
 	}
 	if hw.VaapiDevice != "/dev/dri/renderD128" {
 		t.Errorf("expected vaapi device /dev/dri/renderD128, got %s", hw.VaapiDevice)
@@ -243,8 +243,56 @@ func TestJellyfin_HardwareDetection_AMDDRM(t *testing.T) {
 	if hw.Type != HWAccelVAAPI {
 		t.Errorf("expected HWAccelVAAPI for AMD vendor 0x1002, got %s", hw.Type)
 	}
-	if len(hw.Devices) != 1 || hw.Devices[0] != "/dev/dri:/dev/dri" {
-		t.Errorf("expected devices [/dev/dri:/dev/dri], got %v", hw.Devices)
+	if len(hw.Devices) != 1 || hw.Devices[0] != "/dev/dri/renderD128:/dev/dri/renderD128" {
+		t.Errorf("expected devices [/dev/dri/renderD128:/dev/dri/renderD128], got %v", hw.Devices)
+	}
+}
+
+func TestJellyfin_HardwareDetection_NvidiaDRM(t *testing.T) {
+	tempDir := t.TempDir()
+	devDir := filepath.Join(tempDir, "dev")
+	sysDir := filepath.Join(tempDir, "sys")
+
+	driDir := filepath.Join(devDir, "dri")
+	_ = os.MkdirAll(driDir, 0755)
+	_ = os.WriteFile(filepath.Join(driDir, "renderD128"), []byte("mock-device"), 0644)
+
+	// Vendor file for Nvidia (0x10de) in DRM
+	vendorDir := filepath.Join(sysDir, "class", "drm", "renderD128", "device")
+	_ = os.MkdirAll(vendorDir, 0755)
+	_ = os.WriteFile(filepath.Join(vendorDir, "vendor"), []byte("0x10de\n"), 0644)
+
+	opts := HardwareProbeOptions{
+		DevRoot:   devDir,
+		SysfsRoot: sysDir,
+	}
+
+	hw := DetectHardwareAcceleration(opts)
+	if hw.Type != HWAccelNVENC {
+		t.Errorf("expected HWAccelNVENC for Nvidia DRM vendor 0x10de, got %s", hw.Type)
+	}
+}
+
+func TestJellyfin_HardwareDetection_EmptyDRI(t *testing.T) {
+	tempDir := t.TempDir()
+	devDir := filepath.Join(tempDir, "dev")
+	sysDir := filepath.Join(tempDir, "sys")
+
+	// Empty dri folder without character nodes or vendor
+	driDir := filepath.Join(devDir, "dri")
+	_ = os.MkdirAll(driDir, 0755)
+
+	opts := HardwareProbeOptions{
+		DevRoot:   devDir,
+		SysfsRoot: sysDir,
+	}
+
+	hw := DetectHardwareAcceleration(opts)
+	if hw.Type != HWAccelNone {
+		t.Errorf("expected HWAccelNone for empty DRI directory, got %s", hw.Type)
+	}
+	if len(hw.Devices) != 0 {
+		t.Errorf("expected empty devices slice for empty DRI, got %v", hw.Devices)
 	}
 }
 
@@ -471,5 +519,15 @@ func TestSupervisor_Jellyfin_RefreshService_Lifecycle(t *testing.T) {
 	}
 	if !aliasDispatched {
 		t.Errorf("expected alias 'video' to dispatch refresh to Jellyfin")
+	}
+
+	// 6. Test unsupported service returns ErrInvalidOperation
+	_, err = mgr.ActivateService(ctx, ServiceNavidrome)
+	if err != nil {
+		t.Fatalf("failed to activate Navidrome: %v", err)
+	}
+	errUnsupported := mgr.RefreshService(ctx, ServiceNavidrome)
+	if !errors.Is(errUnsupported, ErrInvalidOperation) {
+		t.Errorf("expected ErrInvalidOperation for navidrome refresh, got: %v", errUnsupported)
 	}
 }

@@ -71,11 +71,16 @@ func NewJellyfinProvisioner(dataDir string, logger *slog.Logger, hwOpts Hardware
 		hwOpts.ProcRoot = "/proc"
 	}
 
+	baseURL := os.Getenv("SOVEREIGN_JELLYFIN_URL")
+	if baseURL == "" {
+		baseURL = "http://127.0.0.1:8096"
+	}
+
 	return &JellyfinProvisioner{
 		dataDir:    dataDir,
 		logger:     logger,
 		hwOpts:     hwOpts,
-		baseURL:    "http://127.0.0.1:8096",
+		baseURL:    baseURL,
 		httpClient: &http.Client{Timeout: 5 * time.Second},
 	}
 }
@@ -102,47 +107,12 @@ func DetectHardwareAcceleration(opts HardwareProbeOptions) HardwareDetectResult 
 		opts.ProcRoot = "/proc"
 	}
 
-	// 1. Probe for DRI devices (/dev/dri or /dev/dri/renderD128)
-	driPath := filepath.Join(opts.DevRoot, "dri")
-	renderPath := filepath.Join(driPath, "renderD128")
-	cardPath := filepath.Join(driPath, "card0")
-
-	driExists := false
-	if fi, err := os.Stat(driPath); err == nil && fi.IsDir() {
-		driExists = true
-	} else if _, err := os.Stat(renderPath); err == nil {
-		driExists = true
-	}
-
-	if driExists {
-		vaapiDev := "/dev/dri/renderD128"
-		if _, err := os.Stat(renderPath); err != nil {
-			if _, err := os.Stat(cardPath); err == nil {
-				vaapiDev = "/dev/dri/card0"
-			}
-		}
-
-		// Inspect sysfs for Intel vs AMD vendor ID
-		// Intel: 0x8086, AMD: 0x1002
-		vendor := probeDRMVendor(opts.SysfsRoot)
-		accelType := HWAccelVAAPI
-		if strings.Contains(vendor, "8086") {
-			accelType = HWAccelQSV
-		} else if strings.Contains(vendor, "1002") {
-			accelType = HWAccelVAAPI
-		}
-
-		return HardwareDetectResult{
-			Type:        accelType,
-			Devices:     []string{"/dev/dri:/dev/dri"},
-			VaapiDevice: vaapiDev,
-		}
-	}
-
-	// 2. Probe for Nvidia devices (/dev/nvidia0, /dev/nvidiactl, or /proc/driver/nvidia)
+	// 1. Check for Nvidia GPU presence first (via /proc/driver/nvidia, /dev/nvidia*, or DRM vendor 10de)
 	nvidia0 := filepath.Join(opts.DevRoot, "nvidia0")
 	nvidiactl := filepath.Join(opts.DevRoot, "nvidiactl")
 	nvidiaProc := filepath.Join(opts.ProcRoot, "driver/nvidia/version")
+	nvidiaProcDir := filepath.Join(opts.ProcRoot, "driver/nvidia")
+	drmVendor := probeDRMVendor(opts.SysfsRoot)
 
 	nvidiaFound := false
 	if _, err := os.Stat(nvidia0); err == nil {
@@ -150,6 +120,10 @@ func DetectHardwareAcceleration(opts HardwareProbeOptions) HardwareDetectResult 
 	} else if _, err := os.Stat(nvidiactl); err == nil {
 		nvidiaFound = true
 	} else if _, err := os.Stat(nvidiaProc); err == nil {
+		nvidiaFound = true
+	} else if fi, err := os.Stat(nvidiaProcDir); err == nil && fi.IsDir() {
+		nvidiaFound = true
+	} else if strings.Contains(drmVendor, "10de") {
 		nvidiaFound = true
 	}
 
@@ -174,7 +148,42 @@ func DetectHardwareAcceleration(opts HardwareProbeOptions) HardwareDetectResult 
 		}
 	}
 
-	// 3. No hardware acceleration devices detected
+	// 2. Probe for specific DRI character device nodes (/dev/dri/renderD128, /dev/dri/card0)
+	driPath := filepath.Join(opts.DevRoot, "dri")
+	renderPath := filepath.Join(driPath, "renderD128")
+	cardPath := filepath.Join(driPath, "card0")
+
+	var driDevices []string
+	vaapiDev := ""
+
+	if _, err := os.Stat(renderPath); err == nil {
+		driDevices = append(driDevices, "/dev/dri/renderD128:/dev/dri/renderD128")
+		vaapiDev = "/dev/dri/renderD128"
+	}
+	if _, err := os.Stat(cardPath); err == nil {
+		driDevices = append(driDevices, "/dev/dri/card0:/dev/dri/card0")
+		if vaapiDev == "" {
+			vaapiDev = "/dev/dri/card0"
+		}
+	}
+
+	// If specific DRI device nodes were found and vendor is not Nvidia
+	if len(driDevices) > 0 {
+		accelType := HWAccelVAAPI
+		if strings.Contains(drmVendor, "8086") {
+			accelType = HWAccelQSV
+		} else if strings.Contains(drmVendor, "1002") {
+			accelType = HWAccelVAAPI
+		}
+
+		return HardwareDetectResult{
+			Type:        accelType,
+			Devices:     driDevices,
+			VaapiDevice: vaapiDev,
+		}
+	}
+
+	// 3. No acceleration devices detected (or /dev/dri empty without render nodes)
 	return HardwareDetectResult{
 		Type:        HWAccelNone,
 		Devices:     nil,
@@ -255,7 +264,20 @@ func (p *JellyfinProvisioner) TriggerLibraryRefresh(ctx context.Context) error {
 		return p.RefreshFunc(ctx)
 	}
 
-	refreshURL := fmt.Sprintf("%s/Library/Refresh", p.baseURL)
+	if p.httpClient == nil {
+		p.httpClient = &http.Client{Timeout: 5 * time.Second}
+	}
+
+	baseURL := p.baseURL
+	if baseURL == "" {
+		baseURL = os.Getenv("SOVEREIGN_JELLYFIN_URL")
+		if baseURL == "" {
+			baseURL = "http://127.0.0.1:8096"
+		}
+	}
+	baseURL = strings.TrimRight(baseURL, "/")
+
+	refreshURL := fmt.Sprintf("%s/Library/Refresh", baseURL)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, refreshURL, nil)
 	if err != nil {
 		return fmt.Errorf("failed to create refresh request: %w", err)
@@ -284,7 +306,7 @@ func generateSystemXML() []byte {
 	buf.WriteString("  <EnableRemoteAccess>true</EnableRemoteAccess>\n")
 	buf.WriteString("  <Port>8096</Port>\n")
 	buf.WriteString("  <PublicPort>8096</PublicPort>\n")
-	buf.WriteString("  <IsStartupWizardCompleted>true</IsStartupWizardCompleted>\n")
+	buf.WriteString("  <IsStartupWizardCompleted>false</IsStartupWizardCompleted>\n")
 	buf.WriteString("</ServerConfiguration>\n")
 	return buf.Bytes()
 }

@@ -627,6 +627,12 @@ paths:
                   refreshed:
                     type: boolean
                     example: true
+        '400':
+          description: Service does not support library refresh.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
         '404':
           description: Service not found.
           content:

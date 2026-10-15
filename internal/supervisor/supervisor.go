@@ -57,10 +57,11 @@ const (
 )
 
 var (
-	ErrServiceNotFound = errors.New("service not found")
-	ErrPullFailed      = errors.New("image pull failed")
-	ErrInactiveService = errors.New("cannot restart inactive service; activate it first")
-	ErrServiceInactive = errors.New("service is inactive")
+	ErrServiceNotFound  = errors.New("service not found")
+	ErrPullFailed       = errors.New("image pull failed")
+	ErrInactiveService  = errors.New("cannot restart inactive service; activate it first")
+	ErrServiceInactive  = errors.New("service is inactive")
+	ErrInvalidOperation = errors.New("invalid operation")
 )
 
 // ServiceDef holds the immutable specification of a managed service.
@@ -800,7 +801,11 @@ func (m *ServiceManager) RefreshService(ctx context.Context, id string) error {
 	}
 	m.mu.RUnlock()
 
-	if id == ServiceJellyfin && m.jellyfinProvisioner != nil {
+	if id != ServiceJellyfin {
+		return fmt.Errorf("%w: service does not support library refresh", ErrInvalidOperation)
+	}
+
+	if m.jellyfinProvisioner != nil {
 		return m.jellyfinProvisioner.TriggerLibraryRefresh(ctx)
 	}
 

@@ -1978,6 +1978,24 @@ func TestServer_Jellyfin_ActivationAndRefresh(t *testing.T) {
 		t.Errorf("expected alias /video/refresh to succeed and invoke refresh, got status: %d", wAlias.Code)
 	}
 
+	// 7b. Refresh unsupported active service (navidrome) returns 400 Bad Request
+	_, err = srv.ServiceManager().ActivateService(context.Background(), supervisor.ServiceNavidrome)
+	if err != nil {
+		t.Fatalf("failed to activate navidrome: %v", err)
+	}
+	reqNavidromeRefresh := httptest.NewRequest(http.MethodPost, "/api/v1/services/navidrome/refresh", nil)
+	wNavidromeRefresh := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(wNavidromeRefresh, reqNavidromeRefresh)
+	if wNavidromeRefresh.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 Bad Request when refreshing unsupported service navidrome, got: %d", wNavidromeRefresh.Code)
+	}
+	var navProblem ProblemDetails
+	if err := json.Unmarshal(wNavidromeRefresh.Body.Bytes(), &navProblem); err != nil {
+		t.Errorf("failed to parse problem details for navidrome refresh: %v", err)
+	} else if navProblem.Status != http.StatusBadRequest || !strings.Contains(navProblem.Detail, "does not support library refresh") {
+		t.Errorf("unexpected problem details for unsupported service refresh: %+v", navProblem)
+	}
+
 	// 8. Place media file in movies directory and deactivate Jellyfin
 	testVideo := filepath.Join(moviesDir, "Gladiator.mkv")
 	_ = os.WriteFile(testVideo, []byte("gladiator-video-bytes"), 0644)

@@ -2,10 +2,10 @@
 title: 'Story 2.3: In-House Video Streaming Integration (Jellyfin)'
 type: 'feature'
 created: '2026-10-15'
-status: 'review'
+status: 'done'
 route: 'dispatch'
 baseline_commit: 'd5f2f9c9ab36e180faf4379e9aec98fa75b08899'
-review_loop_iteration: 0
+review_loop_iteration: 1
 context:
   - '_bmad-output/planning-artifacts/architecture/architecture-sovereign-2026-10-15/ARCHITECTURE-SPINE.md'
   - '_bmad-output/planning-artifacts/ux-designs/ux-sovereign-2026-10-15/DESIGN.md'
@@ -89,6 +89,16 @@ context:
 ## Spec Change Log
 
 ## Review Triage Log
+
+- **Iteration 1 (2026-10-15)**:
+  - *Finding 1 (Setup Wizard Access)*: Default `IsStartupWizardCompleted` changed to `false` in `system.xml` template so administrator first-run account setup wizard can complete on clean installation.
+  - *Finding 2 (Hardware Acceleration Robustness)*: Prioritized Nvidia GPU detection over DRI; added Nvidia DRM vendor `10de` detection; mapped individual character device nodes (`/dev/dri/renderD128`, `/dev/dri/card0`) instead of whole directory; handled empty DRI folder gracefully returning `HWAccelNone`.
+  - *Finding 3 (Refresh Validation & Problem Details)*: Added `ErrInvalidOperation` in supervisor package when invoking refresh on unsupported services; mapped to HTTP 400 Bad Request with ProblemDetails in daemon HTTP API; added `400` response to `api/openapi.yaml`.
+  - *Finding 4 (Ingress Sync on Daemon Boot)*: Fixed background route synchronization loop in `StartBackgroundServices` to call `s.syncIngressRoutes(ctx)` instead of passing `nil` routes.
+  - *Finding 5 (Admin Port Ingress Conflict Guard)*: Excluded port 2019 from spoke listener generation in `internal/ingress/caddy.go` to prevent clashing with Caddy admin API.
+  - *Finding 6 (Refresh Trigger Fallback & Safety)*: Added nil safety and zero-value URL guard with `SOVEREIGN_JELLYFIN_URL` env fallback in `TriggerLibraryRefresh`.
+  - *Finding 7 (Test Coverage Expansions)*: Added tests for port 2019 exclusion, direct spoke listener structure, Nvidia DRM vendor detection, empty DRI handling, Jellyfin UDP container ports, and unsupported service refresh returning HTTP 400 Bad Request.
+  - *Finding 8 (Verification & Sprint Updates)*: Verified all packages (`go test -count=1 ./...` passing 100%), updated spec status to `done`, and marked `2-3-in-house-video-streaming-integration-jellyfin: done` in `sprint-status.yaml`.
 
 ## Design Notes
 
