@@ -1,0 +1,90 @@
+# STATUS DEFINITIONS:
+# ==================
+# Epic Status:
+#   - backlog: Epic not yet started
+#   - in-progress: Epic actively being worked on
+#   - done: All stories in epic completed
+
+# Story Status:
+#   - backlog: Story only exists in epic file
+#   - ready-for-dev: Story file created, ready for development
+#   - in-progress: Developer actively working on implementation
+#   - review: Implementation complete, ready for review
+#   - done: Story completed
+
+# Retrospective Status:
+#   - optional: Can be completed but not required
+#   - done: Retrospective has been completed
+
+# Action Item Status:
+#   - open: Committed during a retrospective, not yet addressed
+#   - in-progress: Actively being worked on
+#   - done: Completed
+
+# WORKFLOW NOTES:
+# ===============
+# - Epic transitions to 'in-progress' automatically when its first story starts (via build's sprint sync)
+# - Stories can be worked in parallel if team capacity allows
+# - Developer typically creates the next story after the previous one is 'done' to incorporate learnings
+# - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
+# - Retrospective appends its action items to action_items; the status view surfaces open ones
+generated: 10-15-2026 15:17
+last_updated: 10-15-2026 15:17
+project: sovereign
+project_key: NOKEY
+tracking_system: file-system
+story_location: _bmad-output/implementation-artifacts
+development_status:
+  epic-1: backlog
+  1-1-greenfield-monorepo-scaffold-core-supervisor-daemon-boundary: backlog
+  1-2-dedicated-caddy-ingress-gateway-local-mdns-discovery: backlog
+  1-3-power-loss-resilience-reassuring-boot-diagnostics-screen: backlog
+  1-4-storage-pool-formatting-network-nas-mount-management: backlog
+  1-5-five-step-first-run-setup-wizard-rbac-authentication: backlog
+  1-6-central-admin-dashboard-real-time-sse-telemetry-stream: backlog
+  epic-1-retrospective: optional
+
+  epic-2: backlog
+  2-1-on-demand-container-lifecycle-engine-health-probing: backlog
+  2-2-servicecard-statusbadge-appliance-ui-controls: backlog
+  2-3-in-house-video-streaming-integration-jellyfin: backlog
+  2-4-music-audiobook-streaming-integration-navidrome-audiobookshe: backlog
+  2-5-staged-dropzone-ingestion-pipeline-web-upload-interface: backlog
+  epic-2-retrospective: optional
+
+  epic-3: backlog
+  3-1-optical-drive-detection-automated-disc-ripping-engine: backlog
+  3-2-automated-media-metadata-artwork-enrichment: backlog
+  3-3-off-peak-transcoding-queue-universal-direct-play-pre-encodin: backlog
+  3-4-mobile-offline-profile-generation-ipad-sync: backlog
+  epic-3-retrospective: optional
+
+  epic-4: backlog
+  4-1-centralized-document-management-integration-paperless-ngx: backlog
+  4-2-multi-channel-ingestion-mobile-scanner-automated-imap-email: backlog
+  4-3-deadline-extraction-parser-obligation-scanner: backlog
+  4-4-home-assistant-webhook-mqtt-email-alert-dispatcher: backlog
+  epic-4-retrospective: optional
+
+  epic-5: backlog
+  5-1-managed-llama-cpp-backend-appliance-boundary-guard-suite: backlog
+  5-2-mediated-ai-gateway-two-lane-priority-request-governor: backlog
+  5-3-dynamic-gpu-arbitration-day-night-idle-surrender: backlog
+  5-4-open-webui-chat-interface-localized-customization-prompts: backlog
+  5-5-single-source-of-truth-rag-context-window-headroom-truncator: backlog
+  5-6-ai-backend-model-administration-interface-in-settings: backlog
+  epic-5-retrospective: optional
+
+  epic-6: backlog
+  6-1-declarative-compose-revisioning-pre-upgrade-snapshot-engine: backlog
+  6-2-automated-180-second-health-verification-atomic-rollback-exe: backlog
+  6-3-one-click-manual-rollback-rollback-confirmation-modal: backlog
+  6-4-modular-central-settings-hub-destructive-protection-dialogs: backlog
+  6-5-full-four-language-internationalization-i18n: backlog
+  epic-6-retrospective: optional
+
+  epic-7: backlog
+  7-1-minimum-hardware-specification-guides-hardware-tier-roadmap: backlog
+  7-2-public-marketing-landing-website-feature-showcase: backlog
+  7-3-open-source-governance-bmad-attribution-license-compliance-s: backlog
+  epic-7-retrospective: optional
