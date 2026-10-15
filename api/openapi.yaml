@@ -452,6 +452,38 @@ paths:
               schema:
                 $ref: '#/components/schemas/ProblemDetails'
 
+  /api/v1/services/{id}:
+    get:
+      summary: Get service status
+      description: Returns lifecycle and health details for a specific managed service.
+      operationId: getService
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            example: jellyfin
+      responses:
+        '200':
+          description: Service status details.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServiceStatus'
+        '404':
+          description: Service not found.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '500':
+          description: Internal supervisor error.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
   /api/v1/services/{id}/activate:
     post:
       summary: Activate managed service on-demand

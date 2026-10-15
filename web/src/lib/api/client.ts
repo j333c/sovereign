@@ -270,6 +270,13 @@ export class SovereignApiClient {
   }
 
   /**
+   * Retrieve lifecycle and health status for a specific service ID.
+   */
+  async getService(id: string): Promise<ServiceStatus> {
+    return this.request<ServiceStatus>(`/api/v1/services/${encodeURIComponent(id)}`);
+  }
+
+  /**
    * Activate a managed service on-demand.
    */
   async activateService(id: string): Promise<ServiceStatus> {

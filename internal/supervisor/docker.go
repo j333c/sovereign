@@ -151,6 +151,13 @@ func (m *MockRuntimeEngine) IsImagePresent(ctx context.Context, image string) (b
 	return m.images[image], nil
 }
 
+func containerName(name string) string {
+	if strings.HasPrefix(name, "sovereign-") {
+		return name
+	}
+	return "sovereign-" + name
+}
+
 func (m *MockRuntimeEngine) StartContainer(ctx context.Context, spec ContainerSpec) error {
 	if m.OnStartContainer != nil {
 		return m.OnStartContainer(ctx, spec)
@@ -159,15 +166,19 @@ func (m *MockRuntimeEngine) StartContainer(ctx context.Context, spec ContainerSp
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	m.containers[spec.Name] = &ContainerInfo{
-		ID:      "mock-" + spec.Name,
-		Name:    spec.Name,
+	cName := containerName(spec.Name)
+	info := &ContainerInfo{
+		ID:      "mock-" + cName,
+		Name:    cName,
 		Image:   spec.Image,
 		Running: true,
 		Status:  "running",
 		Spec:    spec,
 	}
+	m.containers[spec.Name] = info
+	m.containers[cName] = info
 	m.probeHealthMap[spec.Name] = true
+	m.probeHealthMap[cName] = true
 	m.startedHistory = append(m.startedHistory, spec)
 	return nil
 }
@@ -180,7 +191,12 @@ func (m *MockRuntimeEngine) StopContainer(ctx context.Context, name string) erro
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	cName := containerName(name)
 	if info, exists := m.containers[name]; exists {
+		info.Running = false
+		info.Status = "stopped"
+	}
+	if info, exists := m.containers[cName]; exists {
 		info.Running = false
 		info.Status = "stopped"
 	}
@@ -196,11 +212,17 @@ func (m *MockRuntimeEngine) RestartContainer(ctx context.Context, name string) e
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	cName := containerName(name)
 	if info, exists := m.containers[name]; exists {
 		info.Running = true
 		info.Status = "running"
 	}
+	if info, exists := m.containers[cName]; exists {
+		info.Running = true
+		info.Status = "running"
+	}
 	m.probeHealthMap[name] = true
+	m.probeHealthMap[cName] = true
 	m.restartedHistory = append(m.restartedHistory, name)
 	return nil
 }
@@ -210,6 +232,10 @@ func (m *MockRuntimeEngine) InspectContainer(ctx context.Context, name string) (
 	defer m.mu.RUnlock()
 
 	if info, exists := m.containers[name]; exists {
+		return info, nil
+	}
+	cName := containerName(name)
+	if info, exists := m.containers[cName]; exists {
 		return info, nil
 	}
 	return nil, fmt.Errorf("container not found: %s", name)
@@ -224,11 +250,17 @@ func (m *MockRuntimeEngine) ProbeHealth(ctx context.Context, name string) (bool,
 	defer m.mu.RUnlock()
 
 	info, exists := m.containers[name]
+	if !exists {
+		info, exists = m.containers[containerName(name)]
+	}
 	if !exists || !info.Running {
 		return false, nil
 	}
 
 	if healthy, exists := m.probeHealthMap[name]; exists {
+		return healthy, nil
+	}
+	if healthy, exists := m.probeHealthMap[containerName(name)]; exists {
 		return healthy, nil
 	}
 	return true, nil
@@ -303,11 +335,19 @@ func (d *DockerEngine) PullImage(ctx context.Context, image string, progressCb f
 		return fmt.Errorf("docker pull failed with status %d: %s", resp.StatusCode, string(body))
 	}
 
+	type progressEntry struct {
+		current int64
+		total   int64
+	}
+	layers := make(map[string]progressEntry)
+	var maxPercent float64
+
 	// Stream progress lines (Docker emits JSON objects per newline)
 	scanner := bufio.NewScanner(resp.Body)
 	for scanner.Scan() {
 		line := scanner.Bytes()
 		var msg struct {
+			ID             string `json:"id"`
 			Status         string `json:"status"`
 			ProgressDetail struct {
 				Current int64 `json:"current"`
@@ -319,12 +359,28 @@ func (d *DockerEngine) PullImage(ctx context.Context, image string, progressCb f
 			if msg.Error != "" {
 				return fmt.Errorf("docker pull error: %s", msg.Error)
 			}
-			if progressCb != nil {
-				pct := 0.0
-				if msg.ProgressDetail.Total > 0 {
-					pct = (float64(msg.ProgressDetail.Current) / float64(msg.ProgressDetail.Total)) * 100.0
+			if msg.ID != "" && msg.ProgressDetail.Total > 0 {
+				layers[msg.ID] = progressEntry{
+					current: msg.ProgressDetail.Current,
+					total:   msg.ProgressDetail.Total,
 				}
-				progressCb(pct, msg.Status)
+				var sumCurrent, sumTotal int64
+				for _, l := range layers {
+					sumCurrent += l.current
+					sumTotal += l.total
+				}
+				if sumTotal > 0 {
+					pct := (float64(sumCurrent) / float64(sumTotal)) * 100.0
+					if pct > maxPercent {
+						maxPercent = pct
+					}
+				}
+			} else if strings.HasPrefix(msg.Status, "Status: Downloaded") || strings.HasPrefix(msg.Status, "Status: Image is up to date") {
+				maxPercent = 100.0
+			}
+
+			if progressCb != nil && (msg.Status != "" || maxPercent > 0) {
+				progressCb(maxPercent, msg.Status)
 			}
 		}
 	}
@@ -357,14 +413,16 @@ func (d *DockerEngine) IsImagePresent(ctx context.Context, image string) (bool, 
 
 // StartContainer creates and starts a container matching ContainerSpec.
 func (d *DockerEngine) StartContainer(ctx context.Context, spec ContainerSpec) error {
+	cName := containerName(spec.Name)
+
 	// First inspect if container exists
-	existing, err := d.InspectContainer(ctx, spec.Name)
+	existing, err := d.InspectContainer(ctx, cName)
 	if err == nil && existing != nil {
 		if existing.Running {
 			return nil
 		}
 		// Start existing container
-		startURL := fmt.Sprintf("http://docker/containers/%s/start", spec.Name)
+		startURL := fmt.Sprintf("http://docker/containers/%s/start", cName)
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, startURL, nil)
 		if err != nil {
 			return err
@@ -375,12 +433,14 @@ func (d *DockerEngine) StartContainer(ctx context.Context, spec ContainerSpec) e
 		}
 		defer resp.Body.Close()
 		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			d.attachSecondaryNetworks(ctx, cName, spec.Networks)
 			return nil
 		}
 	}
 
 	// Create container with resource limits and volume binds
 	type portBinding struct {
+		HostIP   string `json:"HostIp"`
 		HostPort string `json:"HostPort"`
 	}
 
@@ -388,20 +448,28 @@ func (d *DockerEngine) StartContainer(ctx context.Context, spec ContainerSpec) e
 	exposedPorts := make(map[string]struct{})
 	for hostPort, containerPort := range spec.Ports {
 		key := fmt.Sprintf("%d/tcp", containerPort)
-		portBindings[key] = []portBinding{{HostPort: fmt.Sprintf("%d", hostPort)}}
+		portBindings[key] = []portBinding{{
+			HostIP:   "127.0.0.1",
+			HostPort: fmt.Sprintf("%d", hostPort),
+		}}
 		exposedPorts[key] = struct{}{}
+	}
+
+	primaryNet := "sovereign-control"
+	if len(spec.Networks) > 0 {
+		primaryNet = spec.Networks[0]
 	}
 
 	createPayload := map[string]any{
 		"Image":        spec.Image,
 		"ExposedPorts": exposedPorts,
 		"HostConfig": map[string]any{
-			"Memory":             spec.MemoryLimitBytes,
-			"MemoryReservation":  spec.MemoryReservationBytes,
-			"Binds":              spec.Volumes,
-			"PortBindings":       portBindings,
-			"RestartPolicy":      map[string]string{"Name": "unless-stopped"},
-			"NetworkMode":        "sovereign-control",
+			"Memory":            spec.MemoryLimitBytes,
+			"MemoryReservation": spec.MemoryReservationBytes,
+			"Binds":             spec.Volumes,
+			"PortBindings":      portBindings,
+			"RestartPolicy":     map[string]string{"Name": "unless-stopped"},
+			"NetworkMode":       primaryNet,
 		},
 	}
 
@@ -410,7 +478,7 @@ func (d *DockerEngine) StartContainer(ctx context.Context, spec ContainerSpec) e
 		return err
 	}
 
-	createURL := fmt.Sprintf("http://docker/containers/create?name=%s", spec.Name)
+	createURL := fmt.Sprintf("http://docker/containers/create?name=%s", cName)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, createURL, bytes.NewReader(payloadBytes))
 	if err != nil {
 		return err
@@ -429,7 +497,7 @@ func (d *DockerEngine) StartContainer(ctx context.Context, spec ContainerSpec) e
 	}
 
 	// Start created container
-	startURL := fmt.Sprintf("http://docker/containers/%s/start", spec.Name)
+	startURL := fmt.Sprintf("http://docker/containers/%s/start", cName)
 	startReq, err := http.NewRequestWithContext(ctx, http.MethodPost, startURL, nil)
 	if err != nil {
 		return err
@@ -445,12 +513,39 @@ func (d *DockerEngine) StartContainer(ctx context.Context, spec ContainerSpec) e
 		return fmt.Errorf("container start failed status %d: %s", startResp.StatusCode, string(body))
 	}
 
+	d.attachSecondaryNetworks(ctx, cName, spec.Networks)
 	return nil
+}
+
+func (d *DockerEngine) attachSecondaryNetworks(ctx context.Context, cName string, networks []string) {
+	if len(networks) <= 1 {
+		return
+	}
+	primaryNet := networks[0]
+	for _, netName := range networks[1:] {
+		if netName == primaryNet {
+			continue
+		}
+		connectURL := fmt.Sprintf("http://docker/networks/%s/connect", netName)
+		bodyData, _ := json.Marshal(map[string]string{"Container": cName})
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, connectURL, bytes.NewReader(bodyData))
+		if err != nil {
+			continue
+		}
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := d.client.Do(req)
+		if err != nil {
+			d.logger.Warn("failed to attach container to secondary network", "container", cName, "network", netName, "error", err)
+			continue
+		}
+		_ = resp.Body.Close()
+	}
 }
 
 // StopContainer stops running container instance.
 func (d *DockerEngine) StopContainer(ctx context.Context, name string) error {
-	stopURL := fmt.Sprintf("http://docker/containers/%s/stop", name)
+	cName := containerName(name)
+	stopURL := fmt.Sprintf("http://docker/containers/%s/stop", cName)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, stopURL, nil)
 	if err != nil {
 		return err
@@ -471,7 +566,8 @@ func (d *DockerEngine) StopContainer(ctx context.Context, name string) error {
 
 // RestartContainer restarts container instance.
 func (d *DockerEngine) RestartContainer(ctx context.Context, name string) error {
-	restartURL := fmt.Sprintf("http://docker/containers/%s/restart", name)
+	cName := containerName(name)
+	restartURL := fmt.Sprintf("http://docker/containers/%s/restart", cName)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, restartURL, nil)
 	if err != nil {
 		return err
@@ -492,7 +588,8 @@ func (d *DockerEngine) RestartContainer(ctx context.Context, name string) error 
 
 // InspectContainer gets container details.
 func (d *DockerEngine) InspectContainer(ctx context.Context, name string) (*ContainerInfo, error) {
-	url := fmt.Sprintf("http://docker/containers/%s/json", name)
+	cName := containerName(name)
+	url := fmt.Sprintf("http://docker/containers/%s/json", cName)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err

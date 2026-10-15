@@ -59,6 +59,7 @@ const (
 var (
 	ErrServiceNotFound = errors.New("service not found")
 	ErrPullFailed      = errors.New("image pull failed")
+	ErrInactiveService = errors.New("cannot restart inactive service; activate it first")
 )
 
 // ServiceDef holds the immutable specification of a managed service.
@@ -246,6 +247,7 @@ type ServiceManager struct {
 	debouncer   *WatchdogDebouncer
 	definitions map[string]ServiceDef
 	statuses    map[string]*ServiceStatus
+	activating  map[string]bool
 	cancelWatch context.CancelFunc
 	stopOnce    sync.Once
 	timeNow     func() time.Time
@@ -347,8 +349,16 @@ func NewServiceManager(cfg ServiceManagerConfig) *ServiceManager {
 		debouncer:   debouncer,
 		definitions: defs,
 		statuses:    statuses,
+		activating:  make(map[string]bool),
 		timeNow:     timeFunc,
 	}
+}
+
+// SetEventBroadcaster registers or updates the SSE event broadcast callback.
+func (m *ServiceManager) SetEventBroadcaster(broadcaster EventBroadcaster) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.broadcaster = broadcaster
 }
 
 func resolveVolumes(dataDir string, templates []string) []string {
@@ -414,6 +424,10 @@ func (m *ServiceManager) GetService(ctx context.Context, id string) (*ServiceSta
 // ActivateService pulls the image on-demand, streams SSE progress, synthesizes Compose spec, and starts the container.
 func (m *ServiceManager) ActivateService(ctx context.Context, id string) (*ServiceStatus, error) {
 	m.mu.Lock()
+	if m.activating[id] {
+		m.mu.Unlock()
+		return nil, errors.New("service activation already in progress")
+	}
 	def, exists := m.definitions[id]
 	if !exists {
 		m.mu.Unlock()
@@ -421,9 +435,38 @@ func (m *ServiceManager) ActivateService(ctx context.Context, id string) (*Servi
 	}
 
 	st := m.statuses[id]
+	if st.Status == StatusRunning {
+		stCopy := *st
+		m.mu.Unlock()
+		return &stCopy, nil
+	}
+
+	m.activating[id] = true
 	st.Status = StatusStarting
 	st.UpdatedAt = m.timeNow().UTC().Format(time.RFC3339)
 	m.mu.Unlock()
+
+	defer func() {
+		m.mu.Lock()
+		delete(m.activating, id)
+		m.mu.Unlock()
+	}()
+
+	emitError := func(errMsg string) {
+		m.mu.Lock()
+		st.Status = StatusError
+		st.Health = HealthUnhealthy
+		st.UpdatedAt = m.timeNow().UTC().Format(time.RFC3339)
+		m.mu.Unlock()
+
+		if m.broadcaster != nil {
+			m.broadcaster("service.error", ServiceError{
+				ServiceID: id,
+				Message:   errMsg,
+				Timestamp: m.timeNow().UTC().Format(time.RFC3339),
+			})
+		}
+	}
 
 	// 1. On-Demand Image Pull if not present
 	present, _ := m.engine.IsImagePresent(ctx, def.Image)
@@ -465,6 +508,7 @@ func (m *ServiceManager) ActivateService(ctx context.Context, id string) (*Servi
 		hostPath := parts[0]
 		if err := os.MkdirAll(hostPath, 0755); err != nil {
 			m.logger.Error("failed to ensure volume directory", "path", hostPath, "error", err)
+			emitError(fmt.Sprintf("Failed to prepare volume directory %s: %v", hostPath, err))
 			return nil, fmt.Errorf("failed to prepare volume directory %s: %w", hostPath, err)
 		}
 	}
@@ -482,17 +526,14 @@ func (m *ServiceManager) ActivateService(ctx context.Context, id string) (*Servi
 
 	if _, err := SynthesizeComposeSpec(m.dataDir, containerSpec); err != nil {
 		m.logger.Error("failed to synthesize compose spec", "service", id, "error", err)
+		emitError(fmt.Sprintf("Failed to synthesize compose spec: %v", err))
 		return nil, fmt.Errorf("failed to synthesize compose spec: %w", err)
 	}
 
 	// 4. Start Container Runtime
 	if err := m.engine.StartContainer(ctx, containerSpec); err != nil {
 		m.logger.Error("failed to start container", "service", id, "error", err)
-		m.mu.Lock()
-		st.Status = StatusError
-		st.Health = HealthUnhealthy
-		st.UpdatedAt = m.timeNow().UTC().Format(time.RFC3339)
-		m.mu.Unlock()
+		emitError(fmt.Sprintf("Failed to start service container: %v", err))
 		return nil, fmt.Errorf("failed to start service container: %w", err)
 	}
 
@@ -570,6 +611,10 @@ func (m *ServiceManager) RestartService(ctx context.Context, id string) (*Servic
 		return nil, ErrServiceNotFound
 	}
 	st := m.statuses[id]
+	if st.Status == StatusInactive {
+		m.mu.Unlock()
+		return nil, ErrInactiveService
+	}
 	m.mu.Unlock()
 
 	m.logger.Info("restarting service", "service", id)
@@ -635,6 +680,15 @@ func (m *ServiceManager) probeActiveServices(ctx context.Context) {
 	m.mu.RUnlock()
 
 	for _, id := range activeIDs {
+		// Under read-lock, verify status is still running or degraded before probing/acting
+		m.mu.RLock()
+		st, exists := m.statuses[id]
+		if !exists || (st.Status != StatusRunning && st.Status != StatusDegraded) {
+			m.mu.RUnlock()
+			continue
+		}
+		m.mu.RUnlock()
+
 		healthy, err := m.engine.ProbeHealth(ctx, id)
 		if err != nil {
 			healthy = false
@@ -663,10 +717,13 @@ func (m *ServiceManager) probeActiveServices(ctx context.Context) {
 		}
 
 		if shouldRestart {
+			m.debouncer.Reset(id)
 			m.logger.Warn("sustained health probe failure: attempting recovery restart", "service", id)
-			if err := m.engine.RestartContainer(ctx, id); err != nil {
-				m.logger.Error("watchdog recovery restart failed", "service", id, "error", err)
-			}
+			go func(targetID string) {
+				if err := m.engine.RestartContainer(context.Background(), targetID); err != nil {
+					m.logger.Error("watchdog recovery restart failed", "service", targetID, "error", err)
+				}
+			}(id)
 		}
 	}
 }

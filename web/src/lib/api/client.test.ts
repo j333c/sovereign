@@ -770,6 +770,33 @@ describe("SovereignApiClient", () => {
     assert.equal(res.services[0].status, "inactive");
   });
 
+  it("successfully fetches getService for single service ID", async () => {
+    const mockService = {
+      id: "jellyfin",
+      name: "Jellyfin",
+      status: "running",
+      image: "jellyfin/jellyfin:12.2.0",
+      image_downloaded: true,
+      mem_limit_bytes: 2147483648,
+      mem_reservation_bytes: 1073741824,
+    };
+
+    const mockFetch: typeof fetch = async (input) => {
+      const url = String(input);
+      assert.ok(url.endsWith("/api/v1/services/jellyfin"));
+      return new Response(JSON.stringify(mockService), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    };
+
+    const client = new SovereignApiClient({ baseUrl: "http://localhost:8080", fetchFn: mockFetch });
+    const res = await client.getService("jellyfin");
+    assert.equal(res.id, "jellyfin");
+    assert.equal(res.status, "running");
+    assert.equal(res.image_downloaded, true);
+  });
+
   it("successfully calls activateService, deactivateService, and restartService", async () => {
     const calls: { url: string; method: string }[] = [];
     const mockFetch: typeof fetch = async (input, init) => {

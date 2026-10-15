@@ -293,7 +293,16 @@ func TestSupervisor_VolumePreservation_DeactivationAndRestart(t *testing.T) {
 		t.Errorf("config file content modified: %s", string(configContent))
 	}
 
-	// 5. Restart Jellyfin and assert volumes still intact
+	// 5. Reactivate Jellyfin and assert volumes still intact
+	reactivateSvc, err := mgr.ActivateService(ctx, ServiceJellyfin)
+	if err != nil {
+		t.Fatalf("ActivateService failed: %v", err)
+	}
+	if reactivateSvc.Status != StatusRunning {
+		t.Errorf("expected status running after reactivate, got %s", reactivateSvc.Status)
+	}
+
+	// 6. Restart running Jellyfin and assert volumes still intact
 	restartSvc, err := mgr.RestartService(ctx, ServiceJellyfin)
 	if err != nil {
 		t.Fatalf("RestartService failed: %v", err)
@@ -406,5 +415,168 @@ func TestSupervisor_UnknownServiceErrors(t *testing.T) {
 	}
 	if _, err := mgr.RestartService(ctx, "nonexistent"); !errors.Is(err, ErrServiceNotFound) {
 		t.Errorf("expected ErrServiceNotFound for RestartService, got %v", err)
+	}
+}
+
+func TestSupervisor_RestartService_InactiveServiceRejected(t *testing.T) {
+	mgr, _, _, _ := setupTestManager(t, nil)
+	defer mgr.Close()
+
+	ctx := context.Background()
+	_, err := mgr.RestartService(ctx, ServiceNavidrome)
+	if !errors.Is(err, ErrInactiveService) {
+		t.Fatalf("expected ErrInactiveService, got %v", err)
+	}
+}
+
+func TestSupervisor_ActivateService_InFlightDuplicateGuard(t *testing.T) {
+	mgr, engine, _, _ := setupTestManager(t, nil)
+	defer mgr.Close()
+
+	ctx := context.Background()
+	slowPullStarted := make(chan struct{})
+	pullRelease := make(chan struct{})
+
+	engine.OnPullImage = func(ctx context.Context, image string, progressCb func(percent float64, status string)) error {
+		close(slowPullStarted)
+		<-pullRelease
+		return nil
+	}
+
+	go func() {
+		_, _ = mgr.ActivateService(ctx, ServiceNavidrome)
+	}()
+
+	<-slowPullStarted
+
+	// Attempt second concurrent activation
+	_, err := mgr.ActivateService(ctx, ServiceNavidrome)
+	if err == nil {
+		t.Fatalf("expected error on concurrent activation, got nil")
+	}
+
+	close(pullRelease)
+}
+
+func TestSupervisor_ServiceManager_WatchdogProbingAndRecovery(t *testing.T) {
+	currTime := time.Date(2026, 10, 15, 14, 0, 0, 0, time.UTC)
+	var timeMu sync.Mutex
+	timeFunc := func() time.Time {
+		timeMu.Lock()
+		defer timeMu.Unlock()
+		return currTime
+	}
+	advanceTime := func(d time.Duration) {
+		timeMu.Lock()
+		defer timeMu.Unlock()
+		currTime = currTime.Add(d)
+	}
+
+	tempDir := t.TempDir()
+	engine := NewMockRuntimeEngine()
+	var events []string
+	var eventsMu sync.Mutex
+	broadcaster := func(event string, data any) {
+		eventsMu.Lock()
+		defer eventsMu.Unlock()
+		events = append(events, event)
+	}
+
+	mgr := NewServiceManager(ServiceManagerConfig{
+		DataDir: tempDir,
+		Engine:  engine,
+		WatchdogConfig: WatchdogConfig{
+			MinFailures: 3,
+			MinWindow:   60 * time.Second,
+			Interval:    10 * time.Millisecond,
+			TimeFunc:    timeFunc,
+		},
+		EventBroadcaster: broadcaster,
+	})
+	defer mgr.Close()
+
+	ctx := context.Background()
+
+	// 1. Activate Jellyfin
+	_, err := mgr.ActivateService(ctx, ServiceJellyfin)
+	if err != nil {
+		t.Fatalf("failed to activate service: %v", err)
+	}
+
+	// 2. Simulate container becoming unhealthy
+	engine.SetContainerHealth(ServiceJellyfin, false)
+
+	// Probe 1 (T = 0s)
+	mgr.probeActiveServices(ctx)
+	svc, _ := mgr.GetService(ctx, ServiceJellyfin)
+	if svc.Health != HealthHealthy {
+		t.Errorf("expected health healthy on 1st probe failure, got %s", svc.Health)
+	}
+
+	// Probe 2 (T = 20s)
+	advanceTime(20 * time.Second)
+	mgr.probeActiveServices(ctx)
+	svc, _ = mgr.GetService(ctx, ServiceJellyfin)
+	if svc.Health != HealthHealthy {
+		t.Errorf("expected health healthy on 2nd probe failure, got %s", svc.Health)
+	}
+
+	// Probe 3 (T = 40s) -> count=3 but elapsed=40s (<60s)
+	advanceTime(20 * time.Second)
+	mgr.probeActiveServices(ctx)
+	svc, _ = mgr.GetService(ctx, ServiceJellyfin)
+	if svc.Health != HealthHealthy {
+		t.Errorf("expected health healthy on 3rd failure because elapsed < 60s, got %s", svc.Health)
+	}
+
+	// Probe 4 (T = 65s) -> count >= 3 AND elapsed >= 60s -> transitions to degraded and triggers restart!
+	advanceTime(25 * time.Second) // total elapsed = 65s
+	mgr.probeActiveServices(ctx)
+
+	svc, _ = mgr.GetService(ctx, ServiceJellyfin)
+	if svc.Health != HealthDegraded {
+		t.Errorf("expected health degraded after sustained failure, got %s", svc.Health)
+	}
+	if svc.Status != StatusDegraded {
+		t.Errorf("expected status degraded after sustained failure, got %s", svc.Status)
+	}
+
+	// Wait briefly for the goroutine restart to complete
+	time.Sleep(50 * time.Millisecond)
+
+	// Verify restart was called on mock engine
+	engine.mu.RLock()
+	restartedHistory := engine.restartedHistory
+	engine.mu.RUnlock()
+
+	restarted := false
+	for _, name := range restartedHistory {
+		if name == ServiceJellyfin || name == "sovereign-"+ServiceJellyfin {
+			restarted = true
+			break
+		}
+	}
+	if !restarted {
+		t.Errorf("expected recovery restart to be called on engine")
+	}
+
+	// Verify debouncer was reset on recovery restart
+	st := mgr.debouncer.GetState(ServiceJellyfin)
+	if st.ConsecutiveFailures != 0 {
+		t.Errorf("expected debouncer failures to be reset to 0 after recovery restart, got %d", st.ConsecutiveFailures)
+	}
+
+	// Verify service.health_changed event was emitted
+	eventsMu.Lock()
+	healthChangedEmitted := false
+	for _, e := range events {
+		if e == "service.health_changed" {
+			healthChangedEmitted = true
+			break
+		}
+	}
+	eventsMu.Unlock()
+	if !healthChangedEmitted {
+		t.Errorf("expected service.health_changed event to be emitted")
 	}
 }

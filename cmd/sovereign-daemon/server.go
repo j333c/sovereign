@@ -241,6 +241,7 @@ func NewServer(cfg Config) (*Server, error) {
 		})
 	} else {
 		s.serviceMgr = cfg.ServiceMgr
+		s.serviceMgr.SetEventBroadcaster(s.BroadcastEvent)
 	}
 
 	s.routes()
@@ -456,6 +457,7 @@ func (s *Server) routes() {
 
 	// Managed Services lifecycle endpoints
 	s.router.HandleFunc("GET /api/v1/services", s.handleListServices)
+	s.router.HandleFunc("GET /api/v1/services/{id}", s.handleGetService)
 	s.router.HandleFunc("POST /api/v1/services/{id}/activate", s.handleActivateService)
 	s.router.HandleFunc("POST /api/v1/services/{id}/deactivate", s.handleDeactivateService)
 	s.router.HandleFunc("POST /api/v1/services/{id}/restart", s.requireSetupOrAdmin(s.handleRestartService))
@@ -1132,6 +1134,36 @@ func (s *Server) handleListServices(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (s *Server) handleGetService(w http.ResponseWriter, r *http.Request) {
+	s.mu.RLock()
+	mgr := s.serviceMgr
+	s.mu.RUnlock()
+
+	if mgr == nil {
+		s.writeProblem(w, http.StatusInternalServerError, "Internal Server Error", "Service manager is not initialized", r.URL.Path)
+		return
+	}
+
+	id := extractServiceID(r, "")
+	if id == "" {
+		s.writeProblem(w, http.StatusBadRequest, "Invalid Request", "Service ID missing in request path", r.URL.Path)
+		return
+	}
+
+	svc, err := mgr.GetService(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, supervisor.ErrServiceNotFound) {
+			s.writeProblem(w, http.StatusNotFound, "Service Not Found", fmt.Sprintf("Service '%s' is not defined", id), r.URL.Path)
+			return
+		}
+		s.logger.Error("failed to get service", "service", id, "error", err)
+		s.writeProblem(w, http.StatusInternalServerError, "Internal Server Error", fmt.Sprintf("Failed to get service '%s': %v", id, err), r.URL.Path)
+		return
+	}
+
+	s.writeJSON(w, http.StatusOK, svc)
+}
+
 func (s *Server) handleActivateService(w http.ResponseWriter, r *http.Request) {
 	s.mu.RLock()
 	mgr := s.serviceMgr
@@ -1216,6 +1248,10 @@ func (s *Server) handleRestartService(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		if errors.Is(err, supervisor.ErrServiceNotFound) {
 			s.writeProblem(w, http.StatusNotFound, "Service Not Found", fmt.Sprintf("Service '%s' is not defined", id), r.URL.Path)
+			return
+		}
+		if errors.Is(err, supervisor.ErrInactiveService) || strings.Contains(err.Error(), "cannot restart inactive service") {
+			s.writeProblem(w, http.StatusBadRequest, "Invalid Request", err.Error(), r.URL.Path)
 			return
 		}
 		s.logger.Error("failed to restart service", "service", id, "error", err)

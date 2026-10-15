@@ -33,8 +33,15 @@ func setupTestServer(t *testing.T) (*Server, string) {
 	_ = os.MkdirAll(stateDir, 0755)
 	_ = os.WriteFile(filepath.Join(stateDir, "boot_state.json"), []byte(`{"clean_shutdown": true}`), 0644)
 
-	srv, err := NewServer(Config{
+	mockEngine := supervisor.NewMockRuntimeEngine()
+	svcMgr := supervisor.NewServiceManager(supervisor.ServiceManagerConfig{
 		DataDir: dataDir,
+		Engine:  mockEngine,
+	})
+
+	srv, err := NewServer(Config{
+		DataDir:    dataDir,
+		ServiceMgr: svcMgr,
 	})
 	if err != nil {
 		t.Fatalf("failed to create test server: %v", err)
@@ -1656,6 +1663,14 @@ func TestServer_Services_Restart_AuthGating(t *testing.T) {
 	srv, _ := setupTestServer(t)
 	defer srv.Close()
 
+	// Activate Jellyfin first so it is running
+	actReq := httptest.NewRequest(http.MethodPost, "/api/v1/services/jellyfin/activate", nil)
+	wAct := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(wAct, actReq)
+	if wAct.Code != http.StatusOK {
+		t.Fatalf("failed to activate jellyfin: %d", wAct.Code)
+	}
+
 	// Before setup is completed: restart is permitted
 	reqBeforeSetup := httptest.NewRequest(http.MethodPost, "/api/v1/services/jellyfin/restart", nil)
 	wBeforeSetup := httptest.NewRecorder()
@@ -1712,6 +1727,59 @@ func TestServer_Services_Restart_AuthGating(t *testing.T) {
 	_ = json.Unmarshal(wAuth.Body.Bytes(), &res)
 	if res.ID != "jellyfin" || res.Status != "running" {
 		t.Errorf("unexpected restart response: %+v", res)
+	}
+}
+
+func TestServer_Services_Restart_InactiveRejected(t *testing.T) {
+	srv, _ := setupTestServer(t)
+	defer srv.Close()
+
+	// Navidrome is inactive initially
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/services/navidrome/restart", nil)
+	w := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 Bad Request restarting inactive service, got: %d: %s", w.Code, w.Body.String())
+	}
+	ct := w.Header().Get("Content-Type")
+	if !strings.HasPrefix(ct, "application/problem+json") {
+		t.Errorf("expected application/problem+json, got: %s", ct)
+	}
+}
+
+func TestServer_Services_GetService(t *testing.T) {
+	srv, _ := setupTestServer(t)
+	defer srv.Close()
+
+	// 1. Get existing service
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/services/jellyfin", nil)
+	w := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK, got: %d", w.Code)
+	}
+
+	var svc supervisor.ServiceStatus
+	if err := json.Unmarshal(w.Body.Bytes(), &svc); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if svc.ID != "jellyfin" || svc.Status != "inactive" {
+		t.Errorf("unexpected service data: %+v", svc)
+	}
+
+	// 2. Get nonexistent service
+	req404 := httptest.NewRequest(http.MethodGet, "/api/v1/services/nonexistent", nil)
+	w404 := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(w404, req404)
+
+	if w404.Code != http.StatusNotFound {
+		t.Errorf("expected 404 Not Found, got: %d", w404.Code)
+	}
+	ct := w404.Header().Get("Content-Type")
+	if !strings.HasPrefix(ct, "application/problem+json") {
+		t.Errorf("expected application/problem+json, got: %s", ct)
 	}
 }
 
