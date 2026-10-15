@@ -167,6 +167,8 @@ Sovereign speaks with **reassuring consumer clarity**. It protects family data a
 2. **Offline / LAN Reconnecting State**: If local network connectivity drops, header displays persistent banner: *"Reconnecting to Sovereign appliance..."* with automatic reconnection polling every 3 seconds.
 3. **Unrecoverable Hardware Alert State**: If storage pool reports hardware block failures post-outage, screen displays: *"Hardware attention needed: A hard drive is reporting errors. Your existing files are locked in read-only safety mode."* Includes direct email notification dispatch.
 4. **Storage Headroom Warning State**: When free host disk space falls below 10%, the telemetry bar displays an Amber warning (*"Storage low: Background imports paused to protect system databases"*), preventing SQLite database locks.
+5. **AI Safe Stub State**: If `/data/models` contains no valid models on boot, the AI backend card displays an Amber status pill (*"No Model Installed"*), and the chat interface presents an empty-state action button: *"Select or download a model in Settings to start private chat."*
+6. **RAG Context Truncation Notice**: When document search results exceed available context headroom, chat answers append a subtle citation note (*"Note: Document excerpts were prioritized to fit your active memory window"*), avoiding technical HTTP error dialogs.
 
 ---
 

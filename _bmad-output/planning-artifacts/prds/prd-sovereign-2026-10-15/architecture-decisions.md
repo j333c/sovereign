@@ -12,6 +12,7 @@
 1. [ADR-001: Local LLM Inference Engine Runtime](#adr-001-local-llm-inference-engine-runtime)
 2. [ADR-002: Document Knowledge (RAG) Retrieval Architecture](#adr-002-document-knowledge-rag-retrieval-architecture)
 3. [ADR-003: GPU Resource Arbitration & Video Streaming Strategy](#adr-003-gpu-resource-arbitration--video-streaming-strategy)
+4. [ADR-004: Boundary Resilience, Safe Stub Mode & Multi-User Sizing](#adr-004-boundary-resilience-safe-stub-mode--multi-user-sizing)
 
 ---
 
@@ -106,3 +107,31 @@ In single-GPU or unified-memory consumer hardware setups, concurrent video strea
 - **Full Daytime Performance**: Eliminating live transcoding contention allows the local AI model to utilize 100% of available GPU acceleration for sub-second conversational responses during daytime hours.
 - **Appliance Robustness**: Avoids fragile, low-level driver hooking or runtime IPC signaling that frequently causes video playback freezes or driver crash-loops.
 - **Energy Efficiency**: Dynamic idle surrender unloads weights after 5 minutes of inactivity, lowering idle system wattage and reducing thermal output.
+
+---
+
+## ADR-004: Boundary Resilience, Safe Stub Mode & Multi-User Sizing
+
+### Status
+**ACCEPTED**
+
+### Context
+Consumer appliances face harsh edge conditions: incomplete first-run downloads, corrupted files placed via network shares, empty directories, multi-user concurrency spikes, and internet blackouts. The local AI subsystem must survive these extremes without container crash-loops, silent failure, or OOM panics.
+
+### Options Considered
+1. **Option A: Appliance Boundary Guard Suite**:
+   - **Safe Stub Mode**: If `/data/models` contains zero valid models on boot, `llama-server` initializes an idle HTTP stub returning HTTP 503 with setup guidance instead of exiting code 1 into a Docker crash loop.
+   - **GGUF Magic Check**: Reads initial 4 header bytes (`GGUF`) before invoking backend load routines to reject incomplete or corrupted files.
+   - **Multi-User Sizing (`-np 2`)**: Standardizes on 2 parallel inference slots combined with FlashAttention (`-fa`), providing family multi-user concurrency while bounding KV cache VRAM growth.
+   - **RAG Headroom Truncator**: Retrieval pipeline validates token length pre-flight, reserving a 512-token response buffer and appending a user-visible notice when documents exceed context limits.
+   - **Air-Gapped Independence**: 100% offline local verification; zero external network calls during boot, inference, or UI rendering.
+2. **Option B: Native Driver / Unconstrained Runtimes**:
+   - Rely on native upstream defaults (single-slot sequential queue or uncapped continuous batching, unvalidated model loading, and crashing on missing files).
+
+### Decision
+**Adopt Option A: Appliance Boundary Guard Suite**.
+
+### Consequences & Rationale
+- **Appliance Crash Immunity**: The server never enters an unrecoverable red restart loop if a user deletes a model file over SMB or restarts during a download.
+- **Predictable Concurrency**: Two parallel slots prevent family members from blocking each other on short chat queries while strictly preventing the KV cache from exceeding safe VRAM boundaries.
+- **Air-Gapped Sovereign Reliability**: Sovereign servers running in remote cabins or during ISP network outages operate with 100% feature availability and zero boot delays.
