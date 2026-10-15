@@ -2,7 +2,7 @@
 title: 'Story 2.2: ServiceCard & StatusBadge Appliance UI Controls'
 type: 'feature'
 created: '2026-10-15'
-status: 'review'
+status: 'done'
 route: 'dispatch'
 baseline_commit: '5c0e3ca55b21f4545a0aebab1d6d25b761de67e3'
 review_loop_iteration: 0
@@ -80,6 +80,13 @@ context:
 ## Spec Change Log
 
 ## Review Triage Log
+
+- **Inactive Service Status & Action Mapping (`web/src/app/page.tsx`, `web/src/components/ServiceCard.tsx`)**: Explicitly normalized `"inactive"` and `"stopped"` to `"stopped"` (Red ▲) instead of defaulting to healthy. Updated action buttons to display inactive status and disabled state.
+- **Rollback Confirmation Flow (`web/src/components/ServiceCard.tsx`, `web/src/app/page.tsx`)**: Ensured rollback always gates behind the confirmation modal, wired `onRollback` in `page.tsx`, and handled pending rollback execution post-admin login. Added `Escape` and click-outside dismissal.
+- **Reassurance Microcopy Refinement (`web/src/components/ServiceCard.tsx`)**: Guarded reassurance banner so standard NAS degradation does not trigger false memory pressure warnings.
+- **State Recovery on Restart Failure (`web/src/app/page.tsx`)**: Restored previous state on restart errors, localized error titles with `t.restartFailed`, and added accessible dialog dismissal on `Escape` and click-outside.
+- **Diagnostic Logs Download (`web/src/components/ServiceCard.tsx`)**: Delayed `URL.revokeObjectURL(url)` by 1 second to prevent premature browser download cancellation.
+- **Test Coverage Expansion**: Added tests in `page.test.tsx`, `useTelemetry.test.ts`, and `supervisor_test.go` covering SSE service lifecycle events, `resolveID` mapping, real button clicks, and admin login flow. All 79 frontend tests and all Go package tests pass cleanly.
 
 ## Design Notes
 
