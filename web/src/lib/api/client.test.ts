@@ -840,5 +840,80 @@ describe("SovereignApiClient", () => {
     assert.ok(calls[2].url.endsWith("/api/v1/services/jellyfin/restart"));
     assert.equal(calls[2].method, "POST");
   });
+
+  it("successfully calls uploadDropMedia and getDropHistory", async () => {
+    let uploadCalled = false;
+    let historyCalled = false;
+    let progressReported = 0;
+
+    const mockFetch: typeof fetch = async (input, init) => {
+      const url = String(input);
+      if (url.endsWith("/api/v1/drop/upload")) {
+        uploadCalled = true;
+        assert.equal(init?.method, "POST");
+        assert.ok(init?.body instanceof FormData);
+
+        return new Response(
+          JSON.stringify({
+            id: "test-uuid-123",
+            filename: "sample.mp4",
+            original_filename: "sample.mp4",
+            category: "movies",
+            size: 1048576,
+            content_type: "video/mp4",
+            path: "/data/media/movies/sample.mp4",
+            status: "promoted",
+            uploaded_at: "2026-10-15T22:00:00Z",
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+
+      if (url.endsWith("/api/v1/drop/history")) {
+        historyCalled = true;
+        return new Response(
+          JSON.stringify({
+            items: [
+              {
+                id: "test-uuid-123",
+                filename: "sample.mp4",
+                original_filename: "sample.mp4",
+                category: "movies",
+                size: 1048576,
+                content_type: "video/mp4",
+                path: "/data/media/movies/sample.mp4",
+                status: "promoted",
+                uploaded_at: "2026-10-15T22:00:00Z",
+              },
+            ],
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+
+      return new Response("Not found", { status: 404 });
+    };
+
+    const client = new SovereignApiClient({
+      baseUrl: "http://localhost:8080",
+      fetchFn: mockFetch,
+    });
+
+    const file = new Blob(["mock mp4 data"], { type: "video/mp4" });
+    const uploadRes = await client.uploadDropMedia("movies", file, "sample.mp4", (p) => {
+      progressReported = p;
+    });
+
+    assert.equal(uploadCalled, true);
+    assert.equal(uploadRes.filename, "sample.mp4");
+    assert.equal(uploadRes.status, "promoted");
+    assert.equal(progressReported, 100);
+
+    const historyItems = await client.getDropHistory();
+    assert.equal(historyCalled, true);
+    assert.equal(historyItems.length, 1);
+    assert.equal(historyItems[0].filename, "sample.mp4");
+  });
 });
+
 

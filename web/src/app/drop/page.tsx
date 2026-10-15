@@ -38,10 +38,12 @@ export default function DropzonePage() {
   const [historyLoading, setHistoryLoading] = useState(true);
   const [alert, setAlert] = useState<{ type: "success" | "error"; message: string } | null>(null);
   const [copiedTarget, setCopiedTarget] = useState<string | null>(null);
+  const [isMounted, setIsMounted] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
+    setIsMounted(true);
     loadHistory();
   }, []);
 
@@ -86,18 +88,17 @@ export default function DropzonePage() {
 
     setActiveUploads((prev) => [...newUploads, ...prev]);
 
-    // Upload files sequentially or concurrently
+    // Upload files with real-time byte progress reporting
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
       const uploadId = newUploads[i].id;
 
       try {
-        // Set intermediate progress
-        setActiveUploads((prev) =>
-          prev.map((u) => (u.id === uploadId ? { ...u, progress: 50 } : u))
-        );
-
-        await apiClient.uploadDropMedia(category, file);
+        await apiClient.uploadDropMedia(category, file, undefined, (progress) => {
+          setActiveUploads((prev) =>
+            prev.map((u) => (u.id === uploadId ? { ...u, progress } : u))
+          );
+        });
 
         setActiveUploads((prev) =>
           prev.map((u) => (u.id === uploadId ? { ...u, progress: 100, status: "success" } : u))
@@ -446,10 +447,12 @@ export default function DropzonePage() {
                         </span>
                         <span>•</span>
                         <span>{formatBytes(item.size)}</span>
-                        {item.uploaded_at && (
+                        {item.uploaded_at && isMounted && (
                           <>
                             <span>•</span>
-                            <span>{new Date(item.uploaded_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                            <span suppressHydrationWarning>
+                              {new Date(item.uploaded_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                            </span>
                           </>
                         )}
                       </div>

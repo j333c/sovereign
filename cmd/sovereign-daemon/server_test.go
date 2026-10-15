@@ -2583,3 +2583,169 @@ func TestServer_Dropzone_CollisionHandling(t *testing.T) {
 	}
 }
 
+func TestServer_Dropzone_UploadValidMedia_CallsRefreshService(t *testing.T) {
+	srv, _ := setupTestServer(t)
+	defer srv.Close()
+
+	ctx := context.Background()
+	// Activate Jellyfin service
+	if _, err := srv.serviceMgr.ActivateService(ctx, supervisor.ServiceJellyfin); err != nil {
+		t.Fatalf("failed to activate jellyfin: %v", err)
+	}
+
+	refreshCalled := make(chan string, 1)
+	srv.serviceMgr.JellyfinProvisioner().RefreshFunc = func(ctx context.Context) error {
+		select {
+		case refreshCalled <- supervisor.ServiceJellyfin:
+		default:
+		}
+		return nil
+	}
+
+	// Upload movie
+	mp4Payload := []byte("\x00\x00\x00\x20ftypisom\x00\x00\x02\x00isomiso2mp41" + strings.Repeat("A", 100))
+	body, contentType, err := createMultipartUpload("movies", "feature.mp4", mp4Payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/drop/upload", body)
+	req.Header.Set("Content-Type", contentType)
+	w := httptest.NewRecorder()
+
+	srv.Handler().ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// Verify RefreshFunc was called within 1 second
+	select {
+	case svc := <-refreshCalled:
+		if svc != supervisor.ServiceJellyfin {
+			t.Errorf("expected refresh on %s, got %s", supervisor.ServiceJellyfin, svc)
+		}
+	case <-time.After(1 * time.Second):
+		t.Fatalf("timed out waiting for jellyfin library refresh webhook")
+	}
+}
+
+func TestServer_Dropzone_UploadCategoryMismatch_Rejects422AndCleans(t *testing.T) {
+	srv, dataDir := setupTestServer(t)
+	defer srv.Close()
+
+	// MP3 audio payload uploaded to "movies" category
+	mp3Payload := append([]byte("ID3\x04\x00\x00\x00\x00\x02\x00"), bytes.Repeat([]byte("\xFF\xFB\x90\x44"), 20)...)
+	body, contentType, err := createMultipartUpload("movies", "song.mp3", mp3Payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/drop/upload", body)
+	req.Header.Set("Content-Type", contentType)
+	w := httptest.NewRecorder()
+
+	srv.Handler().ServeHTTP(w, req)
+
+	if w.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("expected 422 Unprocessable Entity on category mismatch, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var prob ProblemDetails
+	if err := json.Unmarshal(w.Body.Bytes(), &prob); err != nil {
+		t.Fatal(err)
+	}
+	if prob.Title != "Category Mismatch" {
+		t.Errorf("expected title 'Category Mismatch', got %q", prob.Title)
+	}
+
+	// Verify file was NOT placed in media/movies
+	destPath := filepath.Join(dataDir, "media", "movies", "song.mp3")
+	if _, err := os.Stat(destPath); !os.IsNotExist(err) {
+		t.Fatalf("mismatched file should not exist at %s", destPath)
+	}
+
+	// Verify staging directory is clean
+	stagingDir := filepath.Join(dataDir, "drop", "incoming", "movies")
+	entries, _ := os.ReadDir(stagingDir)
+	for _, entry := range entries {
+		t.Errorf("staging file not cleaned up after category mismatch: %s", entry.Name())
+	}
+}
+
+type serverAbortingReader struct {
+	prefix []byte
+	cancel context.CancelFunc
+	pos    int
+}
+
+func (r *serverAbortingReader) Read(p []byte) (int, error) {
+	if r.pos < len(r.prefix) {
+		n := copy(p, r.prefix[r.pos:])
+		r.pos += n
+		return n, nil
+	}
+	if r.cancel != nil {
+		r.cancel()
+	}
+	return 0, context.Canceled
+}
+
+func TestServer_Dropzone_UploadAborted_Returns499AndCleansStaging(t *testing.T) {
+	srv, dataDir := setupTestServer(t)
+	defer srv.Close()
+
+	mp4Payload := []byte("\x00\x00\x00\x20ftypisom\x00\x00\x02\x00isomiso2mp41" + strings.Repeat("A", 10000))
+	fullBody, contentType, err := createMultipartUpload("movies", "aborted.mp4", mp4Payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Read only the first 350 bytes (form fields and beginning of file) then abort
+	rawBytes := fullBody.Bytes()
+	cutoff := 350
+	if cutoff > len(rawBytes) {
+		cutoff = len(rawBytes) / 2
+	}
+
+	reader := &serverAbortingReader{
+		prefix: rawBytes[:cutoff],
+		cancel: cancel,
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/drop/upload", reader).WithContext(ctx)
+	req.Header.Set("Content-Type", contentType)
+	w := httptest.NewRecorder()
+
+	srv.Handler().ServeHTTP(w, req)
+
+	if w.Code != 499 {
+		t.Fatalf("expected HTTP 499 Upload Aborted, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var prob ProblemDetails
+	if err := json.Unmarshal(w.Body.Bytes(), &prob); err != nil {
+		t.Fatal(err)
+	}
+	if prob.Title != "Upload Aborted" {
+		t.Errorf("expected title 'Upload Aborted', got %q", prob.Title)
+	}
+
+	// Verify staging directory is completely clean
+	stagingDir := filepath.Join(dataDir, "drop", "incoming", "movies")
+	entries, _ := os.ReadDir(stagingDir)
+	for _, entry := range entries {
+		t.Errorf("orphaned staging file after aborted upload: %s", entry.Name())
+	}
+
+	// Verify not promoted
+	destPath := filepath.Join(dataDir, "media", "movies", "aborted.mp4")
+	if _, err := os.Stat(destPath); !os.IsNotExist(err) {
+		t.Fatalf("aborted file should not exist at %s", destPath)
+	}
+}
+
+

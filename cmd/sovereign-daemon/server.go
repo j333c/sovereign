@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"math"
 	"net"
@@ -1376,54 +1377,91 @@ func (s *Server) handleDropUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 32MB max in-memory buffer, spills to disk temp for large video files
-	if err := r.ParseMultipartForm(32 << 20); err != nil {
+	mr, err := r.MultipartReader()
+	if err != nil {
 		s.writeProblem(w, http.StatusBadRequest, "Invalid Request", "Failed to parse multipart/form-data upload: "+err.Error(), r.URL.Path)
 		return
 	}
-	defer func() {
-		if r.MultipartForm != nil {
-			_ = r.MultipartForm.RemoveAll()
-		}
-	}()
 
-	category := strings.ToLower(strings.TrimSpace(r.FormValue("category")))
-	if category == "" || !storage.IsValidCategory(category) {
-		s.writeProblem(w, http.StatusBadRequest, "Invalid Category", "Category must be one of: movies, tv, music, audiobooks", r.URL.Path)
-		return
+	category := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("category")))
+	if category == "" {
+		category = strings.ToLower(strings.TrimSpace(r.Header.Get("X-Media-Category")))
 	}
 
-	file, header, err := r.FormFile("file")
-	if err != nil || file == nil {
+	var uploadedItem *storage.DropHistoryItem
+	var uploadErr error
+	var fileProcessed bool
+
+	for {
+		part, err := mr.NextPart()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			if errors.Is(err, context.Canceled) || errors.Is(r.Context().Err(), context.Canceled) {
+				s.writeProblem(w, 499, "Upload Aborted", "Client closed connection during upload stream", r.URL.Path)
+				return
+			}
+			s.writeProblem(w, http.StatusBadRequest, "Invalid Request", "Failed reading multipart part: "+err.Error(), r.URL.Path)
+			return
+		}
+
+		formName := part.FormName()
+		if formName == "category" {
+			catBytes, _ := io.ReadAll(part)
+			_ = part.Close()
+			category = strings.ToLower(strings.TrimSpace(string(catBytes)))
+			continue
+		}
+
+		if formName == "file" {
+			filename := part.FileName()
+			if category == "" || !storage.IsValidCategory(category) {
+				_ = part.Close()
+				s.writeProblem(w, http.StatusBadRequest, "Invalid Category", "Category must be one of: movies, tv, music, audiobooks", r.URL.Path)
+				return
+			}
+
+			fileProcessed = true
+			uploadedItem, uploadErr = engine.HandleUploadStream(r.Context(), category, filename, part)
+			_ = part.Close()
+			break
+		}
+		_ = part.Close()
+	}
+
+	if !fileProcessed {
 		s.writeProblem(w, http.StatusBadRequest, "Missing File", "Multipart field 'file' is required", r.URL.Path)
 		return
 	}
-	defer file.Close()
 
-	item, err := engine.HandleUploadStream(r.Context(), category, header.Filename, file)
-	if err != nil {
-		if errors.Is(err, storage.ErrInvalidCategory) {
+	if uploadErr != nil {
+		if errors.Is(uploadErr, storage.ErrInvalidCategory) {
 			s.writeProblem(w, http.StatusBadRequest, "Invalid Category", "Category must be one of: movies, tv, music, audiobooks", r.URL.Path)
 			return
 		}
-		if errors.Is(err, storage.ErrInvalidMedia) {
+		if errors.Is(uploadErr, storage.ErrInvalidMedia) {
 			s.writeProblem(w, http.StatusUnprocessableEntity, "Invalid Media Format", "Only media files are accepted. Please upload video or audio files.", r.URL.Path)
 			return
 		}
-		if errors.Is(err, storage.ErrEmptyFile) {
+		if errors.Is(uploadErr, storage.ErrCategoryMismatch) {
+			s.writeProblem(w, http.StatusUnprocessableEntity, "Category Mismatch", "The uploaded file format does not match the selected category.", r.URL.Path)
+			return
+		}
+		if errors.Is(uploadErr, storage.ErrEmptyFile) {
 			s.writeProblem(w, http.StatusUnprocessableEntity, "Empty File", "The uploaded file is empty.", r.URL.Path)
 			return
 		}
-		if errors.Is(err, context.Canceled) || errors.Is(err, storage.ErrStagingAborted) {
+		if errors.Is(uploadErr, context.Canceled) || errors.Is(uploadErr, storage.ErrStagingAborted) || errors.Is(r.Context().Err(), context.Canceled) {
 			s.writeProblem(w, 499, "Upload Aborted", "Client closed connection during upload stream", r.URL.Path)
 			return
 		}
-		s.logger.Error("dropzone upload processing failed", "category", category, "filename", header.Filename, "error", err)
+		s.logger.Error("dropzone upload processing failed", "category", category, "error", uploadErr)
 		s.writeProblem(w, http.StatusInternalServerError, "Upload Failed", "An error occurred while processing the media upload.", r.URL.Path)
 		return
 	}
 
-	s.writeJSON(w, http.StatusOK, item)
+	s.writeJSON(w, http.StatusOK, uploadedItem)
 }
 
 // handleDropHistory returns recent ingestion and promotion history.

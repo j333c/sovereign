@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"sovereign/internal/supervisor"
@@ -37,10 +38,11 @@ var ValidCategories = []string{
 
 // Sentinel dropzone errors.
 var (
-	ErrInvalidCategory = errors.New("invalid media category")
-	ErrInvalidMedia    = errors.New("only media files are accepted")
-	ErrEmptyFile       = errors.New("file is empty")
-	ErrStagingAborted  = errors.New("upload stream was aborted")
+	ErrInvalidCategory  = errors.New("invalid media category")
+	ErrInvalidMedia     = errors.New("only media files are accepted")
+	ErrCategoryMismatch = errors.New("uploaded media format does not match selected category")
+	ErrEmptyFile        = errors.New("file is empty")
+	ErrStagingAborted   = errors.New("upload stream was aborted")
 )
 
 // IsValidCategory checks whether a string is one of the valid media categories.
@@ -48,6 +50,19 @@ func IsValidCategory(cat string) bool {
 	switch strings.ToLower(strings.TrimSpace(cat)) {
 	case CategoryMovies, CategoryTV, CategoryMusic, CategoryAudiobooks:
 		return true
+	default:
+		return false
+	}
+}
+
+// IsCategoryCompatible checks whether the detected media MIME type is suitable for the target category.
+func IsCategoryCompatible(category, contentType string) bool {
+	category = strings.ToLower(strings.TrimSpace(category))
+	switch category {
+	case CategoryMovies, CategoryTV:
+		return strings.HasPrefix(contentType, "video/")
+	case CategoryMusic, CategoryAudiobooks:
+		return strings.HasPrefix(contentType, "audio/")
 	default:
 		return false
 	}
@@ -67,8 +82,32 @@ func ServiceForCategory(cat string) string {
 	}
 }
 
+// CleanOrphanedStagingFiles removes any lingering in-flight staging files (.uploading-*)
+// in /data/drop/incoming/:category from previous crashes or ungraceful daemon stops.
+func CleanOrphanedStagingFiles(dataDir string) error {
+	if dataDir == "" {
+		dataDir = "/data"
+	}
+	for _, cat := range ValidCategories {
+		incDir := filepath.Join(dataDir, "drop", "incoming", cat)
+		entries, err := os.ReadDir(incDir)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return err
+		}
+		for _, entry := range entries {
+			if strings.HasPrefix(entry.Name(), ".uploading-") {
+				_ = os.Remove(filepath.Join(incDir, entry.Name()))
+			}
+		}
+	}
+	return nil
+}
+
 // EnsureDropzoneDirectories auto-provisions staging directories (/data/drop/incoming/:category)
-// and media targets (/data/media/:category) with 0755 permissions.
+// and media targets (/data/media/:category) with 0755 permissions and cleans any orphaned staging files.
 func EnsureDropzoneDirectories(dataDir string) error {
 	if dataDir == "" {
 		dataDir = "/data"
@@ -84,6 +123,8 @@ func EnsureDropzoneDirectories(dataDir string) error {
 			return fmt.Errorf("failed to create media directory %q: %w", mediaDir, err)
 		}
 	}
+
+	_ = CleanOrphanedStagingFiles(dataDir)
 	return nil
 }
 
@@ -189,19 +230,16 @@ func DetectMedia(data []byte) (contentType string, format string, ok bool) {
 	}
 
 	// 9. MPEG-TS: Transport Stream sync byte 0x47
+	// Bounds safe: ensure slice length strictly exceeds offset before indexing
 	if data[0] == 0x47 {
-		if len(data) >= 188 {
-			if data[188] == 0x47 {
-				return "video/mp2t", "ts", true
-			}
-			if len(data) >= 204 && data[204] == 0x47 {
-				return "video/mp2t", "ts", true
-			}
-		} else if len(data) >= 4 {
-			// For short TS samples, verify not plain ASCII printable text
-			if !isAllPrintableASCII(data[:4]) {
-				return "video/mp2t", "ts", true
-			}
+		if len(data) > 188 && data[188] == 0x47 {
+			return "video/mp2t", "ts", true
+		}
+		if len(data) > 204 && data[204] == 0x47 {
+			return "video/mp2t", "ts", true
+		}
+		if len(data) >= 4 && !isAllPrintableASCII(data[:4]) {
+			return "video/mp2t", "ts", true
 		}
 	}
 
@@ -242,6 +280,55 @@ func ResolveTargetFilename(targetDir, desiredFilename string) string {
 			return candidate
 		}
 	}
+}
+
+// atomicMoveOrCopy moves a file via os.Rename, falling back to a full file copy + fsync + remove
+// if the source and destination are across different mount devices (syscall.EXDEV).
+func atomicMoveOrCopy(srcPath, destPath string) error {
+	err := os.Rename(srcPath, destPath)
+	if err == nil {
+		return nil
+	}
+
+	// Check if this is an EXDEV (cross-device link) error
+	var linkErr *os.LinkError
+	isExdev := errors.As(err, &linkErr) && (errors.Is(linkErr.Err, syscall.EXDEV) || strings.Contains(strings.ToLower(linkErr.Err.Error()), "cross-device"))
+	if !isExdev && !strings.Contains(strings.ToLower(err.Error()), "cross-device link") {
+		return err
+	}
+
+	// Fallback: copy file content, perform fsync, and delete source
+	src, err := os.Open(srcPath)
+	if err != nil {
+		return fmt.Errorf("cross-device copy open source failed: %w", err)
+	}
+	defer src.Close()
+
+	dest, err := os.OpenFile(destPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+	if err != nil {
+		return fmt.Errorf("cross-device copy open destination failed: %w", err)
+	}
+
+	if _, err := io.Copy(dest, src); err != nil {
+		_ = dest.Close()
+		_ = os.Remove(destPath)
+		return fmt.Errorf("cross-device copy write failed: %w", err)
+	}
+
+	if err := dest.Sync(); err != nil {
+		_ = dest.Close()
+		_ = os.Remove(destPath)
+		return fmt.Errorf("cross-device copy sync failed: %w", err)
+	}
+
+	if err := dest.Close(); err != nil {
+		_ = os.Remove(destPath)
+		return fmt.Errorf("cross-device copy close failed: %w", err)
+	}
+
+	_ = src.Close()
+	_ = os.Remove(srcPath)
+	return nil
 }
 
 // DropHistoryItem records metadata for an ingested media file.
@@ -289,6 +376,7 @@ type DropzoneEngine struct {
 	historyMu        sync.RWMutex
 	history          []DropHistoryItem
 	scannerMu        sync.Mutex
+	promotionMu      sync.Mutex
 	stabilityTracker map[string]fileStability
 	stopChan         chan struct{}
 	wg               sync.WaitGroup
@@ -315,6 +403,8 @@ func NewDropzoneEngine(cfg DropzoneConfig) (*DropzoneEngine, error) {
 		return nil, fmt.Errorf("dropzone directories setup failed: %w", err)
 	}
 
+	_ = CleanOrphanedStagingFiles(cfg.DataDir)
+
 	engine := &DropzoneEngine{
 		dataDir:          cfg.DataDir,
 		logger:           cfg.Logger,
@@ -340,6 +430,18 @@ func generateUUID() string {
 	b[6] = (b[6] & 0x0f) | 0x40 // Version 4
 	b[8] = (b[8] & 0x3f) | 0x80 // Variant RFC 4122
 	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
+}
+
+type contextReader struct {
+	ctx context.Context
+	r   io.Reader
+}
+
+func (cr contextReader) Read(p []byte) (int, error) {
+	if err := cr.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return cr.r.Read(p)
 }
 
 // HandleUploadStream streams incoming payload into an isolated staging file:
@@ -379,9 +481,12 @@ func (e *DropzoneEngine) HandleUploadStream(ctx context.Context, category, filen
 		}
 	}()
 
-	// Stream upload payload directly into staging file
-	written, copyErr := io.Copy(stagingFile, r)
+	// Stream upload payload directly into staging file respecting context cancellation
+	written, copyErr := io.Copy(stagingFile, contextReader{ctx: ctx, r: r})
 	if copyErr != nil {
+		if errors.Is(copyErr, context.Canceled) || errors.Is(ctx.Err(), context.Canceled) {
+			return nil, context.Canceled
+		}
 		return nil, fmt.Errorf("%w: %v", ErrStagingAborted, copyErr)
 	}
 	if written == 0 {
@@ -409,17 +514,27 @@ func (e *DropzoneEngine) HandleUploadStream(ctx context.Context, category, filen
 		return nil, ErrInvalidMedia
 	}
 
-	// Resolve destination file path with collision handling
+	// Validate category compatibility
+	if !IsCategoryCompatible(category, contentType) {
+		e.logger.Warn("rejected category mismatch upload", "category", category, "contentType", contentType, "filename", cleanFilename)
+		return nil, ErrCategoryMismatch
+	}
+
+	// Resolve destination file path with mutex protection against concurrent collisions
 	mediaDir := filepath.Join(e.dataDir, "media", category)
 	if err := os.MkdirAll(mediaDir, 0755); err != nil {
 		return nil, fmt.Errorf("failed to ensure media directory: %w", err)
 	}
 
+	e.promotionMu.Lock()
 	finalFilename := ResolveTargetFilename(mediaDir, cleanFilename)
 	destPath := filepath.Join(mediaDir, finalFilename)
 
-	// Atomically move verified media file into destination
-	if renameErr := os.Rename(stagingPath, destPath); renameErr != nil {
+	// Atomically move (or fallback copy) verified media file into destination
+	renameErr := atomicMoveOrCopy(stagingPath, destPath)
+	e.promotionMu.Unlock()
+
+	if renameErr != nil {
 		return nil, fmt.Errorf("failed to promote staging file to media library: %w", renameErr)
 	}
 
@@ -513,7 +628,7 @@ func (e *DropzoneEngine) triggerLibraryRefresh(category string) {
 
 // ScanOnce performs a single scan across all /data/drop/incoming/:category directories.
 // Promotes stable verified files to /data/media/:category, unlinks invalid files,
-// and returns promoted items.
+// handles zero-byte files, and returns promoted items.
 func (e *DropzoneEngine) ScanOnce(ctx context.Context) ([]DropHistoryItem, error) {
 	e.scannerMu.Lock()
 	defer e.scannerMu.Unlock()
@@ -572,10 +687,34 @@ func (e *DropzoneEngine) ScanOnce(ctx context.Context) ([]DropHistoryItem, error
 				continue
 			}
 
+			isWindowElapsed := e.stabilityWindow <= 0 || now.Sub(tracker.firstSeen) >= e.stabilityWindow
+
+			// Handle zero-byte files: unlink after stability window to avoid infinite tracking
+			if size == 0 {
+				if isWindowElapsed && tracker.lastSize == 0 {
+					e.logger.Warn("rejected zero-byte file in drop folder; unlinking to keep folder clean", "path", filePath, "category", category)
+					_ = os.Remove(filePath)
+					delete(e.stabilityTracker, filePath)
+
+					rejectedItem := DropHistoryItem{
+						ID:               generateUUID(),
+						Filename:         name,
+						OriginalFilename: name,
+						Category:         category,
+						Size:             0,
+						ContentType:      "application/octet-stream",
+						Path:             filePath,
+						Status:           "rejected",
+						UploadedAt:       time.Now().UTC().Format(time.RFC3339),
+					}
+					e.addHistory(rejectedItem)
+				}
+				continue
+			}
+
 			// Check if file size and modtime have stabilized
 			isSizeStable := size > 0 && size == tracker.lastSize
 			isTimeStable := modTime.Equal(tracker.lastModTime)
-			isWindowElapsed := e.stabilityWindow <= 0 || now.Sub(tracker.firstSeen) >= e.stabilityWindow
 
 			if !isSizeStable || !isTimeStable {
 				// Write still in progress: update tracker
@@ -600,8 +739,12 @@ func (e *DropzoneEngine) ScanOnce(ctx context.Context) ([]DropHistoryItem, error
 			}
 
 			contentType, format, isMedia := DetectMedia(headerBytes)
-			if !isMedia {
-				e.logger.Warn("rejected non-media file in drop folder; unlinking to keep folder clean", "path", filePath, "category", category)
+			if !isMedia || !IsCategoryCompatible(category, contentType) {
+				reason := "non-media file"
+				if isMedia && !IsCategoryCompatible(category, contentType) {
+					reason = "category mismatch"
+				}
+				e.logger.Warn("rejected file in drop folder; unlinking to keep folder clean", "path", filePath, "category", category, "reason", reason)
 				_ = os.Remove(filePath)
 				delete(e.stabilityTracker, filePath)
 
@@ -611,7 +754,7 @@ func (e *DropzoneEngine) ScanOnce(ctx context.Context) ([]DropHistoryItem, error
 					OriginalFilename: name,
 					Category:         category,
 					Size:             size,
-					ContentType:      "application/octet-stream",
+					ContentType:      contentType,
 					Path:             filePath,
 					Status:           "rejected",
 					UploadedAt:       time.Now().UTC().Format(time.RFC3339),
@@ -620,12 +763,16 @@ func (e *DropzoneEngine) ScanOnce(ctx context.Context) ([]DropHistoryItem, error
 				continue
 			}
 
-			// Valid media: promote atomically with collision resolution
+			// Valid media: promote atomically with collision resolution & mutex
+			e.promotionMu.Lock()
 			finalFilename := ResolveTargetFilename(mediaDir, name)
 			destPath := filepath.Join(mediaDir, finalFilename)
 
-			if renameErr := os.Rename(filePath, destPath); renameErr != nil {
-				e.logger.Error("failed to atomically move dropped file to media directory", "from", filePath, "to", destPath, "error", renameErr)
+			renameErr := atomicMoveOrCopy(filePath, destPath)
+			e.promotionMu.Unlock()
+
+			if renameErr != nil {
+				e.logger.Error("failed to move dropped file to media directory", "from", filePath, "to", destPath, "error", renameErr)
 				continue
 			}
 

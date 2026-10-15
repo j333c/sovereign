@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -485,3 +487,285 @@ func TestDropzone_ScanOnce_RejectsNonMediaAndCleans(t *testing.T) {
 		t.Fatalf("invalid drop file was not unlinked from %s", dropPath)
 	}
 }
+
+func TestDropzone_ServiceForCategory(t *testing.T) {
+	tests := []struct {
+		cat      string
+		expected string
+	}{
+		{CategoryMovies, supervisor.ServiceJellyfin},
+		{CategoryTV, supervisor.ServiceJellyfin},
+		{CategoryMusic, supervisor.ServiceNavidrome},
+		{CategoryAudiobooks, supervisor.ServiceAudiobookshelf},
+		{"unknown", ""},
+		{"", ""},
+	}
+
+	for _, tc := range tests {
+		got := ServiceForCategory(tc.cat)
+		if got != tc.expected {
+			t.Errorf("ServiceForCategory(%q) = %q, want %q", tc.cat, got, tc.expected)
+		}
+	}
+}
+
+func TestDropzone_CleanOrphanedStagingFiles(t *testing.T) {
+	tmpDir := t.TempDir()
+	if err := EnsureDropzoneDirectories(tmpDir); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create orphaned staging files
+	orphanMovies := filepath.Join(tmpDir, "drop", "incoming", CategoryMovies, ".uploading-1234-movie.mp4")
+	orphanMusic := filepath.Join(tmpDir, "drop", "incoming", CategoryMusic, ".uploading-5678-song.mp3")
+	legitTv := filepath.Join(tmpDir, "drop", "incoming", CategoryTV, "legit-show.mkv")
+
+	_ = os.WriteFile(orphanMovies, []byte("partial"), 0644)
+	_ = os.WriteFile(orphanMusic, []byte("partial"), 0644)
+	_ = os.WriteFile(legitTv, []byte("full"), 0644)
+
+	if err := CleanOrphanedStagingFiles(tmpDir); err != nil {
+		t.Fatalf("CleanOrphanedStagingFiles failed: %v", err)
+	}
+
+	if _, err := os.Stat(orphanMovies); !os.IsNotExist(err) {
+		t.Errorf("orphaned staging file %s was not cleaned up", orphanMovies)
+	}
+	if _, err := os.Stat(orphanMusic); !os.IsNotExist(err) {
+		t.Errorf("orphaned staging file %s was not cleaned up", orphanMusic)
+	}
+	if _, err := os.Stat(legitTv); err != nil {
+		t.Errorf("legitimate file %s was mistakenly cleaned up", legitTv)
+	}
+}
+
+func TestDropzone_ScanOnce_ZeroByteRejection(t *testing.T) {
+	tmpDir := t.TempDir()
+	engine, err := NewDropzoneEngine(DropzoneConfig{
+		DataDir:         tmpDir,
+		StabilityWindow: 10 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer engine.Close()
+
+	zeroFile := filepath.Join(tmpDir, "drop", "incoming", CategoryMovies, "empty.mp4")
+	if err := os.WriteFile(zeroFile, []byte{}, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := context.Background()
+	// Pass 1: seen and recorded
+	promoted, err := engine.ScanOnce(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(promoted) != 0 {
+		t.Fatalf("expected 0 promoted on first pass, got %d", len(promoted))
+	}
+
+	time.Sleep(20 * time.Millisecond)
+
+	// Pass 2: stable at 0 bytes -> unlinked and rejected
+	promoted, err = engine.ScanOnce(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(promoted) != 0 {
+		t.Fatalf("expected 0 promoted for zero-byte file, got %d", len(promoted))
+	}
+
+	if _, err := os.Stat(zeroFile); !os.IsNotExist(err) {
+		t.Errorf("expected zero-byte file to be unlinked, but still exists: %s", zeroFile)
+	}
+
+	history := engine.GetHistory()
+	if len(history) != 1 {
+		t.Fatalf("expected 1 history entry, got %d", len(history))
+	}
+	if history[0].Status != "rejected" || history[0].Filename != "empty.mp4" {
+		t.Errorf("unexpected history entry: %+v", history[0])
+	}
+}
+
+func TestDropzone_HandleUploadStream_CategoryMismatch(t *testing.T) {
+	tmpDir := t.TempDir()
+	engine, err := NewDropzoneEngine(DropzoneConfig{
+		DataDir: tmpDir,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer engine.Close()
+
+	ctx := context.Background()
+
+	// 1. Audio uploaded to Movies category
+	mp3Payload := append([]byte("ID3\x04\x00\x00\x00\x00\x02\x00"), bytes.Repeat([]byte("\xFF\xFB\x90\x44"), 20)...)
+	_, err = engine.HandleUploadStream(ctx, CategoryMovies, "audio_in_movies.mp3", bytes.NewReader(mp3Payload))
+	if !errors.Is(err, ErrCategoryMismatch) {
+		t.Errorf("expected ErrCategoryMismatch, got %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(tmpDir, "media", CategoryMovies, "audio_in_movies.mp3")); !os.IsNotExist(statErr) {
+		t.Errorf("category mismatch file should not exist in media directory")
+	}
+
+	// 2. Video uploaded to Music category
+	mp4Payload := []byte("\x00\x00\x00\x20ftypisom\x00\x00\x02\x00isomiso2mp41" + strings.Repeat("A", 50))
+	_, err = engine.HandleUploadStream(ctx, CategoryMusic, "video_in_music.mp4", bytes.NewReader(mp4Payload))
+	if !errors.Is(err, ErrCategoryMismatch) {
+		t.Errorf("expected ErrCategoryMismatch, got %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(tmpDir, "media", CategoryMusic, "video_in_music.mp4")); !os.IsNotExist(statErr) {
+		t.Errorf("category mismatch file should not exist in media directory")
+	}
+}
+
+func TestDropzone_ScanOnce_CategoryMismatch(t *testing.T) {
+	tmpDir := t.TempDir()
+	engine, err := NewDropzoneEngine(DropzoneConfig{
+		DataDir:         tmpDir,
+		StabilityWindow: 10 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer engine.Close()
+
+	// Drop audio file into incoming movies directory
+	mp3Payload := append([]byte("ID3\x04\x00\x00\x00\x00\x02\x00"), bytes.Repeat([]byte("\xFF\xFB\x90\x44"), 20)...)
+	dropPath := filepath.Join(tmpDir, "drop", "incoming", CategoryMovies, "misplaced_song.mp3")
+	if err := os.WriteFile(dropPath, mp3Payload, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := context.Background()
+	_, _ = engine.ScanOnce(ctx)
+	time.Sleep(20 * time.Millisecond)
+
+	promoted, err := engine.ScanOnce(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(promoted) != 0 {
+		t.Fatalf("expected 0 promoted items for category mismatch, got %d", len(promoted))
+	}
+
+	// Verify unlinked from drop folder
+	if _, err := os.Stat(dropPath); !os.IsNotExist(err) {
+		t.Fatalf("category mismatch drop file was not unlinked from %s", dropPath)
+	}
+
+	// Verify recorded in history as rejected
+	hist := engine.GetHistory()
+	if len(hist) != 1 || hist[0].Status != "rejected" {
+		t.Errorf("expected rejected history entry, got: %+v", hist)
+	}
+}
+
+type cancelingReader struct {
+	data   []byte
+	cancel context.CancelFunc
+	pos    int
+}
+
+func (cr *cancelingReader) Read(p []byte) (n int, err error) {
+	if cr.pos >= len(cr.data) {
+		return 0, io.EOF
+	}
+	n = copy(p, cr.data[cr.pos:])
+	cr.pos += n
+	// Cancel context after first read
+	if cr.cancel != nil {
+		cr.cancel()
+	}
+	return n, nil
+}
+
+func TestDropzone_HandleUploadStream_ContextCanceled(t *testing.T) {
+	tmpDir := t.TempDir()
+	engine, err := NewDropzoneEngine(DropzoneConfig{
+		DataDir: tmpDir,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer engine.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	data := bytes.Repeat([]byte("some data bytes for upload"), 100)
+	reader := &cancelingReader{
+		data:   data,
+		cancel: cancel,
+	}
+
+	_, err = engine.HandleUploadStream(ctx, CategoryMovies, "canceled.mp4", reader)
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("expected context.Canceled error, got %v", err)
+	}
+
+	// Verify no staging files left
+	stagingDir := filepath.Join(tmpDir, "drop", "incoming", CategoryMovies)
+	entries, _ := os.ReadDir(stagingDir)
+	for _, entry := range entries {
+		t.Errorf("staging file left behind after cancellation: %s", entry.Name())
+	}
+}
+
+func TestDropzone_Start_BackgroundScanner(t *testing.T) {
+	tmpDir := t.TempDir()
+	refresher := &mockRefresher{}
+	engine, err := NewDropzoneEngine(DropzoneConfig{
+		DataDir:         tmpDir,
+		Refresher:       refresher,
+		ScanInterval:    10 * time.Millisecond,
+		StabilityWindow: 10 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer engine.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	engine.Start(ctx)
+
+	// Drop a valid FLAC audio file into music drop folder
+	flacPayload := append([]byte("fLaC\x00\x00\x00\x22"), bytes.Repeat([]byte{0x55}, 100)...)
+	dropPath := filepath.Join(tmpDir, "drop", "incoming", CategoryMusic, "ambient.flac")
+	if err := os.WriteFile(dropPath, flacPayload, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	targetPath := filepath.Join(tmpDir, "media", CategoryMusic, "ambient.flac")
+	promoted := false
+
+	// Wait up to 1 second for background scanner to process and promote
+	for i := 0; i < 50; i++ {
+		time.Sleep(20 * time.Millisecond)
+		if _, err := os.Stat(targetPath); err == nil {
+			promoted = true
+			break
+		}
+	}
+
+	if !promoted {
+		t.Fatalf("file was not promoted by background scanner to %s within timeout", targetPath)
+	}
+
+	// Verify incoming file was removed
+	if _, err := os.Stat(dropPath); !os.IsNotExist(err) {
+		t.Errorf("dropped file still exists at %s", dropPath)
+	}
+
+	// Verify refresher called
+	time.Sleep(50 * time.Millisecond)
+	if len(refresher.getRefreshed()) != 1 || refresher.getRefreshed()[0] != supervisor.ServiceNavidrome {
+		t.Errorf("expected refresh on navidrome, got: %v", refresher.getRefreshed())
+	}
+}
+

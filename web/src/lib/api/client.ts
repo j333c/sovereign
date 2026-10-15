@@ -309,7 +309,12 @@ export class SovereignApiClient {
   /**
    * Upload media file to staged dropzone pipeline.
    */
-  async uploadDropMedia(category: string, file: File | Blob, filename?: string): Promise<DropUploadResponse> {
+  async uploadDropMedia(
+    category: string,
+    file: File | Blob,
+    filename?: string,
+    onProgress?: (progress: number) => void
+  ): Promise<DropUploadResponse> {
     const formData = new FormData();
     formData.append("category", category);
     if (filename) {
@@ -318,10 +323,70 @@ export class SovereignApiClient {
       formData.append("file", file);
     }
 
-    return this.request<DropUploadResponse>("/api/v1/drop/upload", {
+    const url = this.baseUrl ? `${this.baseUrl}/api/v1/drop/upload` : "/api/v1/drop/upload";
+
+    if (typeof XMLHttpRequest !== "undefined" && onProgress) {
+      return new Promise<DropUploadResponse>((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open("POST", url);
+        xhr.withCredentials = true;
+        xhr.setRequestHeader("Accept", "application/json, application/problem+json");
+
+        xhr.upload.onprogress = (event) => {
+          if (event.lengthComputable) {
+            const percent = Math.round((event.loaded / event.total) * 100);
+            onProgress(percent);
+          }
+        };
+
+        xhr.onload = () => {
+          if (xhr.status >= 200 && xhr.status < 300) {
+            try {
+              const data = JSON.parse(xhr.responseText) as DropUploadResponse;
+              onProgress(100);
+              resolve(data);
+            } catch (e) {
+              reject(e);
+            }
+          } else {
+            let problem: ProblemDetails;
+            try {
+              const body = JSON.parse(xhr.responseText) as Record<string, unknown>;
+              problem = {
+                type: typeof body?.type === "string" ? body.type : "https://sovereign.local/errors/unknown",
+                title: typeof body?.title === "string" ? body.title : `HTTP Error ${xhr.status}`,
+                status: xhr.status,
+                detail: typeof body?.detail === "string" ? body.detail : xhr.statusText || "An error occurred",
+                instance: typeof body?.instance === "string" ? body.instance : "/api/v1/drop/upload",
+              };
+            } catch {
+              problem = {
+                type: "https://sovereign.local/errors/unknown",
+                title: `HTTP Error ${xhr.status}`,
+                status: xhr.status,
+                detail: xhr.statusText || "An error occurred",
+                instance: "/api/v1/drop/upload",
+              };
+            }
+            reject(new ProblemDetailsError(problem));
+          }
+        };
+
+        xhr.onerror = () => {
+          reject(new Error("Network request failed"));
+        };
+
+        xhr.send(formData);
+      });
+    }
+
+    if (onProgress) onProgress(50);
+    const result = await this.request<DropUploadResponse>("/api/v1/drop/upload", {
       method: "POST",
       body: formData,
     });
+    if (onProgress) onProgress(100);
+    return result;
   }
 
   /**

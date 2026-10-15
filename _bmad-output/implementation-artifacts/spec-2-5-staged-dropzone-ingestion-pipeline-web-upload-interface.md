@@ -2,10 +2,10 @@
 title: 'Story 2.5: Staged Dropzone Ingestion Pipeline & Web Upload Interface'
 type: 'feature'
 created: '2026-10-15'
-status: 'review'
+status: 'done'
 route: 'dispatch'
 baseline_commit: 'e06f14458bd387bd7a4a9a457db6adee2c0e0a34'
-review_loop_iteration: 0
+review_loop_iteration: 1
 context:
   - '_bmad-output/planning-artifacts/architecture/architecture-sovereign-2026-10-15/ARCHITECTURE-SPINE.md'
   - '_bmad-output/planning-artifacts/ux-designs/ux-sovereign-2026-10-15/DESIGN.md'
@@ -110,4 +110,34 @@ context:
 
 ## Review Triage Log
 
-*(To be populated during code review)*
+### 1. Blind Hunter Review
+- **Finding (High)**: Slice bounds panic risk during MPEG-TS detection when `len(data) == 188`. `data[188]` on a slice of length 188 panics in Go.
+  - *Fix*: Guarded with `len(data) > 188 && data[188] == 0x47` and `len(data) > 204 && data[204] == 0x47`.
+- **Finding (High)**: Lack of category vs media type verification (e.g. uploading audio files to movies/tv or video to music/audiobooks).
+  - *Fix*: Implemented `IsCategoryCompatible(category, contentType)` and `ErrCategoryMismatch`. Daemon returns HTTP 422 ProblemDetails on category mismatch.
+- **Finding (Medium)**: In-memory/temporary buffering of large multipart uploads via `r.ParseMultipartForm(100MB)`.
+  - *Fix*: Replaced with direct streaming via `r.MultipartReader()`, streaming chunks directly into the staging file with O(1) memory footprint.
+
+### 2. Edge Case Hunter Review
+- **Finding (High)**: Cross-device filesystem move failure (`syscall.EXDEV`) when staging and media directories are on separate mount points or NAS storage.
+  - *Fix*: Implemented `atomicMoveOrCopy` falling back to buffered file copy, fsync, and source unlink when `os.Rename` fails with `EXDEV`.
+- **Finding (Medium)**: Race condition during concurrent uploads of files with identical names.
+  - *Fix*: Added `promotionMu` mutex protecting `ResolveTargetFilename` and destination file creation.
+- **Finding (Medium)**: Stale `.uploading-*` staging files could persist after unexpected daemon restart.
+  - *Fix*: Implemented `CleanOrphanedStagingFiles` unlinking stale staging files on startup.
+- **Finding (Medium)**: Zero-byte files dropped into SMB folder tracked indefinitely in stability map.
+  - *Fix*: Updated `ScanOnce` to detect zero-byte files past the stability window, unlink them, and record rejection in history.
+- **Finding (Medium)**: Client connection aborts during upload stream could leave orphan staging files.
+  - *Fix*: Integrated `contextReader` and `context.Canceled` detection in `HandleUploadStream` and `handleDropUpload` returning HTTP 499 (Upload Aborted) and ensuring clean unlinking.
+- **Finding (Low)**: Next.js SSR hydration mismatch with `toLocaleTimeString()` in dropzone history.
+  - *Fix*: Added `isMounted` state and `suppressHydrationWarning` on timestamp displays in `web/src/app/drop/page.tsx`.
+
+### 3. Verification Gap Reviewer
+- **Finding**: Missing integration test asserting `RefreshService` invocation on active media service.
+  - *Fix*: Added `TestServer_Dropzone_UploadValidMedia_CallsRefreshService` asserting Jellyfin refresh webhook dispatch.
+- **Finding**: Missing integration test for client aborted upload stream handling.
+  - *Fix*: Added `TestServer_Dropzone_UploadAborted_Returns499AndCleansStaging` asserting HTTP 499 and clean staging directory.
+- **Finding**: Missing test coverage for category mismatch and category-to-service mapping.
+  - *Fix*: Added `TestDropzone_ServiceForCategory`, `TestDropzone_HandleUploadStream_CategoryMismatch`, `TestDropzone_ScanOnce_CategoryMismatch`, and `TestServer_Dropzone_UploadCategoryMismatch_Rejects422AndCleans`.
+- **Finding**: Missing unit tests for background scanner loop, zero-byte rejection, and orphaned staging cleanup.
+  - *Fix*: Added `TestDropzone_Start_BackgroundScanner`, `TestDropzone_ScanOnce_ZeroByteRejection`, and `TestDropzone_CleanOrphanedStagingFiles`.
