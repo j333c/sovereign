@@ -2,7 +2,7 @@
 title: 'Story 1.3: Power-Loss Resilience & Reassuring Boot Diagnostics Screen'
 type: 'feature'
 created: '2026-10-15'
-status: 'in-review'
+status: 'done'
 baseline_commit: '2c7622f2fc5e38a45db9534fb77c823e85e5b4cb'
 route: 'dispatch'
 review_loop_iteration: 0
