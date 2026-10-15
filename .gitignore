@@ -1,0 +1,18 @@
+# Personal configuration overrides
+*.user.toml
+
+# Python bytecode and cache
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# OS-specific files
+.DS_Store
+Thumbs.db
+
+# Editor and IDE directories
+.idea/
+.vscode/
+*.swp
+*~
