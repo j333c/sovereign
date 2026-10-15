@@ -60,6 +60,15 @@ export interface DashboardTranslations {
   healthPopoverHealthy: string;
   healthPopoverAttention: string;
   systemHealthDetails: string;
+  starting: string;
+  restarting: string;
+  pausedMemoryUse: string;
+  videoPausedMemoryUse: string;
+  restartSuccess: string;
+  restartFailed: string;
+  rollbackPreservedNote: string;
+  diagnosticLogsDownloaded: string;
+  close: string;
 }
 
 export const translations: Record<Language, DashboardTranslations> = {
@@ -123,6 +132,15 @@ export const translations: Record<Language, DashboardTranslations> = {
     healthPopoverHealthy: "All core hardware, database integrity, and container services are running healthy.",
     healthPopoverAttention: "Some subsystems require attention. Check individual service cards for details.",
     systemHealthDetails: "System Health Details",
+    starting: "Starting...",
+    restarting: "Restarting...",
+    pausedMemoryUse: "Paused due to high memory use. Automatically restarting...",
+    videoPausedMemoryUse: "Video Streaming paused due to high memory use. Automatically restarting...",
+    restartSuccess: "Service restarted successfully",
+    restartFailed: "Failed to restart service",
+    rollbackPreservedNote: "Your media, files, and documents are preserved and will not be touched.",
+    diagnosticLogsDownloaded: "Diagnostic logs downloaded",
+    close: "Close",
   },
   de: {
     crestTitle: "Sovereign",
@@ -184,6 +202,15 @@ export const translations: Record<Language, DashboardTranslations> = {
     healthPopoverHealthy: "Alle Kernhardware-, Datenbankintegritäts- und Containerdienste laufen einwandfrei.",
     healthPopoverAttention: "Einige Subsysteme erfordern Aufmerksamkeit. Details finden Sie auf den Dienstkarten.",
     systemHealthDetails: "Systemstatus-Details",
+    starting: "Wird gestartet...",
+    restarting: "Wird neu gestartet...",
+    pausedMemoryUse: "Wegen hoher Speicherauslastung pausiert. Automatischer Neustart...",
+    videoPausedMemoryUse: "Video-Streaming wegen hoher Speicherauslastung pausiert. Automatischer Neustart...",
+    restartSuccess: "Dienst erfolgreich neu gestartet",
+    restartFailed: "Fehler beim Neustart des Dienstes",
+    rollbackPreservedNote: "Ihre Medien, Dateien und Dokumente bleiben erhalten und werden nicht verändert.",
+    diagnosticLogsDownloaded: "Diagnoseprotokolle heruntergeladen",
+    close: "Schließen",
   },
   es: {
     crestTitle: "Sovereign",
@@ -245,6 +272,15 @@ export const translations: Record<Language, DashboardTranslations> = {
     healthPopoverHealthy: "Todo el hardware principal, la integridad de la base de datos y los contenedores funcionan correctamente.",
     healthPopoverAttention: "Algunos subsistemas requieren atención. Consulte las tarjetas de servicio individuales.",
     systemHealthDetails: "Detalles del estado del sistema",
+    starting: "Iniciando...",
+    restarting: "Reiniciando...",
+    pausedMemoryUse: "Pausado debido al alto uso de memoria. Reiniciando automáticamente...",
+    videoPausedMemoryUse: "Transmisión de vídeo pausada debido al alto uso de memoria. Reiniciando automáticamente...",
+    restartSuccess: "Servicio reiniciado con éxito",
+    restartFailed: "Error al reiniciar el servicio",
+    rollbackPreservedNote: "Sus medios, archivos y documentos se conservan y no se tocarán.",
+    diagnosticLogsDownloaded: "Registros de diagnóstico descargados",
+    close: "Cerrar",
   },
   fr: {
     crestTitle: "Sovereign",
@@ -306,5 +342,14 @@ export const translations: Record<Language, DashboardTranslations> = {
     healthPopoverHealthy: "Tous les composants matériels essentiels, l'intégrité de la base de données et les conteneurs fonctionnent correctement.",
     healthPopoverAttention: "Certains sous-systèmes nécessitent une attention. Consultez les cartes de service individuelles.",
     systemHealthDetails: "Détails de l'état du système",
+    starting: "Démarrage en cours...",
+    restarting: "Redémarrage en cours...",
+    pausedMemoryUse: "Interrompu en raison d'une utilisation élevée de la mémoire. Redémarrage automatique...",
+    videoPausedMemoryUse: "Streaming vidéo interrompu en raison d'une utilisation élevée de la mémoire. Redémarrage automatique...",
+    restartSuccess: "Service redémarré avec succès",
+    restartFailed: "Échec du redémarrage du service",
+    rollbackPreservedNote: "Vos médias, fichiers et documents sont préservés et ne seront pas modifiés.",
+    diagnosticLogsDownloaded: "Journaux de diagnostic téléchargés",
+    close: "Fermer",
   },
 };

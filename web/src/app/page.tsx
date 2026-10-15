@@ -6,6 +6,9 @@ import {
   apiClient as defaultApiClient,
   SovereignApiClient,
   TelemetryUpdate,
+  ProblemDetailsError,
+  ServiceHealthChangedEvent,
+  ServiceErrorEvent,
 } from "@/lib/api";
 import { Language, translations } from "@/lib/i18n";
 import { useTelemetry } from "@/lib/useTelemetry";
@@ -15,6 +18,12 @@ import { ServiceCard } from "@/components/ServiceCard";
 import { AdminLoginModal } from "@/components/AdminLoginModal";
 import { StatusLevel } from "@/components/StatusBadge";
 
+export interface ServiceStateOverride {
+  status?: StatusLevel;
+  reassuranceMessage?: string;
+  isRestarting?: boolean;
+}
+
 export interface HomePageProps {
   apiClientOverride?: SovereignApiClient;
   routerOverride?: { replace: (url: string) => void };
@@ -23,6 +32,7 @@ export interface HomePageProps {
   initialLanguage?: Language;
   initialAuthenticated?: boolean;
   initialReady?: boolean;
+  initialServices?: Record<string, ServiceStateOverride>;
 }
 
 export function HomeScreen(props: HomePageProps) {
@@ -61,6 +71,26 @@ export async function checkBootAndSetup(
   }
 }
 
+const serviceIdMap: Record<string, string> = {
+  jellyfin: "video",
+  video: "video",
+  navidrome: "audio",
+  audiobookshelf: "audio",
+  audio: "audio",
+  paperless: "dms",
+  dms: "dms",
+  "open-webui": "ai",
+  "llama-server": "ai",
+  ai: "ai",
+};
+
+const backendServiceMap: Record<string, string> = {
+  video: "jellyfin",
+  audio: "navidrome",
+  dms: "paperless",
+  ai: "llama-server",
+};
+
 function HomeScreenContent({
   apiClientOverride,
   router,
@@ -69,6 +99,7 @@ function HomeScreenContent({
   initialLanguage = "en",
   initialAuthenticated = false,
   initialReady = false,
+  initialServices = {},
 }: HomePageProps & { router?: { replace: (url: string) => void } }) {
   const client = apiClientOverride ?? defaultApiClient;
   const [isReady, setIsReady] = useState(initialReady);
@@ -85,6 +116,13 @@ function HomeScreenContent({
   const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
   const [pendingAction, setPendingAction] = useState<string | null>(null);
   const [enabledFeatures, setEnabledFeatures] = useState<string[] | null>(null);
+  const [serviceStates, setServiceStates] = useState<
+    Record<string, ServiceStateOverride>
+  >(initialServices);
+  const [restartError, setRestartError] = useState<{
+    title: string;
+    detail: string;
+  } | null>(null);
 
   const handleLanguageChange = useCallback((lang: Language) => {
     setLanguage(lang);
@@ -93,11 +131,79 @@ function HomeScreenContent({
     }
   }, []);
 
-  // Subscribe to real-time SSE telemetry
+  // SSE event handlers for service lifecycle and health changes
+  const handleServiceHealthChanged = useCallback(
+    (evt: ServiceHealthChangedEvent) => {
+      if (!evt?.service_id) return;
+      const cardId = serviceIdMap[evt.service_id];
+      if (!cardId) return;
+
+      let mappedStatus: StatusLevel = "healthy";
+      let reassuranceMsg: string | undefined = undefined;
+
+      const statusStr = (evt.status || "").toLowerCase();
+      const healthStr = (evt.health || "").toLowerCase();
+
+      if (statusStr === "starting") {
+        mappedStatus = "starting";
+      } else if (
+        statusStr === "degraded" ||
+        healthStr === "degraded"
+      ) {
+        mappedStatus = "degraded";
+        reassuranceMsg = evt.detail;
+      } else if (
+        statusStr === "error" ||
+        statusStr === "stopped" ||
+        healthStr === "unhealthy"
+      ) {
+        mappedStatus = "error";
+        reassuranceMsg = evt.detail;
+      } else if (
+        statusStr === "running" &&
+        (healthStr === "healthy" || !healthStr)
+      ) {
+        mappedStatus = "healthy";
+      }
+
+      setServiceStates((prev) => ({
+        ...prev,
+        [cardId]: {
+          ...prev[cardId],
+          status: mappedStatus,
+          isRestarting:
+            mappedStatus === "starting" ? prev[cardId]?.isRestarting : false,
+          reassuranceMessage: reassuranceMsg,
+        },
+      }));
+    },
+    []
+  );
+
+  const handleServiceError = useCallback((evt: ServiceErrorEvent) => {
+    if (!evt?.service_id) return;
+    const cardId = serviceIdMap[evt.service_id];
+    if (!cardId) return;
+
+    setServiceStates((prev) => ({
+      ...prev,
+      [cardId]: {
+        ...prev[cardId],
+        status: "error",
+        reassuranceMessage: evt.message,
+        isRestarting: false,
+      },
+    }));
+  }, []);
+
+  // Subscribe to real-time SSE telemetry & service lifecycle streams
   const { telemetry } = useTelemetry({
     client,
     initialTelemetry,
     eventSourceFactory,
+    onServiceHealthChanged: handleServiceHealthChanged,
+    onServiceStatusChanged: handleServiceHealthChanged,
+    onServiceError: handleServiceError,
   });
 
   // Verify boot status and setup state on initial mount
@@ -122,6 +228,34 @@ function HomeScreenContent({
         // Unauthenticated LAN caller is completely valid
       });
 
+    // Attempt to load current service statuses
+    void client
+      .getServices()
+      .then((res) => {
+        if (!isMounted || !res?.services) return;
+        const updates: Record<string, ServiceStateOverride> = {};
+        for (const s of res.services) {
+          const cardId = serviceIdMap[s.id];
+          if (!cardId) continue;
+          let status: StatusLevel = "healthy";
+          if (s.status === "starting") status = "starting";
+          else if (s.status === "degraded" || s.health === "degraded")
+            status = "degraded";
+          else if (
+            s.status === "error" ||
+            s.status === "stopped" ||
+            s.health === "unhealthy"
+          )
+            status = "error";
+          else if (s.status === "running") status = "healthy";
+          updates[cardId] = { status };
+        }
+        setServiceStates((prev) => ({ ...prev, ...updates }));
+      })
+      .catch(() => {
+        // Fallback to telemetry/default state
+      });
+
     return () => {
       isMounted = false;
     };
@@ -135,7 +269,9 @@ function HomeScreenContent({
       .getSettings()
       .then((settings) => {
         if (isMounted && settings?.features) {
-          const list = settings.features.split(",").map((s) => s.trim().toLowerCase());
+          const list = settings.features
+            .split(",")
+            .map((s) => s.trim().toLowerCase());
           setEnabledFeatures(list);
         }
       })
@@ -146,6 +282,54 @@ function HomeScreenContent({
       isMounted = false;
     };
   }, [client, isAuthenticated]);
+
+  const executeRestart = useCallback(
+    async (serviceId: string) => {
+      const backendId = backendServiceMap[serviceId] || serviceId;
+      setServiceStates((prev) => ({
+        ...prev,
+        [serviceId]: {
+          ...prev[serviceId],
+          status: "starting",
+          isRestarting: true,
+        },
+      }));
+
+      try {
+        await client.restartService(backendId);
+      } catch (err: unknown) {
+        let title = "Failed to restart service";
+        let detail = "An unexpected error occurred while restarting the service.";
+        if (err instanceof ProblemDetailsError) {
+          title = err.title || title;
+          detail = err.detail || detail;
+        } else if (err instanceof Error) {
+          detail = err.message;
+        }
+        setRestartError({ title, detail });
+        setServiceStates((prev) => ({
+          ...prev,
+          [serviceId]: {
+            ...prev[serviceId],
+            isRestarting: false,
+          },
+        }));
+      }
+    },
+    [client]
+  );
+
+  const handleRestart = useCallback(
+    async (serviceId: string) => {
+      if (!isAuthenticated) {
+        setPendingAction(`restart:${serviceId}`);
+        setIsLoginModalOpen(true);
+        return;
+      }
+      await executeRestart(serviceId);
+    },
+    [isAuthenticated, executeRestart]
+  );
 
   const handleSettingsClick = useCallback(() => {
     if (isAuthenticated) {
@@ -168,11 +352,17 @@ function HomeScreenContent({
     if (pendingAction === "settings") {
       setPendingAction(null);
       router?.replace("/settings");
-    } else if (pendingAction) {
-      // Pending action executed on successful authentication
+    } else if (pendingAction?.startsWith("restart:")) {
+      const serviceId = pendingAction.slice("restart:".length);
+      setPendingAction(null);
+      void executeRestart(serviceId);
+    } else if (pendingAction === "restart") {
+      setPendingAction(null);
+      void executeRestart("video");
+    } else {
       setPendingAction(null);
     }
-  }, [pendingAction, router]);
+  }, [pendingAction, router, executeRestart]);
 
   if (!isReady) {
     return null;
@@ -189,8 +379,10 @@ function HomeScreenContent({
     aggregateStatus = "error";
   }
 
-  // Determine individual service states based on subsystem telemetry
-  const nasIsDegraded = telemetry?.nas_status === "degraded" || telemetry?.nas_status === "disconnected";
+  // Determine individual service states based on subsystem telemetry and live SSE state
+  const nasIsDegraded =
+    telemetry?.nas_status === "degraded" ||
+    telemetry?.nas_status === "disconnected";
 
   const services = [
     {
@@ -198,44 +390,54 @@ function HomeScreenContent({
       name: t.videoTitle,
       techSubtitle: t.videoSubtitle,
       icon: "🎬",
-      status: (nasIsDegraded ? "degraded" : "healthy") as StatusLevel,
+      status: (serviceStates.video?.status ??
+        (nasIsDegraded ? "degraded" : "healthy")) as StatusLevel,
       metric: t.videoMetric,
       secondaryDescriptor: t.videoDesc,
       actionUrl: "/media",
       actionLabel: t.videoAction,
+      isRestarting: Boolean(serviceStates.video?.isRestarting),
+      reassuranceMessage: serviceStates.video?.reassuranceMessage,
     },
     {
       id: "audio",
       name: t.audioTitle,
       techSubtitle: t.audioSubtitle,
       icon: "🎵",
-      status: (nasIsDegraded ? "degraded" : "healthy") as StatusLevel,
+      status: (serviceStates.audio?.status ??
+        (nasIsDegraded ? "degraded" : "healthy")) as StatusLevel,
       metric: t.audioMetric,
       secondaryDescriptor: t.audioDesc,
       actionUrl: "/music",
       actionLabel: t.audioAction,
+      isRestarting: Boolean(serviceStates.audio?.isRestarting),
+      reassuranceMessage: serviceStates.audio?.reassuranceMessage,
     },
     {
       id: "dms",
       name: t.dmsTitle,
       techSubtitle: t.dmsSubtitle,
       icon: "📑",
-      status: "healthy" as StatusLevel,
+      status: (serviceStates.dms?.status ?? "healthy") as StatusLevel,
       metric: t.dmsMetric,
       secondaryDescriptor: t.dmsDesc,
       actionUrl: "/docs",
       actionLabel: t.dmsAction,
+      isRestarting: Boolean(serviceStates.dms?.isRestarting),
+      reassuranceMessage: serviceStates.dms?.reassuranceMessage,
     },
     {
       id: "ai",
       name: t.aiTitle,
       techSubtitle: t.aiSubtitle,
       icon: "⚡",
-      status: "healthy" as StatusLevel,
+      status: (serviceStates.ai?.status ?? "healthy") as StatusLevel,
       metric: t.aiMetric,
       secondaryDescriptor: t.aiDesc,
       actionUrl: "/chat",
       actionLabel: t.aiAction,
+      isRestarting: Boolean(serviceStates.ai?.isRestarting),
+      reassuranceMessage: serviceStates.ai?.reassuranceMessage,
     },
   ];
 
@@ -278,6 +480,9 @@ function HomeScreenContent({
                   currentLanguage={language}
                   onRequireAdmin={handleRequireAdmin}
                   isAuthenticated={isAuthenticated}
+                  onRestart={handleRestart}
+                  isRestarting={svc.isRestarting}
+                  reassuranceMessage={svc.reassuranceMessage}
                 />
               ))}
             </div>
@@ -299,6 +504,44 @@ function HomeScreenContent({
         apiClient={client}
         currentLanguage={language}
       />
+
+      {/* RFC 7807 Problem Details Modal on Restart Failure */}
+      {restartError && (
+        <div
+          role="alertdialog"
+          aria-modal="true"
+          aria-labelledby="restart-error-title"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          data-testid="problem-details-modal"
+        >
+          <div className="w-full max-w-md rounded-xl border border-red-200 bg-white p-6 shadow-xl text-[#0F172A]">
+            <div className="flex items-center gap-3">
+              <span className="text-2xl text-red-600" aria-hidden="true">
+                ⚠️
+              </span>
+              <h3
+                id="restart-error-title"
+                className="text-base font-semibold text-[#0F172A]"
+              >
+                {restartError.title}
+              </h3>
+            </div>
+            <p className="mt-3 text-xs sm:text-sm text-[#475569] leading-relaxed">
+              {restartError.detail}
+            </p>
+            <div className="mt-6 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setRestartError(null)}
+                className="h-11 rounded-lg bg-[#0F172A] px-4 text-xs font-medium text-white hover:bg-[#1E293B] focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:outline-none cursor-pointer"
+                data-testid="close-problem-details"
+              >
+                {t.close}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -306,3 +549,4 @@ function HomeScreenContent({
 export default function HomePage() {
   return <HomeScreen />;
 }
+

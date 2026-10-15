@@ -401,8 +401,20 @@ func (m *ServiceManager) ListServices(ctx context.Context) ([]ServiceStatus, err
 	return result, nil
 }
 
+func (m *ServiceManager) resolveID(id string) string {
+	switch id {
+	case "video":
+		return ServiceJellyfin
+	case "audio":
+		return ServiceNavidrome
+	default:
+		return id
+	}
+}
+
 // GetService retrieves status for a single service ID.
 func (m *ServiceManager) GetService(ctx context.Context, id string) (*ServiceStatus, error) {
+	id = m.resolveID(id)
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -423,6 +435,7 @@ func (m *ServiceManager) GetService(ctx context.Context, id string) (*ServiceSta
 
 // ActivateService pulls the image on-demand, streams SSE progress, synthesizes Compose spec, and starts the container.
 func (m *ServiceManager) ActivateService(ctx context.Context, id string) (*ServiceStatus, error) {
+	id = m.resolveID(id)
 	m.mu.Lock()
 	if m.activating[id] {
 		m.mu.Unlock()
@@ -564,6 +577,7 @@ func (m *ServiceManager) ActivateService(ctx context.Context, id string) (*Servi
 
 // DeactivateService stops the container runtime while strictly preserving all data volumes under /data.
 func (m *ServiceManager) DeactivateService(ctx context.Context, id string) (*ServiceStatus, error) {
+	id = m.resolveID(id)
 	m.mu.Lock()
 	_, exists := m.definitions[id]
 	if !exists {
@@ -604,6 +618,7 @@ func (m *ServiceManager) DeactivateService(ctx context.Context, id string) (*Ser
 
 // RestartService restarts the container instance with current configuration.
 func (m *ServiceManager) RestartService(ctx context.Context, id string) (*ServiceStatus, error) {
+	id = m.resolveID(id)
 	m.mu.Lock()
 	_, exists := m.definitions[id]
 	if !exists {

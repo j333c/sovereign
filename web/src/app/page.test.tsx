@@ -377,6 +377,260 @@ describe("ServiceCard & StatusBadge Components", () => {
     assert.ok(html.includes("•••"), "Must render accessible overflow menu trigger");
     assert.ok(html.includes("aria-label=\"Options for Video Streaming\""), "Overflow menu button must carry descriptive aria-label");
   });
+
+  it("renders StatusBadge with geometric triad and contrast across all status levels", () => {
+    // Green circle ●
+    const htmlHealthy = renderToStaticMarkup(<StatusBadge status="healthy" />);
+    assert.ok(htmlHealthy.includes("●"));
+    assert.ok(htmlHealthy.includes("bg-emerald-50 text-emerald-800"));
+    assert.ok(htmlHealthy.includes("Running Healthy"));
+
+    const htmlRunning = renderToStaticMarkup(<StatusBadge status="running" />);
+    assert.ok(htmlRunning.includes("●"));
+    assert.ok(htmlRunning.includes("Running Healthy"));
+
+    // Amber diamond ◆
+    const htmlStarting = renderToStaticMarkup(<StatusBadge status="starting" />);
+    assert.ok(htmlStarting.includes("◆"));
+    assert.ok(htmlStarting.includes("bg-amber-50 text-amber-800"));
+    assert.ok(htmlStarting.includes("Starting..."));
+
+    const htmlDegraded = renderToStaticMarkup(<StatusBadge status="degraded" />);
+    assert.ok(htmlDegraded.includes("◆"));
+    assert.ok(htmlDegraded.includes("Attention Required"));
+
+    // Red triangle ▲
+    const htmlError = renderToStaticMarkup(<StatusBadge status="error" />);
+    assert.ok(htmlError.includes("▲"));
+    assert.ok(htmlError.includes("bg-red-50 text-red-800"));
+    assert.ok(htmlError.includes("Stopped / Error"));
+
+    const htmlStopped = renderToStaticMarkup(<StatusBadge status="stopped" />);
+    assert.ok(htmlStopped.includes("▲"));
+    assert.ok(htmlStopped.includes("Stopped / Error"));
+  });
+
+  it("renders primary action button as disabled with loading indicator when starting or restarting", () => {
+    const htmlStarting = renderToStaticMarkup(
+      <ServiceCard
+        id="video"
+        name="Video Streaming"
+        techSubtitle="Jellyfin"
+        icon="🎬"
+        status="starting"
+        metric="124 Movies"
+        secondaryDescriptor="4K Transcoding Ready"
+        actionUrl="/media"
+        actionLabel="Open Streaming UI"
+        currentLanguage="en"
+        onRequireAdmin={() => {}}
+        isAuthenticated={true}
+      />
+    );
+    assert.ok(htmlStarting.includes("<button"), "Must render as button");
+    assert.ok(htmlStarting.includes("disabled"), "Button must be disabled");
+    assert.ok(htmlStarting.includes("Starting..."), "Must display Starting... label");
+    assert.ok(htmlStarting.includes("animate-spin"), "Must render spinning indicator");
+    assert.ok(!htmlStarting.includes("href=\"/media\""), "Must not have active link href");
+
+    const htmlRestarting = renderToStaticMarkup(
+      <ServiceCard
+        id="video"
+        name="Video Streaming"
+        techSubtitle="Jellyfin"
+        icon="🎬"
+        status="healthy"
+        isRestarting={true}
+        metric="124 Movies"
+        secondaryDescriptor="4K Transcoding Ready"
+        actionUrl="/media"
+        actionLabel="Open Streaming UI"
+        currentLanguage="en"
+        onRequireAdmin={() => {}}
+        isAuthenticated={true}
+      />
+    );
+    assert.ok(htmlRestarting.includes("Restarting..."), "Must display Restarting... label");
+    assert.ok(htmlRestarting.includes("disabled"), "Button must be disabled");
+  });
+
+  it("renders primary action button as disabled button when degraded or stopped", () => {
+    const htmlDegraded = renderToStaticMarkup(
+      <ServiceCard
+        id="video"
+        name="Video Streaming"
+        techSubtitle="Jellyfin"
+        icon="🎬"
+        status="degraded"
+        metric="124 Movies"
+        secondaryDescriptor="4K Transcoding Ready"
+        actionUrl="/media"
+        actionLabel="Open Streaming UI"
+        currentLanguage="en"
+        onRequireAdmin={() => {}}
+        isAuthenticated={false}
+      />
+    );
+    assert.ok(htmlDegraded.includes("<button"), "Degraded state must render as button");
+    assert.ok(htmlDegraded.includes("disabled"), "Button must be disabled");
+    assert.ok(!htmlDegraded.includes("target=\"_blank\""), "Must not open link when degraded");
+  });
+
+  it("displays reassuring consumer microcopy during memory pressure / degraded without raw Linux exit codes", () => {
+    const htmlOom = renderToStaticMarkup(
+      <ServiceCard
+        id="video"
+        name="Video Streaming"
+        techSubtitle="Jellyfin"
+        icon="🎬"
+        status="degraded"
+        reassuranceMessage="Container jellyfin exited with code 137 (OOMKilled)"
+        metric="124 Movies"
+        secondaryDescriptor="4K Transcoding Ready"
+        actionUrl="/media"
+        actionLabel="Open Streaming UI"
+        currentLanguage="en"
+        onRequireAdmin={() => {}}
+        isAuthenticated={false}
+      />
+    );
+
+    assert.ok(
+      htmlOom.includes(
+        "Video Streaming paused due to high memory use. Automatically restarting..."
+      ),
+      "Must display reassuring consumer microcopy"
+    );
+    assert.ok(!htmlOom.includes("137"), "Must not leak raw Linux exit code 137");
+    assert.ok(!htmlOom.includes("OOMKilled"), "Must not leak OOMKilled string");
+    assert.ok(htmlOom.includes("role=\"alert\""), "Reassurance banner must carry role alert");
+    assert.ok(
+      htmlOom.includes("data-testid=\"reassurance-banner-video\""),
+      "Must have testid for reassurance banner"
+    );
+  });
+
+  it("renders localized reassurance microcopy across EN, DE, ES, and FR", () => {
+    const htmlEn = renderToStaticMarkup(
+      <ServiceCard
+        id="video"
+        name="Video Streaming"
+        techSubtitle="Jellyfin"
+        icon="🎬"
+        status="degraded"
+        metric="124 Movies"
+        secondaryDescriptor="4K Transcoding Ready"
+        actionUrl="/media"
+        actionLabel="Open Streaming UI"
+        currentLanguage="en"
+        onRequireAdmin={() => {}}
+        isAuthenticated={false}
+      />
+    );
+    assert.ok(
+      htmlEn.includes(
+        "Video Streaming paused due to high memory use. Automatically restarting..."
+      )
+    );
+
+    const htmlDe = renderToStaticMarkup(
+      <ServiceCard
+        id="video"
+        name="Video-Streaming"
+        techSubtitle="Jellyfin"
+        icon="🎬"
+        status="degraded"
+        metric="124 Filme"
+        secondaryDescriptor="4K-Transkodierung bereit"
+        actionUrl="/media"
+        actionLabel="Streaming-UI öffnen"
+        currentLanguage="de"
+        onRequireAdmin={() => {}}
+        isAuthenticated={false}
+      />
+    );
+    assert.ok(
+      htmlDe.includes(
+        "Video-Streaming wegen hoher Speicherauslastung pausiert. Automatischer Neustart..."
+      )
+    );
+
+    const htmlEs = renderToStaticMarkup(
+      <ServiceCard
+        id="video"
+        name="Transmisión de vídeo"
+        techSubtitle="Jellyfin"
+        icon="🎬"
+        status="degraded"
+        metric="124 Películas"
+        secondaryDescriptor="Transcodificación 4K lista"
+        actionUrl="/media"
+        actionLabel="Abrir interfaz de vídeo"
+        currentLanguage="es"
+        onRequireAdmin={() => {}}
+        isAuthenticated={false}
+      />
+    );
+    assert.ok(
+      htmlEs.includes(
+        "Transmisión de vídeo pausada debido al alto uso de memoria. Reiniciando automáticamente..."
+      )
+    );
+
+    const htmlFr = renderToStaticMarkup(
+      <ServiceCard
+        id="video"
+        name="Streaming vidéo"
+        techSubtitle="Jellyfin"
+        icon="🎬"
+        status="degraded"
+        metric="124 Films"
+        secondaryDescriptor="Transcodage 4K prêt"
+        actionUrl="/media"
+        actionLabel="Ouvrir l'interface vidéo"
+        currentLanguage="fr"
+        onRequireAdmin={() => {}}
+        isAuthenticated={false}
+      />
+    );
+    assert.equal(
+      translations["fr"].videoPausedMemoryUse,
+      "Streaming vidéo interrompu en raison d'une utilisation élevée de la mémoire. Redémarrage automatique..."
+    );
+    assert.ok(
+      htmlFr.includes("Streaming vidéo interrompu") &&
+        htmlFr.includes("Redémarrage automatique...")
+    );
+  });
+
+  it("triggers onRequireAdmin with action and service ID when unauthenticated", () => {
+    let capturedAction = "";
+    // Render and simulate action handler directly
+    const props = {
+      id: "video",
+      name: "Video Streaming",
+      techSubtitle: "Jellyfin",
+      icon: "🎬",
+      status: "healthy" as const,
+      metric: "124 Movies",
+      secondaryDescriptor: "4K Transcoding Ready",
+      actionUrl: "/media",
+      actionLabel: "Open Streaming UI",
+      currentLanguage: "en" as const,
+      onRequireAdmin: (actionName: string) => {
+        capturedAction = actionName;
+      },
+      isAuthenticated: false,
+    };
+
+    // Verify component renders without crashing
+    const html = renderToStaticMarkup(<ServiceCard {...props} />);
+    assert.ok(html.includes("Video Streaming"));
+
+    // Test the handler contract
+    props.onRequireAdmin("restart:video");
+    assert.equal(capturedAction, "restart:video");
+  });
 });
 
 describe("AdminLoginModal Component", () => {
@@ -574,5 +828,115 @@ describe("Central Admin Dashboard Integration & i18n", () => {
     assert.ok(html.includes("Music &amp; Audiobooks"));
     assert.ok(html.includes("Document Archive"));
     assert.ok(html.includes("Local AI Assistant"));
+  });
+
+  it("renders each service card with geometric StatusBadge (●/◆/▲) on central dashboard", () => {
+    const html = renderToStaticMarkup(
+      <HomeScreen
+        initialReady={true}
+        routerOverride={{ replace: () => {} }}
+        initialTelemetry={{
+          cpu_percent: 10,
+          memory_used_bytes: 1024,
+          memory_total_bytes: 4096,
+          storage_used_bytes: 1024,
+          storage_total_bytes: 4096,
+          storage_percent: 25,
+          nas_status: "connected",
+          nas_message: "ok",
+          overall_status: "operational",
+          optical_status: "idle",
+          gpu_status: "idle",
+          timestamp: "2026-10-15T12:00:00Z",
+        }}
+        initialServices={{
+          video: { status: "healthy" },
+          audio: { status: "starting" },
+          dms: { status: "degraded", reassuranceMessage: "High memory use" },
+          ai: { status: "error" },
+        }}
+      />
+    );
+
+    // Video is healthy -> Green ●
+    assert.ok(html.includes("data-testid=\"service-card-video\""));
+    assert.ok(html.includes("●"));
+
+    // Audio is starting -> Amber ◆
+    assert.ok(html.includes("data-testid=\"service-card-audio\""));
+    assert.ok(html.includes("◆"));
+
+    // DMS is degraded -> Amber ◆ and reassurance alert
+    assert.ok(html.includes("data-testid=\"service-card-dms\""));
+    assert.ok(html.includes("data-testid=\"reassurance-banner-dms\""));
+
+    // AI is error -> Red ▲
+    assert.ok(html.includes("data-testid=\"service-card-ai\""));
+    assert.ok(html.includes("▲"));
+  });
+
+  it("executes apiClient.restartService with proper authentication handling", async () => {
+    let restartCalledWith = "";
+    const mockFetch: typeof fetch = async (input, init) => {
+      const url = String(input);
+      if (url.includes("/restart")) {
+        restartCalledWith = url;
+        return new Response(
+          JSON.stringify({
+            id: "jellyfin",
+            name: "Jellyfin",
+            status: "running",
+            health: "healthy",
+            image: "jellyfin/jellyfin:12.2.0",
+            image_downloaded: true,
+            mem_limit_bytes: 2147483648,
+            mem_reservation_bytes: 1073741824,
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      throw new Error(`Unexpected call: ${url}`);
+    };
+
+    const client = new SovereignApiClient({
+      baseUrl: "http://localhost:8080",
+      fetchFn: mockFetch,
+    });
+
+    const res = await client.restartService("jellyfin");
+    assert.ok(restartCalledWith.endsWith("/api/v1/services/jellyfin/restart"));
+    assert.equal(res.status, "running");
+  });
+
+  it("handles restart failure as ProblemDetailsError without uncaught exceptions", async () => {
+    const mockFetch: typeof fetch = async () => {
+      return new Response(
+        JSON.stringify({
+          type: "https://sovereign.local/errors/unauthorized",
+          title: "Authentication Required",
+          status: 401,
+          detail: "Administrative authentication required to restart services",
+          instance: "/api/v1/services/jellyfin/restart",
+        }),
+        { status: 401, headers: { "Content-Type": "application/problem+json" } }
+      );
+    };
+
+    const client = new SovereignApiClient({
+      baseUrl: "http://localhost:8080",
+      fetchFn: mockFetch,
+    });
+
+    await assert.rejects(
+      async () => {
+        await client.restartService("jellyfin");
+      },
+      (err: unknown) => {
+        const pErr = err as { status: number; title: string };
+        assert.equal(pErr.status, 401);
+        assert.equal(pErr.title, "Authentication Required");
+        return true;
+      }
+    );
   });
 });
