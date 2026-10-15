@@ -87,7 +87,7 @@ export interface components {
              * @example operational
              * @enum {string}
              */
-            mode: "operational" | "diagnostics" | "recovery";
+            mode: "operational" | "diagnostics" | "recovery" | "failed";
             /** @example true */
             clean_shutdown: boolean;
             /** @example true */

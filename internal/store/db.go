@@ -151,6 +151,35 @@ func (d *DB) GetBootStatus(ctx context.Context) (*BootStatusInfo, error) {
 	return &status, nil
 }
 
+// FlushWAL executes PRAGMA wal_checkpoint(TRUNCATE) to flush WAL to the main DB file.
+func (d *DB) FlushWAL(ctx context.Context) error {
+	if _, err := d.ExecContext(ctx, "PRAGMA wal_checkpoint(TRUNCATE);"); err != nil {
+		return fmt.Errorf("wal checkpoint failed: %w", err)
+	}
+	return nil
+}
+
+// RecordBootStatus inserts a new boot status record into boot_status.
+func (d *DB) RecordBootStatus(ctx context.Context, status *BootStatusInfo) error {
+	cleanShutdownInt := 0
+	if status.CleanShutdown {
+		cleanShutdownInt = 1
+	}
+	diagCompletedInt := 0
+	if status.DiagnosticsCompleted {
+		diagCompletedInt = 1
+	}
+
+	_, err := d.ExecContext(ctx, `
+		INSERT INTO boot_status (mode, clean_shutdown, diagnostics_completed, message)
+		VALUES (?, ?, ?, ?)
+	`, status.Mode, cleanShutdownInt, diagCompletedInt, status.Message)
+	if err != nil {
+		return fmt.Errorf("recording boot status failed: %w", err)
+	}
+	return nil
+}
+
 // Path returns the database file path.
 func (d *DB) Path() string {
 	return d.path

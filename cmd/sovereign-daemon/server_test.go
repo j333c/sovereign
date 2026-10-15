@@ -13,12 +13,18 @@ import (
 
 	"sovereign/internal/ingress"
 	"sovereign/internal/storage"
+	"sovereign/internal/store"
 )
 
 func setupTestServer(t *testing.T) (*Server, string) {
 	t.Helper()
 	tempDir := t.TempDir()
 	dataDir := filepath.Join(tempDir, "data")
+
+	// Ensure clean shutdown state for default test server
+	stateDir := filepath.Join(dataDir, "state")
+	_ = os.MkdirAll(stateDir, 0755)
+	_ = os.WriteFile(filepath.Join(stateDir, "boot_state.json"), []byte(`{"clean_shutdown": true}`), 0644)
 
 	srv, err := NewServer(Config{
 		DataDir: dataDir,
@@ -174,6 +180,107 @@ func TestServer_BootStatus_Failure(t *testing.T) {
 
 	if prob.Status != http.StatusInternalServerError {
 		t.Errorf("expected problem status 500, got %d", prob.Status)
+	}
+}
+
+func TestServer_BootStatus_DiagnosticsMode(t *testing.T) {
+	tempDir := t.TempDir()
+	dataDir := filepath.Join(tempDir, "data")
+	// Cold boot with no boot_state.json -> DiagnosticsMode
+
+	srv, err := NewServer(Config{
+		DataDir: dataDir,
+	})
+	if err != nil {
+		t.Fatalf("failed to create server: %v", err)
+	}
+	defer srv.Close()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/system/boot-status", nil)
+	w := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: body=%s", w.Code, w.Body.String())
+	}
+
+	var res struct {
+		Mode                 string `json:"mode"`
+		CleanShutdown        bool   `json:"clean_shutdown"`
+		DiagnosticsCompleted bool   `json:"diagnostics_completed"`
+		Message              string `json:"message"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &res); err != nil {
+		t.Fatalf("failed to parse boot status response: %v", err)
+	}
+
+	if res.Mode != "diagnostics" {
+		t.Errorf("expected mode 'diagnostics', got %q", res.Mode)
+	}
+	if res.CleanShutdown {
+		t.Errorf("expected clean_shutdown = false")
+	}
+	if res.DiagnosticsCompleted {
+		t.Errorf("expected diagnostics_completed = false")
+	}
+	if res.Message != store.ReassuranceMessage {
+		t.Errorf("expected reassurance copy %q, got %q", store.ReassuranceMessage, res.Message)
+	}
+
+	// Verify running integrity check transitions to operational
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := srv.BootManager().RunIntegrityCheck(ctx); err != nil {
+		t.Fatalf("RunIntegrityCheck failed: %v", err)
+	}
+
+	w2 := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(w2, req)
+	var res2 struct {
+		Mode                 string `json:"mode"`
+		DiagnosticsCompleted bool   `json:"diagnostics_completed"`
+	}
+	_ = json.Unmarshal(w2.Body.Bytes(), &res2)
+	if res2.Mode != "operational" || !res2.DiagnosticsCompleted {
+		t.Errorf("expected operational mode after integrity check passes, got %+v", res2)
+	}
+}
+
+func TestServer_BootStatus_StorageDegraded(t *testing.T) {
+	tempDir := t.TempDir()
+	dataDir := filepath.Join(tempDir, "data")
+
+	srv, err := NewServer(Config{
+		DataDir: dataDir,
+	})
+	if err != nil {
+		t.Fatalf("failed to create server: %v", err)
+	}
+	defer srv.Close()
+
+	// Make state directory read-only
+	stateDir := filepath.Join(dataDir, "state")
+	_ = os.Chmod(stateDir, 0555)
+	defer func() { _ = os.Chmod(stateDir, 0755) }()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	_ = srv.BootManager().RunIntegrityCheck(ctx)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/system/boot-status", nil)
+	w := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(w, req)
+
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected status 503 for degraded storage, got %d: body=%s", w.Code, w.Body.String())
+	}
+
+	var prob ProblemDetails
+	if err := json.Unmarshal(w.Body.Bytes(), &prob); err != nil {
+		t.Fatalf("failed to parse problem details: %v", err)
+	}
+	if prob.Status != http.StatusServiceUnavailable {
+		t.Errorf("expected problem status 503, got %d", prob.Status)
 	}
 }
 

@@ -1,4 +1,40 @@
+"use client";
+
+import React, { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+import { apiClient } from "@/lib/api";
+
 export default function HomePage() {
+  const router = useRouter();
+  const [isReady, setIsReady] = useState(false);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const checkBootMode = async () => {
+      try {
+        const status = await apiClient.getBootStatus();
+        if (!isMounted) return;
+
+        if (status.mode === "diagnostics") {
+          router.replace("/boot");
+          return;
+        }
+      } catch {
+        // If boot-status probe fails, proceed to render dashboard fallback
+      }
+      if (isMounted) {
+        setIsReady(true);
+      }
+    };
+
+    void checkBootMode();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [router]);
+
   return (
     <main className="flex min-h-screen flex-col items-center justify-center p-8 bg-[var(--canvas)]">
       <div className="w-full max-w-xl rounded-lg border border-[var(--border)] bg-[var(--surface)] p-8 shadow-sm">

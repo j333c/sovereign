@@ -57,16 +57,19 @@ type Config struct {
 	ListenAddr  string
 	DataDir     string
 	DBPath      string
+	StatePath   string
 	CaddyURL    string
 	Logger      *slog.Logger
 	IngressMgr  ingress.IngressManager
 	MDNSService *ingress.MDNSService
+	BootMgr     *store.BootManager
 }
 
 // Server is the appliance core supervisor HTTP daemon.
 type Server struct {
 	cfg         Config
 	db          *store.DB
+	bootMgr     *store.BootManager
 	logger      *slog.Logger
 	router      *http.ServeMux
 	ingressMgr  ingress.IngressManager
@@ -111,6 +114,17 @@ func NewServer(cfg Config) (*Server, error) {
 		return nil, fmt.Errorf("database initialization failed: %w", err)
 	}
 
+	if cfg.StatePath == "" {
+		cfg.StatePath = filepath.Join(cfg.DataDir, "state", "boot_state.json")
+	}
+
+	if cfg.BootMgr == nil {
+		cfg.BootMgr = store.NewBootManager(cfg.StatePath, db, cfg.Logger)
+		if _, err := cfg.BootMgr.RecordBoot(context.Background()); err != nil {
+			cfg.Logger.Warn("recording boot state resulted in non-fatal error", "error", err)
+		}
+	}
+
 	if cfg.IngressMgr == nil {
 		cfg.IngressMgr = ingress.NewCaddyClient(cfg.CaddyURL, cfg.Logger)
 	}
@@ -122,6 +136,7 @@ func NewServer(cfg Config) (*Server, error) {
 	s := &Server{
 		cfg:         cfg,
 		db:          db,
+		bootMgr:     cfg.BootMgr,
 		logger:      cfg.Logger,
 		router:      http.NewServeMux(),
 		ingressMgr:  cfg.IngressMgr,
@@ -181,6 +196,13 @@ func (s *Server) StartBackgroundServices(ctx context.Context) {
 	}
 }
 
+// BootManager returns the active BootManager instance.
+func (s *Server) BootManager() *store.BootManager {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.bootMgr
+}
+
 // Close closes database handles and frees ingress/mDNS resources.
 func (s *Server) Close() error {
 	s.mu.Lock()
@@ -188,6 +210,10 @@ func (s *Server) Close() error {
 
 	if s.mdnsService != nil {
 		s.mdnsService.Close()
+	}
+
+	if s.bootMgr != nil {
+		_ = s.bootMgr.Close()
 	}
 
 	if s.db != nil {
@@ -266,18 +292,25 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleBootStatus(w http.ResponseWriter, r *http.Request) {
 	s.mu.RLock()
+	bootMgr := s.bootMgr
 	dbHandle := s.db
 	s.mu.RUnlock()
+
+	if bootMgr == nil {
+		s.writeProblem(w, http.StatusInternalServerError, "Internal Server Error", "Boot manager is not initialized", r.URL.Path)
+		return
+	}
 
 	if dbHandle == nil {
 		s.writeProblem(w, http.StatusInternalServerError, "Internal Server Error", "Database is not initialized", r.URL.Path)
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
-	defer cancel()
-
-	status, err := dbHandle.GetBootStatus(ctx)
+	status, degraded, err := bootMgr.GetStatus()
+	if degraded {
+		s.writeProblem(w, http.StatusServiceUnavailable, "Storage Degraded", "State storage filesystem is unwritable or read-only", r.URL.Path)
+		return
+	}
 	if err != nil {
 		s.logger.Error("retrieving boot status failed", "error", err)
 		s.writeProblem(w, http.StatusInternalServerError, "Internal Server Error", "Failed to retrieve boot status record", r.URL.Path)

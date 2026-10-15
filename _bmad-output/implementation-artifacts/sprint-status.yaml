@@ -38,7 +38,7 @@ development_status:
   epic-1: in-progress
   1-1-greenfield-monorepo-scaffold-core-supervisor-daemon-boundary: review
   1-2-dedicated-caddy-ingress-gateway-local-mdns-discovery: review
-  1-3-power-loss-resilience-reassuring-boot-diagnostics-screen: backlog
+  1-3-power-loss-resilience-reassuring-boot-diagnostics-screen: review
   1-4-storage-pool-formatting-network-nas-mount-management: backlog
   1-5-five-step-first-run-setup-wizard-rbac-authentication: backlog
   1-6-central-admin-dashboard-real-time-sse-telemetry-stream: backlog

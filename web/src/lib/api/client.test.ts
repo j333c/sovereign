@@ -63,6 +63,111 @@ describe("SovereignApiClient", () => {
     assert.equal(status.message, "All systems operational");
   });
 
+  it("fetches getBootStatus in diagnostics mode post-power outage with reassurance copy", async () => {
+    const mockFetch: typeof fetch = async () => {
+      return new Response(
+        JSON.stringify({
+          mode: "diagnostics",
+          clean_shutdown: false,
+          diagnostics_completed: false,
+          message: "Checking system safety after power restoration... your files are secure.",
+        }),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }
+      );
+    };
+
+    const client = new SovereignApiClient({
+      baseUrl: "http://localhost:8080",
+      fetchFn: mockFetch,
+    });
+
+    const status = await client.getBootStatus();
+    assert.equal(status.mode, "diagnostics");
+    assert.equal(status.clean_shutdown, false);
+    assert.equal(status.diagnostics_completed, false);
+    assert.equal(status.message, "Checking system safety after power restoration... your files are secure.");
+  });
+
+  it("handles storage degraded HTTP 503 on boot-status probe", async () => {
+    const mockFetch: typeof fetch = async () => {
+      return new Response(
+        JSON.stringify({
+          type: "https://sovereign.local/errors/http-503",
+          title: "Storage Degraded",
+          status: 503,
+          detail: "State storage filesystem is unwritable or read-only",
+          instance: "/api/v1/system/boot-status",
+        }),
+        {
+          status: 503,
+          headers: { "Content-Type": "application/problem+json" },
+        }
+      );
+    };
+
+    const client = new SovereignApiClient({
+      baseUrl: "http://localhost:8080",
+      fetchFn: mockFetch,
+    });
+
+    await assert.rejects(
+      async () => {
+        await client.getBootStatus();
+      },
+      (err: unknown) => {
+        assert.ok(err instanceof ProblemDetailsError);
+        assert.equal(err.status, 503);
+        assert.equal(err.title, "Storage Degraded");
+        assert.equal(err.detail, "State storage filesystem is unwritable or read-only");
+        return true;
+      }
+    );
+  });
+
+  it("successfully polls boot status from diagnostics to operational", async () => {
+    let callCount = 0;
+    const mockFetch: typeof fetch = async () => {
+      callCount++;
+      if (callCount === 1) {
+        return new Response(
+          JSON.stringify({
+            mode: "diagnostics",
+            clean_shutdown: false,
+            diagnostics_completed: false,
+            message: "Checking system safety after power restoration... your files are secure.",
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      return new Response(
+        JSON.stringify({
+          mode: "operational",
+          clean_shutdown: false,
+          diagnostics_completed: true,
+          message: "All systems operational",
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } }
+      );
+    };
+
+    const client = new SovereignApiClient({
+      baseUrl: "http://localhost:8080",
+      fetchFn: mockFetch,
+    });
+
+    const status1 = await client.getBootStatus();
+    assert.equal(status1.mode, "diagnostics");
+    assert.equal(status1.diagnostics_completed, false);
+
+    const status2 = await client.getBootStatus();
+    assert.equal(status2.mode, "operational");
+    assert.equal(status2.diagnostics_completed, true);
+    assert.equal(callCount, 2);
+  });
+
   it("successfully fetches getIngressStatus with typed response", async () => {
     const mockFetch: typeof fetch = async (input, init) => {
       const url = String(input);

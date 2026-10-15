@@ -100,7 +100,7 @@ components:
       properties:
         mode:
           type: string
-          enum: [operational, diagnostics, recovery]
+          enum: [operational, diagnostics, recovery, failed]
           example: operational
         clean_shutdown:
           type: boolean

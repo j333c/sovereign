@@ -64,6 +64,20 @@ func main() {
 	defer bgCancel()
 	server.StartBackgroundServices(bgCtx)
 
+	// Check for dirty boot / diagnostics mode and run integrity check within 15s
+	if server.BootManager() != nil && server.BootManager().IsDiagnosticsMode() {
+		logger.Info("unclean shutdown detected: initializing in diagnostics mode and running integrity checks")
+		go func() {
+			diagCtx, diagCancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer diagCancel()
+			if err := server.BootManager().RunIntegrityCheck(diagCtx); err != nil {
+				logger.Error("diagnostics integrity check failed", "error", err)
+			} else {
+				logger.Info("boot diagnostics integrity check succeeded, system operational")
+			}
+		}()
+	}
+
 	httpServer := &http.Server{
 		Addr:              listenAddr,
 		Handler:           server.Handler(),
@@ -99,6 +113,16 @@ func main() {
 			logger.Error("graceful server shutdown failed, forcing close", "error", err)
 			_ = httpServer.Close()
 		}
+
+		// Record clean shutdown state atomically to boot_state.json and flush DB WAL
+		if server.BootManager() != nil {
+			if err := server.BootManager().RecordCleanShutdown(ctx); err != nil {
+				logger.Error("failed to record clean shutdown state", "error", err)
+			} else {
+				logger.Info("clean shutdown state recorded successfully")
+			}
+		}
+
 		logger.Info("sovereign-daemon shut down cleanly")
 	}
 }
