@@ -2,7 +2,7 @@
 title: 'Story 1.2: Dedicated Caddy Ingress Gateway & Local mDNS Discovery'
 type: 'feature'
 created: '2026-10-15'
-status: 'in-review'
+status: 'done'
 baseline_commit: 'b6c45a75e73f000a6cfd4cce945233e531573870'
 route: 'dispatch'
 review_loop_iteration: 0
