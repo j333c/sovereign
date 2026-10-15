@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sovereign — Media Dropzone</title>
+  <style>
+    /* Sovereign Direction A: Standalone Media Dropzone */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background-color: #F8F9FA;
+      color: #0F172A;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      -webkit-font-smoothing: antialiased;
+    }
+    a { color: inherit; text-decoration: none; }
+    button { font-family: inherit; cursor: pointer; border: none; background: none; }
+
+    .drop-header {
+      height: 64px;
+      background: #FFFFFF;
+      border-bottom: 1px solid #E5E7EB;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 32px;
+    }
+    .brand-group { display: flex; align-items: center; gap: 12px; }
+    .logo-crest {
+      width: 32px;
+      height: 32px;
+      background: #0F172A;
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #FFFFFF;
+      font-weight: 700;
+      font-size: 14px;
+    }
+    .brand-title { font-size: 16px; font-weight: 600; color: #0F172A; }
+    .back-link {
+      font-size: 13px;
+      color: #64748B;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 12px;
+      border: 1px solid #E5E7EB;
+      border-radius: 6px;
+      background: #FFFFFF;
+      transition: background 0.15s;
+    }
+    .back-link:hover { background: #F1F5F9; color: #0F172A; }
+
+    .drop-container {
+      max-width: 680px;
+      width: 100%;
+      margin: 40px auto;
+      padding: 0 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 24px;
+    }
+
+    .drop-card {
+      background: #FFFFFF;
+      border: 1px solid #E5E7EB;
+      border-radius: 12px;
+      padding: 32px;
+      box-shadow: 0 4px 16px rgba(15, 23, 42, 0.03);
+    }
+
+    .page-intro { text-align: center; margin-bottom: 24px; }
+    .page-title { font-size: 22px; font-weight: 600; letter-spacing: -0.4px; color: #0F172A; margin-bottom: 6px; }
+    .page-desc { font-size: 14px; color: #64748B; }
+
+    /* Category Selector Tabs */
+    .category-tabs {
+      display: flex;
+      background: #F1F5F9;
+      padding: 4px;
+      border-radius: 8px;
+      margin-bottom: 24px;
+      gap: 4px;
+    }
+    .cat-tab {
+      flex: 1;
+      padding: 8px 12px;
+      text-align: center;
+      font-size: 13px;
+      font-weight: 500;
+      color: #64748B;
+      border-radius: 6px;
+      transition: background 0.15s, color 0.15s;
+    }
+    .cat-tab.active {
+      background: #FFFFFF;
+      color: #0F172A;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+    }
+
+    /* Drag & Drop Area */
+    .drop-zone {
+      border: 2px dashed #CBD5E1;
+      border-radius: 10px;
+      padding: 48px 24px;
+      text-align: center;
+      background: #FAFAFA;
+      transition: border-color 0.2s, background 0.2s;
+      cursor: pointer;
+    }
+    .drop-zone:hover {
+      border-color: #0F172A;
+      background: #F8F9FA;
+    }
+    .drop-icon-wrapper {
+      width: 56px;
+      height: 56px;
+      border-radius: 50%;
+      background: #FFFFFF;
+      border: 1px solid #E5E7EB;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin: 0 auto 16px;
+      color: #0F172A;
+    }
+    .drop-main-text { font-size: 15px; font-weight: 600; color: #0F172A; margin-bottom: 4px; }
+    .drop-sub-text { font-size: 13px; color: #64748B; margin-bottom: 18px; }
+    .browse-btn {
+      display: inline-flex;
+      align-items: center;
+      padding: 9px 18px;
+      background: #0F172A;
+      color: #FFFFFF;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 500;
+      transition: background 0.15s;
+    }
+    .browse-btn:hover { background: #1E293B; }
+
+    /* LAN Copy Helper Box */
+    .lan-helper {
+      background: #FFFFFF;
+      border: 1px solid #E5E7EB;
+      border-radius: 10px;
+      padding: 16px 20px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 13px;
+    }
+    .lan-info { display: flex; flex-direction: column; gap: 4px; }
+    .lan-title { font-weight: 600; color: #0F172A; }
+    .lan-path { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: #475569; font-size: 12px; }
+    .copy-btn {
+      padding: 6px 12px;
+      border: 1px solid #E5E7EB;
+      border-radius: 6px;
+      background: #F8F9FA;
+      font-size: 12px;
+      font-weight: 500;
+      color: #0F172A;
+      transition: background 0.15s;
+    }
+    .copy-btn:hover { background: #E2E8F0; }
+
+    /* Recent uploads */
+    .recent-card {
+      background: #FFFFFF;
+      border: 1px solid #E5E7EB;
+      border-radius: 10px;
+      padding: 20px;
+    }
+    .recent-title { font-size: 14px; font-weight: 600; color: #0F172A; margin-bottom: 12px; }
+    .recent-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 0;
+      border-bottom: 1px solid #F1F5F9;
+      font-size: 13px;
+    }
+    .recent-item:last-child { border-bottom: none; }
+    .file-name { font-weight: 500; color: #0F172A; }
+    .file-status {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 12px;
+      color: #065F46;
+      font-weight: 500;
+    }
+    .status-dot { width: 6px; height: 6px; background: #10B981; border-radius: 50%; }
+  </style>
+</head>
+<body>
+
+  <header class="drop-header">
+    <div class="brand-group">
+      <div class="logo-crest">S</div>
+      <div class="brand-title">Sovereign Dropzone</div>
+    </div>
+    <a href="dashboard.html" class="back-link">
+      <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+      </svg>
+      Admin Dashboard
+    </a>
+  </header>
+
+  <main class="drop-container">
+
+    <div class="drop-card">
+      <div class="page-intro">
+        <h1 class="page-title">Drop Media Files</h1>
+        <p class="page-desc">Files uploaded here are automatically processed, organized, and added to your family library.</p>
+      </div>
+
+      <!-- Target Category -->
+      <div class="category-tabs">
+        <button class="cat-tab active">Movies</button>
+        <button class="cat-tab">TV Shows</button>
+        <button class="cat-tab">Music</button>
+        <button class="cat-tab">Audiobooks</button>
+      </div>
+
+      <!-- Dropzone -->
+      <div class="drop-zone">
+        <div class="drop-icon-wrapper">
+          <svg width="24" height="24" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+          </svg>
+        </div>
+        <div class="drop-main-text">Drag and drop movie files here</div>
+        <div class="drop-sub-text">MKV, MP4, AVI, or ISO up to 100 GB per file</div>
+        <button class="browse-btn">Browse Files</button>
+      </div>
+    </div>
+
+    <!-- LAN Path Helper -->
+    <div class="lan-helper">
+      <div class="lan-info">
+        <div class="lan-title">Prefer dropping via network folder?</div>
+        <div class="lan-path">\\sovereign\drop\movies &nbsp;•&nbsp; smb://sovereign.local/drop/movies</div>
+      </div>
+      <button class="copy-btn" onclick="navigator.clipboard.writeText('\\\\sovereign\\drop\\movies')">Copy Path</button>
+    </div>
+
+    <!-- Recent Activity -->
+    <div class="recent-card">
+      <div class="recent-title">Recent Ingestions</div>
+      <div class="recent-item">
+        <div>
+          <div class="file-name">Interstellar.2014.2160p.mkv</div>
+          <div style="font-size: 11px; color: #94A3B8;">42.4 GB · Deposited 18 min ago</div>
+        </div>
+        <div class="file-status">
+          <span class="status-dot"></span>
+          Ingested into Jellyfin
+        </div>
+      </div>
+      <div class="recent-item">
+        <div>
+          <div class="file-name">Dune.Part.Two.2024.1080p.mkv</div>
+          <div style="font-size: 11px; color: #94A3B8;">14.1 GB · Deposited 2 hours ago</div>
+        </div>
+        <div class="file-status">
+          <span class="status-dot"></span>
+          Ingested into Jellyfin
+        </div>
+      </div>
+    </div>
+
+  </main>
+
+</body>
+</html>
