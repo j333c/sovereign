@@ -42,6 +42,16 @@ function HomeScreenContent({
           }
           return;
         }
+
+        const setup = await client.getSetupStatus();
+        if (!isMounted) return;
+
+        if (!setup.is_configured) {
+          if (router) {
+            router.replace("/setup");
+          }
+          return;
+        }
       } catch (err: unknown) {
         if (!isMounted) return;
 

@@ -206,6 +206,135 @@ paths:
               schema:
                 $ref: '#/components/schemas/ProblemDetails'
 
+  /api/v1/auth/setup-status:
+    get:
+      summary: Check first-run setup completion status
+      description: Returns whether the appliance has completed the first-run onboarding setup wizard.
+      operationId: getSetupStatus
+      responses:
+        '200':
+          description: Setup configuration state.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SetupStatusResponse'
+        '500':
+          description: Internal error checking setup state.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/v1/auth/setup:
+    post:
+      summary: Complete first-run setup wizard
+      description: Sets language, storage, features, and creates administrator credentials with Argon2id hashing.
+      operationId: completeSetup
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetupRequest'
+      responses:
+        '200':
+          description: Setup successfully completed with active admin session.
+          headers:
+            Set-Cookie:
+              schema:
+                type: string
+                example: sovereign_session=4a7c...; Path=/; HttpOnly; SameSite=Strict; Max-Age=2592000
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthSessionResponse'
+        '400':
+          description: Validation error (e.g. password < 8 characters or invalid email format).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '409':
+          description: Appliance setup has already been completed.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '500':
+          description: Internal error completing setup.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/v1/auth/login:
+    post:
+      summary: Administrative user login
+      description: Authenticates administrator credentials and issues session cookie.
+      operationId: login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: Authentication successful.
+          headers:
+            Set-Cookie:
+              schema:
+                type: string
+                example: sovereign_session=4a7c...; Path=/; HttpOnly; SameSite=Strict; Max-Age=2592000
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthSessionResponse'
+        '401':
+          description: Invalid username or password.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '500':
+          description: Internal error during authentication.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/v1/auth/logout:
+    post:
+      summary: Terminate session and logout
+      description: Revokes session in persistent database and clears session cookie.
+      operationId: logout
+      responses:
+        '200':
+          description: Session terminated successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LogoutResponse'
+
+  /api/v1/auth/session:
+    get:
+      summary: Check active session details
+      description: Returns information about the currently authenticated session.
+      operationId: getSession
+      responses:
+        '200':
+          description: Active session details.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionResponse'
+        '401':
+          description: No active or valid session.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
 components:
   schemas:
     HealthResponse:
@@ -594,4 +723,117 @@ components:
           $ref: '#/components/schemas/StorageLocalPool'
         nas:
           $ref: '#/components/schemas/StorageNASStatus'
+
+    SetupStatusResponse:
+      type: object
+      required:
+        - is_configured
+      properties:
+        is_configured:
+          type: boolean
+          example: false
+
+    SetupRequest:
+      type: object
+      required:
+        - password
+        - email
+      properties:
+        username:
+          type: string
+          example: admin
+        password:
+          type: string
+          minLength: 8
+          example: HouseholdMasterKey2026!
+        email:
+          type: string
+          format: email
+          example: alex@family.net
+        language:
+          type: string
+          example: en
+        features:
+          type: array
+          items:
+            type: string
+          example: [video, audio, dms, ai]
+        hostname:
+          type: string
+          example: sovereign.local
+
+    SessionInfo:
+      type: object
+      required:
+        - token
+        - role
+        - username
+        - expires_at
+      properties:
+        token:
+          type: string
+          example: 4a7c8e9f...
+        role:
+          type: string
+          enum: [admin, user, guest]
+          example: admin
+        username:
+          type: string
+          example: admin
+        expires_at:
+          type: integer
+          format: int64
+          example: 1730000000
+
+    AuthSessionResponse:
+      type: object
+      required:
+        - status
+        - session
+      properties:
+        status:
+          type: string
+          example: ok
+        is_configured:
+          type: boolean
+          example: true
+        session:
+          $ref: '#/components/schemas/SessionInfo'
+
+    LoginRequest:
+      type: object
+      required:
+        - username
+        - password
+      properties:
+        username:
+          type: string
+          example: admin
+        password:
+          type: string
+          example: HouseholdMasterKey2026!
+
+    SessionResponse:
+      type: object
+      required:
+        - authenticated
+      properties:
+        authenticated:
+          type: boolean
+          example: true
+        session:
+          $ref: '#/components/schemas/SessionInfo'
+
+    LogoutResponse:
+      type: object
+      required:
+        - status
+        - message
+      properties:
+        status:
+          type: string
+          example: ok
+        message:
+          type: string
+          example: Logged out successfully
 

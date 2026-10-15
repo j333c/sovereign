@@ -164,6 +164,106 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/auth/setup-status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Check first-run setup completion status
+         * @description Returns whether the appliance has completed the first-run onboarding setup wizard.
+         */
+        get: operations["getSetupStatus"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/setup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Complete first-run setup wizard
+         * @description Sets language, storage, features, and creates administrator credentials with Argon2id hashing.
+         */
+        post: operations["completeSetup"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/login": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Administrative user login
+         * @description Authenticates administrator credentials and issues session cookie.
+         */
+        post: operations["login"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/logout": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Terminate session and logout
+         * @description Revokes session in persistent database and clears session cookie.
+         */
+        post: operations["logout"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/session": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Check active session details
+         * @description Returns information about the currently authenticated session.
+         */
+        get: operations["getSession"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -397,6 +497,74 @@ export interface components {
             used_bytes: number;
             local_pool?: components["schemas"]["StorageLocalPool"];
             nas?: components["schemas"]["StorageNASStatus"];
+        };
+        SetupStatusResponse: {
+            /** @example false */
+            is_configured: boolean;
+        };
+        SetupRequest: {
+            /** @example admin */
+            username?: string;
+            /** @example HouseholdMasterKey2026! */
+            password: string;
+            /**
+             * Format: email
+             * @example alex@family.net
+             */
+            email: string;
+            /** @example en */
+            language?: string;
+            /**
+             * @example [
+             *       "video",
+             *       "audio",
+             *       "dms",
+             *       "ai"
+             *     ]
+             */
+            features?: string[];
+            /** @example sovereign.local */
+            hostname?: string;
+        };
+        SessionInfo: {
+            /** @example 4a7c8e9f... */
+            token: string;
+            /**
+             * @example admin
+             * @enum {string}
+             */
+            role: "admin" | "user" | "guest";
+            /** @example admin */
+            username: string;
+            /**
+             * Format: int64
+             * @example 1730000000
+             */
+            expires_at: number;
+        };
+        AuthSessionResponse: {
+            /** @example ok */
+            status: string;
+            /** @example true */
+            is_configured?: boolean;
+            session: components["schemas"]["SessionInfo"];
+        };
+        LoginRequest: {
+            /** @example admin */
+            username: string;
+            /** @example HouseholdMasterKey2026! */
+            password: string;
+        };
+        SessionResponse: {
+            /** @example true */
+            authenticated: boolean;
+            session?: components["schemas"]["SessionInfo"];
+        };
+        LogoutResponse: {
+            /** @example ok */
+            status: string;
+            /** @example Logged out successfully */
+            message: string;
         };
     };
     responses: never;
@@ -678,6 +846,179 @@ export interface operations {
             };
             /** @description Internal supervisor error retrieving storage status. */
             500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    getSetupStatus: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Setup configuration state. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SetupStatusResponse"];
+                };
+            };
+            /** @description Internal error checking setup state. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    completeSetup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetupRequest"];
+            };
+        };
+        responses: {
+            /** @description Setup successfully completed with active admin session. */
+            200: {
+                headers: {
+                    "Set-Cookie"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthSessionResponse"];
+                };
+            };
+            /** @description Validation error (e.g. password < 8 characters or invalid email format). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Appliance setup has already been completed. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Internal error completing setup. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    login: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LoginRequest"];
+            };
+        };
+        responses: {
+            /** @description Authentication successful. */
+            200: {
+                headers: {
+                    "Set-Cookie"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthSessionResponse"];
+                };
+            };
+            /** @description Invalid username or password. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Internal error during authentication. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    logout: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Session terminated successfully. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LogoutResponse"];
+                };
+            };
+        };
+    };
+    getSession: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Active session details. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionResponse"];
+                };
+            };
+            /** @description No active or valid session. */
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };

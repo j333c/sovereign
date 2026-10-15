@@ -105,4 +105,50 @@ describe("HomePage Component", () => {
     const status = await client.getBootStatus();
     assert.equal(status.mode, "operational");
   });
+
+  it("redirects to /setup when server is unconfigured (is_configured === false)", async () => {
+    let redirectedPath = "";
+    const mockRouter = {
+      replace: (path: string) => {
+        redirectedPath = path;
+      },
+    };
+
+    const mockFetch: typeof fetch = async (input) => {
+      const url = String(input);
+      if (url.endsWith("/boot-status")) {
+        return new Response(
+          JSON.stringify({
+            mode: "operational",
+            clean_shutdown: true,
+            diagnostics_completed: true,
+            message: "All systems operational",
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      if (url.endsWith("/setup-status")) {
+        return new Response(
+          JSON.stringify({ is_configured: false }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      throw new Error(`Unexpected url: ${url}`);
+    };
+
+    const client = new SovereignApiClient({
+      baseUrl: "http://localhost:8080",
+      fetchFn: mockFetch,
+    });
+
+    const bootStatus = await client.getBootStatus();
+    if (bootStatus.mode === "operational") {
+      const setupStatus = await client.getSetupStatus();
+      if (!setupStatus.is_configured) {
+        mockRouter.replace("/setup");
+      }
+    }
+
+    assert.equal(redirectedPath, "/setup");
+  });
 });

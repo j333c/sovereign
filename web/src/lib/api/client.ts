@@ -16,6 +16,13 @@ export type StorageNASMountResponse = components["schemas"]["StorageNASMountResp
 export type StorageLocalPool = components["schemas"]["StorageLocalPool"];
 export type StorageNASStatus = components["schemas"]["StorageNASStatus"];
 export type StorageStatusResponse = components["schemas"]["StorageStatusResponse"];
+export type SetupStatusResponse = components["schemas"]["SetupStatusResponse"];
+export type SetupRequest = components["schemas"]["SetupRequest"];
+export type AuthSessionResponse = components["schemas"]["AuthSessionResponse"];
+export type SessionInfo = components["schemas"]["SessionInfo"];
+export type LoginRequest = components["schemas"]["LoginRequest"];
+export type SessionResponse = components["schemas"]["SessionResponse"];
+export type LogoutResponse = components["schemas"]["LogoutResponse"];
 
 /**
  * ProblemDetailsError represents an RFC 7807 problem details error thrown by the daemon API.
@@ -70,6 +77,7 @@ export class SovereignApiClient {
   private async request<T>(path: string, init?: RequestInit): Promise<T> {
     const url = this.baseUrl ? `${this.baseUrl}${path}` : path;
     const response = await this.fetchFn(url, {
+      credentials: "include",
       ...init,
       headers: {
         Accept: "application/json, application/problem+json",
@@ -175,6 +183,51 @@ export class SovereignApiClient {
    */
   async getStorageStatus(): Promise<StorageStatusResponse> {
     return this.request<StorageStatusResponse>("/api/v1/storage/status");
+  }
+
+  /**
+   * Check first-run setup completion status.
+   */
+  async getSetupStatus(): Promise<SetupStatusResponse> {
+    return this.request<SetupStatusResponse>("/api/v1/auth/setup-status");
+  }
+
+  /**
+   * Complete the 5-step onboarding setup wizard and establish administrator session.
+   */
+  async completeSetup(request: SetupRequest): Promise<AuthSessionResponse> {
+    return this.request<AuthSessionResponse>("/api/v1/auth/setup", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(request),
+    });
+  }
+
+  /**
+   * Administrative login with username and password.
+   */
+  async login(request: LoginRequest): Promise<AuthSessionResponse> {
+    return this.request<AuthSessionResponse>("/api/v1/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(request),
+    });
+  }
+
+  /**
+   * Terminate active administrative session and clear session cookie.
+   */
+  async logout(): Promise<LogoutResponse> {
+    return this.request<LogoutResponse>("/api/v1/auth/logout", {
+      method: "POST",
+    });
+  }
+
+  /**
+   * Retrieve active session state.
+   */
+  async getSession(): Promise<SessionResponse> {
+    return this.request<SessionResponse>("/api/v1/auth/session");
   }
 }
 

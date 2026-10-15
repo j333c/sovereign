@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"sovereign/internal/auth"
 	"sovereign/internal/ingress"
 	"sovereign/internal/storage"
 	"sovereign/internal/store"
@@ -66,6 +67,7 @@ type Config struct {
 	MDNSService   *ingress.MDNSService
 	BootMgr       *store.BootManager
 	StorageEngine *storage.Engine
+	AuthMgr       *auth.Manager
 }
 
 // Server is the appliance core supervisor HTTP daemon.
@@ -74,6 +76,7 @@ type Server struct {
 	db            *store.DB
 	bootMgr       *store.BootManager
 	storageEngine *storage.Engine
+	authMgr       *auth.Manager
 	logger        *slog.Logger
 	router        *http.ServeMux
 	ingressMgr    ingress.IngressManager
@@ -150,11 +153,21 @@ func NewServer(cfg Config) (*Server, error) {
 		}
 	}
 
+	if cfg.AuthMgr == nil {
+		var err error
+		cfg.AuthMgr, err = auth.NewManager(db.DB, cfg.Logger)
+		if err != nil {
+			cfg.Logger.Error("auth manager initialization failed", "error", err)
+			return nil, fmt.Errorf("auth manager initialization failed: %w", err)
+		}
+	}
+
 	s := &Server{
 		cfg:           cfg,
 		db:            db,
 		bootMgr:       cfg.BootMgr,
 		storageEngine: cfg.StorageEngine,
+		authMgr:       cfg.AuthMgr,
 		logger:        cfg.Logger,
 		router:        http.NewServeMux(),
 		ingressMgr:    cfg.IngressMgr,
@@ -247,6 +260,13 @@ func (s *Server) StorageEngine() *storage.Engine {
 	return s.storageEngine
 }
 
+// AuthManager returns the active auth manager.
+func (s *Server) AuthManager() *auth.Manager {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.authMgr
+}
+
 // Close closes database handles and frees ingress/mDNS/storage resources.
 func (s *Server) Close() error {
 	s.mu.Lock()
@@ -280,12 +300,29 @@ func (s *Server) routes() {
 	s.router.HandleFunc("POST /api/v1/storage/nas/test", s.handleStorageNASTest)
 	s.router.HandleFunc("POST /api/v1/storage/nas/mount", s.handleStorageNASMount)
 	s.router.HandleFunc("GET /api/v1/storage/status", s.handleStorageStatus)
+
+	// Auth and Setup Wizard endpoints
+	s.router.HandleFunc("GET /api/v1/auth/setup-status", s.handleSetupStatus)
+	s.router.HandleFunc("POST /api/v1/auth/setup", s.handleSetup)
+	s.router.HandleFunc("POST /api/v1/auth/login", s.handleLogin)
+	s.router.HandleFunc("POST /api/v1/auth/logout", s.handleLogout)
+	s.router.HandleFunc("GET /api/v1/auth/session", s.handleSession)
+
+	// Protected administrative settings endpoints
+	s.router.Handle("GET /api/v1/settings", s.authMgr.RequireAdmin(http.HandlerFunc(s.handleGetSettings)))
+	s.router.Handle("POST /api/v1/settings", s.authMgr.RequireAdmin(http.HandlerFunc(s.handleUpdateSettings)))
 }
 
 // Handler returns the HTTP handler for the server with CORS middleware.
 func (s *Server) Handler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
+		origin := r.Header.Get("Origin")
+		if origin != "" {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Access-Control-Allow-Credentials", "true")
+		} else {
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+		}
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, Accept")
 
@@ -546,5 +583,194 @@ func (s *Server) handleStorageStatus(w http.ResponseWriter, r *http.Request) {
 
 	status := storageEng.GetStorageStatus(r.Context())
 	s.writeJSON(w, http.StatusOK, status)
+}
+
+func (s *Server) handleSetupStatus(w http.ResponseWriter, r *http.Request) {
+	s.mu.RLock()
+	authMgr := s.authMgr
+	s.mu.RUnlock()
+
+	if authMgr == nil {
+		s.writeProblem(w, http.StatusInternalServerError, "Internal Server Error", "Auth manager is not initialized", r.URL.Path)
+		return
+	}
+
+	configured, err := authMgr.IsConfigured(r.Context())
+	if err != nil {
+		s.logger.Error("failed to check setup status", "error", err)
+		s.writeProblem(w, http.StatusInternalServerError, "Internal Server Error", "Failed to check setup configuration status", r.URL.Path)
+		return
+	}
+
+	s.writeJSON(w, http.StatusOK, map[string]any{
+		"is_configured": configured,
+	})
+}
+
+func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
+	s.mu.RLock()
+	authMgr := s.authMgr
+	s.mu.RUnlock()
+
+	if authMgr == nil {
+		s.writeProblem(w, http.StatusInternalServerError, "Internal Server Error", "Auth manager is not initialized", r.URL.Path)
+		return
+	}
+
+	var req auth.SetupRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.writeProblem(w, http.StatusBadRequest, "Invalid Request", "Malformed JSON request payload", r.URL.Path)
+		return
+	}
+
+	sess, err := authMgr.CompleteSetup(r.Context(), req)
+	if err != nil {
+		if errors.Is(err, auth.ErrAlreadyConfigured) {
+			s.writeProblem(w, http.StatusConflict, "Already Configured", "Appliance first-run setup has already been completed", r.URL.Path)
+			return
+		}
+		if errors.Is(err, auth.ErrPasswordTooShort) || errors.Is(err, auth.ErrInvalidEmail) {
+			s.writeProblem(w, http.StatusBadRequest, "Validation Error", err.Error(), r.URL.Path)
+			return
+		}
+		s.logger.Error("setup completion failed", "error", err)
+		s.writeProblem(w, http.StatusInternalServerError, "Setup Failed", "Failed to complete appliance setup", r.URL.Path)
+		return
+	}
+
+	authMgr.SetSessionCookie(w, sess.Token)
+	s.writeJSON(w, http.StatusOK, map[string]any{
+		"status":        "ok",
+		"is_configured": true,
+		"session":       sess,
+	})
+}
+
+func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
+	s.mu.RLock()
+	authMgr := s.authMgr
+	s.mu.RUnlock()
+
+	if authMgr == nil {
+		s.writeProblem(w, http.StatusInternalServerError, "Internal Server Error", "Auth manager is not initialized", r.URL.Path)
+		return
+	}
+
+	var req auth.LoginRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.writeProblem(w, http.StatusBadRequest, "Invalid Request", "Malformed JSON request payload", r.URL.Path)
+		return
+	}
+
+	sess, err := authMgr.Authenticate(r.Context(), req.Username, req.Password)
+	if err != nil {
+		if errors.Is(err, auth.ErrInvalidCredentials) {
+			s.writeProblem(w, http.StatusUnauthorized, "Unauthorized", "Invalid username or password", r.URL.Path)
+			return
+		}
+		s.logger.Error("login authentication failed", "username", req.Username, "error", err)
+		s.writeProblem(w, http.StatusInternalServerError, "Authentication Error", "Authentication failed", r.URL.Path)
+		return
+	}
+
+	authMgr.SetSessionCookie(w, sess.Token)
+	s.writeJSON(w, http.StatusOK, map[string]any{
+		"status":  "ok",
+		"session": sess,
+	})
+}
+
+func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
+	s.mu.RLock()
+	authMgr := s.authMgr
+	s.mu.RUnlock()
+
+	if authMgr != nil {
+		if sess, err := authMgr.GetSessionFromRequest(r); err == nil && sess != nil {
+			_ = authMgr.RevokeSession(r.Context(), sess.Token)
+		}
+		authMgr.ClearSessionCookie(w)
+	}
+
+	s.writeJSON(w, http.StatusOK, map[string]any{
+		"status":  "ok",
+		"message": "Logged out successfully",
+	})
+}
+
+func (s *Server) handleSession(w http.ResponseWriter, r *http.Request) {
+	s.mu.RLock()
+	authMgr := s.authMgr
+	s.mu.RUnlock()
+
+	if authMgr == nil {
+		s.writeProblem(w, http.StatusInternalServerError, "Internal Server Error", "Auth manager is not initialized", r.URL.Path)
+		return
+	}
+
+	sess, err := authMgr.GetSessionFromRequest(r)
+	if err != nil || sess == nil {
+		s.writeProblem(w, http.StatusUnauthorized, "Unauthorized", "No active session", r.URL.Path)
+		return
+	}
+
+	s.writeJSON(w, http.StatusOK, map[string]any{
+		"authenticated": true,
+		"session":       sess,
+	})
+}
+
+func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
+	s.mu.RLock()
+	dbHandle := s.db
+	s.mu.RUnlock()
+
+	if dbHandle == nil {
+		s.writeProblem(w, http.StatusInternalServerError, "Internal Server Error", "Database is not initialized", r.URL.Path)
+		return
+	}
+
+	ctx := r.Context()
+	lang, _ := dbHandle.GetSetting(ctx, "language")
+	email, _ := dbHandle.GetSetting(ctx, "admin_email")
+	hostname, _ := dbHandle.GetSetting(ctx, "hostname")
+	features, _ := dbHandle.GetSetting(ctx, "features")
+
+	s.writeJSON(w, http.StatusOK, map[string]any{
+		"language":    lang,
+		"admin_email": email,
+		"hostname":    hostname,
+		"features":    features,
+	})
+}
+
+func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
+	s.mu.RLock()
+	dbHandle := s.db
+	s.mu.RUnlock()
+
+	if dbHandle == nil {
+		s.writeProblem(w, http.StatusInternalServerError, "Internal Server Error", "Database is not initialized", r.URL.Path)
+		return
+	}
+
+	var payload map[string]string
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		s.writeProblem(w, http.StatusBadRequest, "Invalid Request", "Malformed JSON request payload", r.URL.Path)
+		return
+	}
+
+	ctx := r.Context()
+	for k, v := range payload {
+		if err := dbHandle.SetSetting(ctx, k, v); err != nil {
+			s.logger.Error("failed to set setting", "key", k, "error", err)
+			s.writeProblem(w, http.StatusInternalServerError, "Internal Server Error", "Failed to update setting", r.URL.Path)
+			return
+		}
+	}
+
+	s.writeJSON(w, http.StatusOK, map[string]any{
+		"status": "ok",
+	})
 }
 

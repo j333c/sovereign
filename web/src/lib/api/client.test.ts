@@ -522,5 +522,162 @@ describe("SovereignApiClient", () => {
       }
     );
   });
+
+  it("successfully fetches getSetupStatus with typed response", async () => {
+    const mockFetch: typeof fetch = async (input) => {
+      assert.equal(String(input), "http://localhost:8080/api/v1/auth/setup-status");
+      return new Response(JSON.stringify({ is_configured: false }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    };
+
+    const client = new SovereignApiClient({
+      baseUrl: "http://localhost:8080",
+      fetchFn: mockFetch,
+    });
+
+    const res = await client.getSetupStatus();
+    assert.equal(res.is_configured, false);
+  });
+
+  it("successfully calls completeSetup and returns session", async () => {
+    const mockFetch: typeof fetch = async (input, init) => {
+      assert.equal(String(input), "http://localhost:8080/api/v1/auth/setup");
+      assert.equal(init?.method, "POST");
+      const body = JSON.parse(String(init?.body));
+      assert.equal(body.password, "HouseholdMasterKey2026!");
+      assert.equal(body.email, "alex@family.net");
+
+      return new Response(
+        JSON.stringify({
+          status: "ok",
+          is_configured: true,
+          session: {
+            token: "tok123",
+            username: "admin",
+            role: "admin",
+            expires_at: 1730000000,
+          },
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } }
+      );
+    };
+
+    const client = new SovereignApiClient({
+      baseUrl: "http://localhost:8080",
+      fetchFn: mockFetch,
+    });
+
+    const res = await client.completeSetup({
+      username: "admin",
+      password: "HouseholdMasterKey2026!",
+      email: "alex@family.net",
+      language: "de",
+      features: ["video", "audio"],
+    });
+
+    assert.equal(res.status, "ok");
+    assert.equal(res.is_configured, true);
+    assert.equal(res.session?.role, "admin");
+    assert.equal(res.session?.token, "tok123");
+  });
+
+  it("handles duplicate setup error as ProblemDetailsError with 409 Conflict", async () => {
+    const mockFetch: typeof fetch = async () => {
+      return new Response(
+        JSON.stringify({
+          type: "https://sovereign.local/errors/http-409",
+          title: "Already Configured",
+          status: 409,
+          detail: "Appliance first-run setup has already been completed",
+          instance: "/api/v1/auth/setup",
+        }),
+        { status: 409, headers: { "Content-Type": "application/problem+json" } }
+      );
+    };
+
+    const client = new SovereignApiClient({
+      baseUrl: "http://localhost:8080",
+      fetchFn: mockFetch,
+    });
+
+    await assert.rejects(
+      async () => {
+        await client.completeSetup({
+          password: "validPassword123!",
+          email: "alex@family.net",
+        });
+      },
+      (err: unknown) => {
+        assert.ok(err instanceof ProblemDetailsError);
+        assert.equal(err.status, 409);
+        assert.equal(err.title, "Already Configured");
+        return true;
+      }
+    );
+  });
+
+  it("successfully calls login, logout, and getSession", async () => {
+    const calls: string[] = [];
+    const mockFetch: typeof fetch = async (input, init) => {
+      const url = String(input);
+      calls.push(`${init?.method ?? "GET"} ${url}`);
+
+      if (url.endsWith("/login")) {
+        return new Response(
+          JSON.stringify({
+            status: "ok",
+            session: {
+              token: "session-abc",
+              username: "admin",
+              role: "admin",
+              expires_at: 1730000000,
+            },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      if (url.endsWith("/session")) {
+        return new Response(
+          JSON.stringify({
+            authenticated: true,
+            session: {
+              token: "session-abc",
+              username: "admin",
+              role: "admin",
+              expires_at: 1730000000,
+            },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      if (url.endsWith("/logout")) {
+        return new Response(
+          JSON.stringify({ status: "ok", message: "Logged out successfully" }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+
+      throw new Error(`Unexpected endpoint: ${url}`);
+    };
+
+    const client = new SovereignApiClient({
+      baseUrl: "http://localhost:8080",
+      fetchFn: mockFetch,
+    });
+
+    const loginRes = await client.login({ username: "admin", password: "HouseholdMasterKey2026!" });
+    assert.equal(loginRes.session?.token, "session-abc");
+
+    const sessionRes = await client.getSession();
+    assert.equal(sessionRes.authenticated, true);
+    assert.equal(sessionRes.session?.username, "admin");
+
+    const logoutRes = await client.logout();
+    assert.equal(logoutRes.status, "ok");
+
+    assert.equal(calls.length, 3);
+  });
 });
 
