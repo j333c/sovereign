@@ -2,7 +2,7 @@
 title: 'Story 1.6: Central Admin Dashboard & Real-Time SSE Telemetry Stream'
 type: 'feature'
 created: '2026-10-15'
-status: 'review'
+status: 'done'
 baseline_commit: 'b8eb1fbaba434b3f8c34be8325822fe4e905b201'
 route: 'dispatch'
 review_loop_iteration: 0
@@ -45,6 +45,13 @@ context:
 ## Spec Change Log
 
 ## Review Triage Log
+
+- **Status Ordering & Storage Fallback (`cmd/sovereign-daemon/server.go`)**: Applied error precedence over degraded in telemetry calculation, mapped disconnected NAS to degraded overall state, and added fallback to hardware collector storage metric when storage engine reports 0 total.
+- **CPU Collector Protection (`internal/hardware/hardware.go`)**: Guarded against `/proc/stat` counter reset/wrap and included `iowait` in idle calculations.
+- **SSE Connection Termination on Daemon Shutdown (`cmd/sovereign-daemon/server.go`)**: Added `stopChan` and `closeOnce` to terminate SSE loops gracefully upon `Server.Close()`.
+- **Localization & Microcopy (`web/src/components/TelemetryBar.tsx`, `AppHeader.tsx`, `i18n.ts`)**: Added `healthPopoverHealthy`, `healthPopoverAttention`, `systemHealthDetails` keys across all 4 locales (EN, DE, ES, FR), mapped optical and GPU statuses to localized strings, and added click-outside/Escape dismissal and 44px touch targets.
+- **Dashboard Interaction & Auth Gating (`web/src/app/page.tsx`, `AdminLoginModal.tsx`)**: Added focus trap and submission guards to `AdminLoginModal`, enabled feature filtering based on `getSettings()`, persisted selected language in `localStorage`, and added `{ withCredentials: true }` to EventSource.
+- **Test Coverage Expansion**: Added unit tests in `page.test.tsx`, `useTelemetry.test.ts`, `server_test.go`, and `hardware_test.go`. All 61 frontend tests and all Go tests pass.
 
 ## Design Notes
 

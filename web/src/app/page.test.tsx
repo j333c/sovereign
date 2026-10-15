@@ -544,4 +544,35 @@ describe("Central Admin Dashboard Integration & i18n", () => {
     assert.equal(tFr.dmsTitle, "Archives de documents");
     assert.equal(tFr.aiTitle, "Assistant IA local");
   });
+
+  it("renders HomeScreen when operational with header, service cards, and telemetry bar", () => {
+    const html = renderToStaticMarkup(
+      <HomeScreen
+        initialReady={true}
+        routerOverride={{ replace: () => {} }}
+        initialTelemetry={{
+          cpu_percent: 12.5,
+          memory_used_bytes: 4 * 1024 * 1024 * 1024,
+          memory_total_bytes: 16 * 1024 * 1024 * 1024,
+          storage_used_bytes: 1024 * 1024 * 1024 * 1024,
+          storage_total_bytes: 2048 * 1024 * 1024 * 1024,
+          storage_percent: 50.0,
+          nas_status: "not_configured",
+          nas_message: "No network storage configured",
+          overall_status: "operational",
+          optical_status: "Idle · Ready for disc",
+          gpu_status: "Daytime (AI Priority)",
+          timestamp: "2026-10-15T12:00:00Z",
+        }}
+      />
+    );
+
+    assert.ok(html.includes("data-testid=\"app-header\""));
+    assert.ok(html.includes("data-testid=\"services-grid\""));
+    assert.ok(html.includes("data-testid=\"telemetry-bar\""));
+    assert.ok(html.includes("Video Streaming"));
+    assert.ok(html.includes("Music &amp; Audiobooks"));
+    assert.ok(html.includes("Document Archive"));
+    assert.ok(html.includes("Local AI Assistant"));
+  });
 });

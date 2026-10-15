@@ -29,6 +29,28 @@ func TestSystemCollector_CollectSnapshot(t *testing.T) {
 	}
 }
 
+func TestSystemCollector_DeltaCPU(t *testing.T) {
+	collector := NewSystemCollector()
+	snap1, err := collector.CollectSnapshot(context.Background())
+	if err != nil {
+		t.Fatalf("first snapshot failed: %v", err)
+	}
+	if snap1 == nil {
+		t.Fatal("expected non-nil first snapshot")
+	}
+
+	snap2, err := collector.CollectSnapshot(context.Background())
+	if err != nil {
+		t.Fatalf("second snapshot failed: %v", err)
+	}
+	if snap2 == nil {
+		t.Fatal("expected non-nil second snapshot")
+	}
+	if snap2.CPUUsagePercent < 0 || snap2.CPUUsagePercent > 100 {
+		t.Errorf("expected CPU percentage between 0 and 100, got %f", snap2.CPUUsagePercent)
+	}
+}
+
 func TestMockCollector(t *testing.T) {
 	mock := &MockCollector{
 		Snapshot: &TelemetrySnapshot{

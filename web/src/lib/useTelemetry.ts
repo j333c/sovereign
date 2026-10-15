@@ -28,7 +28,7 @@ export function useTelemetry({
       if (eventSourceFactory) {
         es = eventSourceFactory(url);
       } else if (typeof window !== "undefined" && typeof window.EventSource !== "undefined") {
-        es = new window.EventSource(url);
+        es = new window.EventSource(url, { withCredentials: true });
       }
 
       if (es) {

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import { StatusBadge, StatusLevel } from "./StatusBadge";
 import { Language, translations } from "@/lib/i18n";
@@ -22,6 +22,7 @@ export function AppHeader({
 }: AppHeaderProps) {
   const t = translations[currentLanguage];
   const [showAlertPopover, setShowAlertPopover] = useState(false);
+  const popoverRef = useRef<HTMLDivElement>(null);
 
   const isGreen = aggregateStatus === "healthy" || aggregateStatus === "operational";
   const isAmber = aggregateStatus === "amber" || aggregateStatus === "degraded";
@@ -30,6 +31,26 @@ export function AppHeader({
     : isAmber
     ? t.attentionRequired
     : t.systemError;
+
+  useEffect(() => {
+    if (!showAlertPopover) return;
+    function handleClickOutside(e: MouseEvent) {
+      if (popoverRef.current && !popoverRef.current.contains(e.target as Node)) {
+        setShowAlertPopover(false);
+      }
+    }
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") {
+        setShowAlertPopover(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [showAlertPopover]);
 
   return (
     <header
@@ -57,11 +78,11 @@ export function AppHeader({
         </Link>
 
         {/* Aggregate Health Pill with Popover */}
-        <div className="relative">
+        <div className="relative" ref={popoverRef}>
           <button
             type="button"
             onClick={() => setShowAlertPopover(!showAlertPopover)}
-            className="flex items-center rounded-full focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:outline-none cursor-pointer"
+            className="flex items-center justify-center min-h-[44px] min-w-[44px] rounded-full focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:outline-none cursor-pointer"
             aria-label={`System status: ${healthLabel}. Click to view details`}
             aria-expanded={showAlertPopover}
           >
@@ -72,14 +93,14 @@ export function AppHeader({
             <div
               className="absolute left-0 mt-2 w-72 rounded-lg border border-[#E5E7EB] bg-white p-3 shadow-lg z-50 text-xs text-[#0F172A]"
               role="dialog"
-              aria-label="System Health Details"
+              aria-label={t.systemHealthDetails}
             >
               <div className="flex items-center justify-between pb-2 border-b border-[#E5E7EB] font-semibold">
                 <span>{healthLabel}</span>
                 <button
                   type="button"
                   onClick={() => setShowAlertPopover(false)}
-                  className="text-[#64748B] hover:text-[#0F172A] p-1"
+                  className="text-[#64748B] hover:text-[#0F172A] p-1 rounded-sm focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:outline-none"
                   aria-label="Close status popover"
                 >
                   ✕
@@ -88,8 +109,8 @@ export function AppHeader({
               <p className="mt-2 text-[#64748B] leading-relaxed">
                 {statusMessage ||
                   (isGreen
-                    ? "All core hardware, database integrity, and container services are running healthy."
-                    : "Some subsystems require attention. Check individual service cards for details.")}
+                    ? t.healthPopoverHealthy
+                    : t.healthPopoverAttention)}
               </p>
             </div>
           )}

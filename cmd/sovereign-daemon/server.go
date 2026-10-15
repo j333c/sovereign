@@ -105,6 +105,8 @@ type Server struct {
 	router            *http.ServeMux
 	ingressMgr        ingress.IngressManager
 	mdnsService       *ingress.MDNSService
+	stopChan          chan struct{}
+	closeOnce         sync.Once
 	mu                sync.RWMutex
 }
 
@@ -207,6 +209,7 @@ func NewServer(cfg Config) (*Server, error) {
 		router:            http.NewServeMux(),
 		ingressMgr:        cfg.IngressMgr,
 		mdnsService:       cfg.MDNSService,
+		stopChan:          make(chan struct{}),
 	}
 
 	s.routes()
@@ -319,6 +322,12 @@ func (s *Server) HardwareCollector() hardware.Collector {
 
 // Close closes database handles and frees ingress/mDNS/storage resources.
 func (s *Server) Close() error {
+	s.closeOnce.Do(func() {
+		if s.stopChan != nil {
+			close(s.stopChan)
+		}
+	})
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -556,11 +565,14 @@ func (s *Server) getTelemetryUpdate(ctx context.Context) TelemetryUpdate {
 
 	var cpuPercent float64 = 5.0
 	var memUsed, memTotal uint64
+	var hwStorageUsed, hwStorageTotal uint64
 	if hwCollector != nil {
 		if snap, err := hwCollector.CollectSnapshot(ctx); err == nil && snap != nil {
 			cpuPercent = snap.CPUUsagePercent
 			memUsed = snap.MemoryUsedBytes
 			memTotal = snap.MemoryTotalBytes
+			hwStorageUsed = snap.StorageUsedBytes
+			hwStorageTotal = snap.StorageTotalBytes
 		}
 	}
 
@@ -574,6 +586,10 @@ func (s *Server) getTelemetryUpdate(ctx context.Context) TelemetryUpdate {
 		st := storageEng.GetStorageStatus(ctx)
 		storageUsed = st.UsedBytes
 		storageTotal = st.TotalBytes
+		if storageTotal == 0 && hwStorageTotal > 0 {
+			storageUsed = hwStorageUsed
+			storageTotal = hwStorageTotal
+		}
 		if storageTotal > 0 {
 			storagePercent = math.Round((float64(storageUsed)/float64(storageTotal))*1000) / 10
 		}
@@ -581,11 +597,15 @@ func (s *Server) getTelemetryUpdate(ctx context.Context) TelemetryUpdate {
 			nasStatus = st.NAS.Status
 			nasMessage = st.NAS.Message
 		}
-		if st.Status == "degraded" || nasStatus == "degraded" {
-			overallStatus = "degraded"
-		} else if st.Status == "error" || nasStatus == "error" {
+		if st.Status == "error" || nasStatus == "error" {
 			overallStatus = "error"
+		} else if st.Status == "degraded" || nasStatus == "degraded" || nasStatus == "disconnected" {
+			overallStatus = "degraded"
 		}
+	} else if hwStorageTotal > 0 {
+		storageUsed = hwStorageUsed
+		storageTotal = hwStorageTotal
+		storagePercent = math.Round((float64(storageUsed)/float64(storageTotal))*1000) / 10
 	}
 
 	return TelemetryUpdate{
@@ -635,6 +655,8 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	for {
 		select {
 		case <-r.Context().Done():
+			return
+		case <-s.stopChan:
 			return
 		case <-ticker.C:
 			evt := s.getTelemetryUpdate(r.Context())

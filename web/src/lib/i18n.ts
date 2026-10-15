@@ -57,6 +57,9 @@ export interface DashboardTranslations {
   connectingTelemetry: string;
   liveTelemetry: string;
   reconnecting: string;
+  healthPopoverHealthy: string;
+  healthPopoverAttention: string;
+  systemHealthDetails: string;
 }
 
 export const translations: Record<Language, DashboardTranslations> = {
@@ -117,6 +120,9 @@ export const translations: Record<Language, DashboardTranslations> = {
     connectingTelemetry: "Connecting to telemetry stream...",
     liveTelemetry: "Live telemetry stream active",
     reconnecting: "Reconnecting to telemetry...",
+    healthPopoverHealthy: "All core hardware, database integrity, and container services are running healthy.",
+    healthPopoverAttention: "Some subsystems require attention. Check individual service cards for details.",
+    systemHealthDetails: "System Health Details",
   },
   de: {
     crestTitle: "Sovereign",
@@ -175,6 +181,9 @@ export const translations: Record<Language, DashboardTranslations> = {
     connectingTelemetry: "Verbinde mit Telemetriestrom...",
     liveTelemetry: "Live-Telemetriestrom aktiv",
     reconnecting: "Verbindung wird wiederhergestellt...",
+    healthPopoverHealthy: "Alle Kernhardware-, Datenbankintegritäts- und Containerdienste laufen einwandfrei.",
+    healthPopoverAttention: "Einige Subsysteme erfordern Aufmerksamkeit. Details finden Sie auf den Dienstkarten.",
+    systemHealthDetails: "Systemstatus-Details",
   },
   es: {
     crestTitle: "Sovereign",
@@ -233,6 +242,9 @@ export const translations: Record<Language, DashboardTranslations> = {
     connectingTelemetry: "Conectando al flujo de telemetría...",
     liveTelemetry: "Flujo de telemetría en vivo activo",
     reconnecting: "Reconectando a telemetría...",
+    healthPopoverHealthy: "Todo el hardware principal, la integridad de la base de datos y los contenedores funcionan correctamente.",
+    healthPopoverAttention: "Algunos subsistemas requieren atención. Consulte las tarjetas de servicio individuales.",
+    systemHealthDetails: "Detalles del estado del sistema",
   },
   fr: {
     crestTitle: "Sovereign",
@@ -291,5 +303,8 @@ export const translations: Record<Language, DashboardTranslations> = {
     connectingTelemetry: "Connexion au flux de télémétrie...",
     liveTelemetry: "Flux de télémétrie en direct actif",
     reconnecting: "Reconnexion à la télémétrie...",
+    healthPopoverHealthy: "Tous les composants matériels essentiels, l'intégrité de la base de données et les conteneurs fonctionnent correctement.",
+    healthPopoverAttention: "Certains sous-systèmes nécessitent une attention. Consultez les cartes de service individuelles.",
+    systemHealthDetails: "Détails de l'état du système",
   },
 };

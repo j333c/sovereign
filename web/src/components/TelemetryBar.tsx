@@ -25,7 +25,7 @@ export function TelemetryBar({ telemetry, currentLanguage }: TelemetryBarProps) 
   const t = translations[currentLanguage];
 
   // Default fallback baseline when waiting for initial SSE
-  const cpuPercent = telemetry ? telemetry.cpu_percent : 0;
+  const cpuPercent = typeof telemetry?.cpu_percent === "number" ? telemetry.cpu_percent : 0;
   const memUsedGB = telemetry ? formatBytesToGB(telemetry.memory_used_bytes) : "0.0 GB";
   const memTotalGB = telemetry ? formatBytesToGB(telemetry.memory_total_bytes) : "0.0 GB";
 
@@ -52,8 +52,15 @@ export function TelemetryBar({ telemetry, currentLanguage }: TelemetryBarProps) 
     nasColor = "bg-red-500";
   }
 
-  const opticalStatus = telemetry?.optical_status || t.opticalIdle;
-  const gpuStatus = telemetry?.gpu_status || t.gpuActive;
+  let opticalStatus = t.opticalIdle;
+  if (telemetry?.optical_status && telemetry.optical_status !== "Idle · Ready for disc") {
+    opticalStatus = telemetry.optical_status;
+  }
+
+  let gpuStatus = t.gpuActive;
+  if (telemetry?.gpu_status && telemetry.gpu_status !== "Daytime (AI Priority)") {
+    gpuStatus = telemetry.gpu_status;
+  }
 
   return (
     <footer
@@ -87,6 +94,7 @@ export function TelemetryBar({ telemetry, currentLanguage }: TelemetryBarProps) 
             <span
               className="text-[10px] font-semibold text-amber-700 bg-amber-50 border border-amber-200 rounded px-1"
               data-testid="storage-warning"
+              aria-live="polite"
             >
               &gt;85%
             </span>

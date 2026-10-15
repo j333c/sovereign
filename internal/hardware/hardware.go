@@ -136,12 +136,12 @@ func (c *SystemCollector) readCPUUsage() float64 {
 			continue
 		}
 		total += val
-		if i == 4 { // idle is 4th numeric field (index 4 in fields)
-			idle = val
+		if i == 4 || i == 5 { // idle is index 4, iowait is index 5
+			idle += val
 		}
 	}
 
-	if !c.hasPrevCPU {
+	if !c.hasPrevCPU || total < c.prevCPUTotal || idle < c.prevCPUIdle {
 		c.prevCPUTotal = total
 		c.prevCPUIdle = idle
 		c.hasPrevCPU = true

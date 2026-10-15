@@ -1362,8 +1362,20 @@ func TestServer_SSE_TelemetryStreaming(t *testing.T) {
 	if update.MemoryTotalBytes != 17179869184 {
 		t.Errorf("expected MemoryTotalBytes 17179869184, got %d", update.MemoryTotalBytes)
 	}
-	if update.OverallStatus == "" {
-		t.Errorf("expected non-empty overall status")
+	if update.StorageUsedBytes == 0 {
+		t.Errorf("expected non-zero StorageUsedBytes, got 0")
+	}
+	if update.StorageTotalBytes == 0 {
+		t.Errorf("expected non-zero StorageTotalBytes, got 0")
+	}
+	if update.StoragePercent < 0 || update.StoragePercent > 100 {
+		t.Errorf("expected StoragePercent between 0 and 100, got %f", update.StoragePercent)
+	}
+	if update.NASStatus != "not_configured" {
+		t.Errorf("expected NASStatus not_configured, got %s", update.NASStatus)
+	}
+	if update.OverallStatus != "operational" {
+		t.Errorf("expected OverallStatus operational, got %s", update.OverallStatus)
 	}
 	if update.Timestamp == "" {
 		t.Errorf("expected non-empty timestamp")

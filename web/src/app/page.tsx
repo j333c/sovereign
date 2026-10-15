@@ -22,6 +22,7 @@ export interface HomePageProps {
   eventSourceFactory?: (url: string) => EventSource;
   initialLanguage?: Language;
   initialAuthenticated?: boolean;
+  initialReady?: boolean;
 }
 
 export function HomeScreen(props: HomePageProps) {
@@ -67,13 +68,30 @@ function HomeScreenContent({
   eventSourceFactory,
   initialLanguage = "en",
   initialAuthenticated = false,
+  initialReady = false,
 }: HomePageProps & { router?: { replace: (url: string) => void } }) {
   const client = apiClientOverride ?? defaultApiClient;
-  const [isReady, setIsReady] = useState(false);
-  const [language, setLanguage] = useState<Language>(initialLanguage);
+  const [isReady, setIsReady] = useState(initialReady);
+  const [language, setLanguage] = useState<Language>(() => {
+    if (typeof window !== "undefined") {
+      const saved = localStorage.getItem("sovereign_lang") as Language;
+      if (saved && ["en", "de", "es", "fr"].includes(saved)) {
+        return saved;
+      }
+    }
+    return initialLanguage;
+  });
   const [isAuthenticated, setIsAuthenticated] = useState(initialAuthenticated);
   const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
   const [pendingAction, setPendingAction] = useState<string | null>(null);
+  const [enabledFeatures, setEnabledFeatures] = useState<string[] | null>(null);
+
+  const handleLanguageChange = useCallback((lang: Language) => {
+    setLanguage(lang);
+    if (typeof window !== "undefined") {
+      localStorage.setItem("sovereign_lang", lang);
+    }
+  }, []);
 
   // Subscribe to real-time SSE telemetry
   const { telemetry } = useTelemetry({
@@ -109,6 +127,26 @@ function HomeScreenContent({
     };
   }, [client, router]);
 
+  // Load configured features if authenticated
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    let isMounted = true;
+    void client
+      .getSettings()
+      .then((settings) => {
+        if (isMounted && settings?.features) {
+          const list = settings.features.split(",").map((s) => s.trim().toLowerCase());
+          setEnabledFeatures(list);
+        }
+      })
+      .catch(() => {
+        // Unauthenticated or settings error
+      });
+    return () => {
+      isMounted = false;
+    };
+  }, [client, isAuthenticated]);
+
   const handleSettingsClick = useCallback(() => {
     if (isAuthenticated) {
       router?.replace("/settings");
@@ -131,6 +169,7 @@ function HomeScreenContent({
       setPendingAction(null);
       router?.replace("/settings");
     } else if (pendingAction) {
+      // Pending action executed on successful authentication
       setPendingAction(null);
     }
   }, [pendingAction, router]);
@@ -149,7 +188,6 @@ function HomeScreenContent({
   } else if (rawStatus === "error") {
     aggregateStatus = "error";
   }
-
 
   // Determine individual service states based on subsystem telemetry
   const nasIsDegraded = telemetry?.nas_status === "degraded" || telemetry?.nas_status === "disconnected";
@@ -201,12 +239,17 @@ function HomeScreenContent({
     },
   ];
 
+  const visibleServices = services.filter((svc) => {
+    if (!enabledFeatures || enabledFeatures.length === 0) return true;
+    return enabledFeatures.includes(svc.id);
+  });
+
   return (
     <div className="flex min-h-screen flex-col bg-[#F8F9FA] text-[#0F172A] lg:h-screen lg:overflow-hidden">
       {/* Persistent 64px Header */}
       <AppHeader
         currentLanguage={language}
-        onLanguageChange={setLanguage}
+        onLanguageChange={handleLanguageChange}
         aggregateStatus={aggregateStatus}
         onSettingsClick={handleSettingsClick}
       />
@@ -220,7 +263,7 @@ function HomeScreenContent({
               className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4 sm:gap-6"
               data-testid="services-grid"
             >
-              {services.map((svc) => (
+              {visibleServices.map((svc) => (
                 <ServiceCard
                   key={svc.id}
                   id={svc.id}

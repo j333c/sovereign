@@ -24,6 +24,7 @@ export function AdminLoginModal({
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (isOpen) {
@@ -38,8 +39,30 @@ export function AdminLoginModal({
 
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
-      if (e.key === "Escape" && isOpen) {
+      if (!isOpen) return;
+      if (e.key === "Escape") {
         onClose();
+        return;
+      }
+      if (e.key === "Tab" && dialogRef.current) {
+        const focusable = dialogRef.current.querySelectorAll<HTMLElement>(
+          'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+        );
+        if (focusable.length === 0) return;
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+
+        if (e.shiftKey) {
+          if (document.activeElement === first) {
+            e.preventDefault();
+            last.focus();
+          }
+        } else {
+          if (document.activeElement === last) {
+            e.preventDefault();
+            first.focus();
+          }
+        }
       }
     }
     window.addEventListener("keydown", handleKeyDown);
@@ -50,8 +73,8 @@ export function AdminLoginModal({
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!password) {
-      setError(t.invalidPassword);
+    if (isSubmitting || !password) {
+      if (!password) setError(t.invalidPassword);
       return;
     }
 
@@ -82,7 +105,10 @@ export function AdminLoginModal({
       aria-modal="true"
       aria-labelledby="admin-login-title"
     >
-      <div className="w-full max-w-md rounded-xl border border-[#E5E7EB] bg-white p-6 shadow-xl animate-in fade-in zoom-in-95 duration-150">
+      <div
+        ref={dialogRef}
+        className="w-full max-w-md rounded-xl border border-[#E5E7EB] bg-white p-6 shadow-xl animate-in fade-in zoom-in-95 duration-150"
+      >
         <div className="flex items-center justify-between pb-4 border-b border-[#E5E7EB]">
           <div className="flex items-center gap-2.5">
             <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-[#0F172A] text-white text-sm">
