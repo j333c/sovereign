@@ -188,7 +188,7 @@ The system can detect inserted optical media (Blu-ray, DVD, Audio CD), rip media
 The system can execute scheduled background video transcoding to generate standard in-house streaming versions and offline mobile profiles. Realizes UJ-3.
 - **Consequences (testable)**:
   - Scheduled queue runs during off-peak hours (default: 01:00 to 07:00).
-  - Encodes raw disc rips into standardized H.264/H.265 MP4 files with universal browser/device compatibility.
+  - Encodes raw disc rips into standardized H.264/H.265 MP4 files with universal direct-play audio/video compatibility, ensuring modern Smart TVs direct-stream content without requiring on-the-fly live transcoding during streaming playback.
   - Automatically generates an optimized, space-efficient 720p/1080p mobile profile for offline synchronization to tablets and smartphones.
 
 ---
@@ -199,7 +199,7 @@ The system can execute scheduled background video transcoding to generate standa
 #### FR-9: In-House Video Streaming
 The system can serve high-definition video streams across local and remote home devices using pre-configured Jellyfin container instances. Realizes UJ-1, UJ-3.
 - **Consequences (testable)**:
-  - Supports direct streaming and real-time hardware-accelerated transcoding (Intel QuickSync, Nvidia NVENC, VAAPI).
+  - Supports direct streaming (primary path for standardized library media, bypassing runtime GPU transcode overhead) and real-time hardware-accelerated transcoding fallback (Intel QuickSync, Nvidia NVENC, VAAPI) for legacy formats or bandwidth-constrained remote connections.
   - Exposes standard DLNA and Jellyfin API endpoints, enabling immediate discovery by Smart TV apps, Apple TV, Android TV, Roku, and mobile clients.
   - Pre-configures library paths to Sovereign storage locations without requiring manual path entry.
 - **Out of Scope**: Building custom Sovereign video player apps; users rely entirely on existing open-source and ecosystem clients.
@@ -252,15 +252,15 @@ The user can interact with local AI models through a pre-integrated Open WebUI i
 #### FR-15: Managed LLM Inference Backend & Turnkey Default Setup
 The system can manage a dedicated high-performance LLM inference engine backend (candidate: `llama.cpp` / `llama-server`) with turnkey default configuration, automated hardware acceleration detection, and appliance-grade administrative controls. Realizes UJ-4.
 - **Consequences (testable)**:
-  - **Turnkey Default Setup**: On initial provisioning of the Local AI subsystem, Sovereign automatically deploys a pre-configured `llama.cpp` backend service with a verified, balanced default quantized GGUF model (e.g., standard Q4_K_M model such as Qwen 2.5 7B Instruct or Llama 3.2), autodetects hardware acceleration capabilities (Nvidia CUDA, Vulkan, Intel SYCL, or CPU fallback), and establishes internal connectivity with zero manual configuration.
+  - **Turnkey Default Setup**: On initial provisioning of the Local AI subsystem, Sovereign automatically deploys a pre-configured `llama.cpp` backend service with a verified, balanced default quantized GGUF model (e.g., standard Q4_K_M model such as Qwen 2.5 7B Instruct or Llama 3.2), autodetects hardware acceleration capabilities (Nvidia CUDA, Vulkan, Intel SYCL, or CPU fallback), enables FlashAttention (`-fa`) by default to reduce KV cache memory overhead by up to 50%, and establishes internal connectivity with zero manual configuration.
   - **Model Storage & Administration**: Dedicated local volume (`/data/models`) stores GGUF models. The Admin Interface provides an appliance administration surface to:
-    - View the currently loaded active model and its memory footprint (RAM/VRAM).
+    - View the currently loaded active model, FlashAttention status, and memory footprint (RAM/VRAM).
     - Select and switch active models from local storage with one click.
-    - Trigger background downloads of recommended default or alternative curated GGUF models with progress reporting.
+    - Trigger background downloads of recommended default or alternative curated GGUF models with progress reporting. Model acquisition delegates to backend-native mechanisms where available; otherwise the system enforces atomic staging (`.downloading` staging file, SHA-256 validation, and atomic rename to `.gguf`) with resumable HTTP range downloads and UI retry controls.
   - **Backend Resource & Execution Tuning**: Admin interface allows users to adjust:
     - GPU Layer Offloading (`-ngl` / `--n-gpu-layers`): Auto-calculated default with manual override slider (0 to 100% offload).
-    - Context Window Size (`-c`): Configurable presets (2048, 4096, 8192 tokens) balanced against memory constraints.
-    - CPU Thread Allocation (`-t`): Auto-pinned to optimal physical core count.
+    - Context Window Size (`-c`): Configurable presets (2048, 4096, 8192 tokens) balanced against memory constraints and protected by FlashAttention.
+    - CPU Thread Allocation (`-t`): Auto-pinned to optimal physical core count; on zero-GPU / CPU-only hosts, threads are automatically capped to `max(1, physical_cores - 2)` to guarantee uninterrupted OS, DNS, and storage operations, accompanied by a dedicated "CPU-Optimized Mode" UI indicator and 3B model recommendation.
   - **Operational Lifecycle & Health**:
     - Reports granular backend status: Operational/Ready, Warm-up/Loading weights into memory, Inferencing, Idle/Unloaded, Error.
     - Exposes "Reload Backend" and "View Inference Logs" directly in the appliance settings without terminal access.
@@ -282,12 +282,14 @@ The system can expose an internal OpenAI-compatible API endpoint directly from t
 #### FR-18: Active GPU & VRAM Arbitration & Day/Night Scheduling
 The system can dynamically manage GPU memory and compute resources across the managed LLM backend (llama.cpp) and media transcoders to prevent inference from starving or crashing video playback sessions, reserving daytime GPU availability for interactive user requests. Realizes UJ-3, UJ-4. [ASSUMPTION: Intel QuickSync (via 8th gen+ Core CPUs) or Nvidia GPUs with NVENC support are the primary hardware acceleration targets for video transcoding.]
 - **Consequences (testable)**:
+  - **Direct Play Pre-encoding as Primary Isolation**: Ripped media and dropzone video files are pre-transcoded during off-peak queue processing into universal Direct Play formats (H.264/H.265 + AAC), ensuring Smart TVs direct-stream without triggering runtime GPU transcoding, thereby avoiding streaming/AI resource contention during normal playback.
   - **Daytime Priority for AI**: During daytime hours (default: 07:00 to 01:00), the system actively reserves GPU compute and VRAM for interactive user AI queries. Heavy background video transcoding, disc rips, and non-urgent batch tasks are withheld or throttled.
   - **Nighttime Batch Window**: Heavy batch video transcoding and background OCR processing run during scheduled off-peak nighttime/early morning hours (default: 01:00 to 07:00).
   - **Visible Admin UI Setting**: The Admin Interface provides a clear, user-facing schedule setting where users can inspect and customize daytime vs. nighttime GPU allocation and task priorities.
   - **Resource Arbitration with llama.cpp**:
     - If a single GPU is shared between local LLMs and real-time streaming:
       - LLM backend enforces dynamic idle model unloading / process surrender (timeout configurable to 5 minutes or less) to release VRAM back to the system.
+      - In daytime mode, when waking the model from idle surrender, the backend and reverse proxy return `status: "warming_up"` with extended timeout guards (>= 60s) and emit an in-UI notification (*"Waking local AI model into memory..."*), preventing gateway timeouts and user confusion.
       - System reserves minimum VRAM overhead ensuring video encoder buffers remain available during concurrent usage, adjusting `-ngl` offload layer budget accordingly.
     - In systems equipped with hybrid GPUs (e.g., Intel iGPU with QuickSync + discrete Nvidia GPU), video transcoding is automatically pinned to the iGPU while LLM inference is pinned to the dGPU.
 

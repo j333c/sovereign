@@ -55,13 +55,14 @@ This addendum preserves technical depth, architectural ideas, candidate software
 ### Key Technical Pitfall: The GPU / VRAM Collision
 - **Problem**: In consumer setups with a single shared GPU (or unified iGPU), local LLM inference engines greedily allocate available VRAM. When Jellyfin initiates an on-the-fly hardware transcode session, the system throws `CUDA out of memory` errors or stalls playback.
 - **Sovereign Day/Night Strategy & llama.cpp Arbitration Mechanics**:
-  1. **Deterministic Layer Offloading (`-ngl`)**: Unlike opaque runtimes, `llama.cpp` allows precise control over how many transformer layers are offloaded to VRAM (`--n-gpu-layers`). Sovereign calculates and caps VRAM allocation, guaranteeing a dedicated buffer (e.g. 1.5–2 GB) is always preserved for video transcode sessions.
-  2. **Daytime AI Reservation**: Keep GPU power and VRAM unconstrained during daytime hours for interactive local AI requests (chat, RAG queries). Avoid running non-urgent video transcoding or batch processing during the day.
-  3. **Nighttime / Early Morning Batch Window**: Schedule heavy background tasks (disc rip encoding, multi-profile mobile exports, batch OCR) to execute during off-peak night/early morning hours.
-  4. **Dynamic Idle Surrender & Timeout**: Enforce an idle timeout (default: 5 minutes) where `llama-server` releases VRAM or unloads model weights when inactive, surrendering 100% of GPU compute and memory to active media transcoding.
-  5. **Admin UI Visibility**: Provide visible settings in the admin frontend that clearly explain GPU utilization policy and allow the user to adjust daytime vs. nighttime priorities, active model, and offload layers.
-  6. **Multi-Adapter / Hybrid Routing**: Route media transcoding to Intel QuickSync / iGPU and LLM inference to discrete Nvidia GPU (or high-efficiency CPU fallback with AVX2/AVX-512).
-  7. **Queue Prioritization**: Automatically pause background transcoding jobs during interactive LLM queries, or temporarily scale down LLM context when real-time streaming transcode sessions initiate.
+  1. **Pre-emptive Direct Play Standardization**: Ingestion queues and optical ripping pre-transcode media during off-peak hours into modern universally supported formats (H.264/H.265 + AAC in MP4/MKV). Modern Smart TVs direct play these streams natively, eliminating real-time on-the-fly transcoding and avoiding runtime GPU collisions altogether during streaming.
+  2. **Deterministic Layer Offloading (`-ngl`)**: Unlike opaque runtimes, `llama.cpp` allows precise control over how many transformer layers are offloaded to VRAM (`--n-gpu-layers`). Sovereign calculates and caps VRAM allocation, guaranteeing a dedicated buffer (e.g. 1.5–2 GB) is always preserved for video transcode fallback sessions.
+  3. **FlashAttention by Default (`-fa`)**: The backend container enables FlashAttention out of the box, slashing KV cache memory consumption by up to 50% and protecting against VRAM exhaustion during heavy RAG and large context queries.
+  4. **Daytime AI Reservation & Day-Mode Warm-Up Telemetry**: Keep GPU power and VRAM unconstrained during daytime hours for interactive local AI requests (chat, RAG queries). When waking from dynamic idle surrender during daytime, the backend and reverse proxy return `status: "warming_up"` with extended timeout buffers (>= 60s) and in-UI user feedback (*"Waking local AI model into memory..."*).
+  5. **Nighttime / Early Morning Batch Window**: Schedule heavy background tasks (disc rip encoding, multi-profile mobile exports, batch OCR) to execute during off-peak night/early morning hours.
+  6. **Dynamic Idle Surrender & Timeout**: Enforce an idle timeout (default: 5 minutes) where `llama-server` releases VRAM or unloads model weights when inactive, surrendering 100% of GPU compute and memory to active media tasks.
+  7. **CPU-Only Host Protection**: On zero-GPU hosts, automatically cap thread allocations to `max(1, physical_cores - 2)` to preserve host responsiveness and display a "CPU-Optimized Mode" indicator with 3B model recommendations.
+  8. **Multi-Adapter / Hybrid Routing**: Route media transcoding to Intel QuickSync / iGPU and LLM inference to discrete Nvidia GPU (or high-efficiency CPU fallback with AVX2/AVX-512).
 
 ### Dirty-Shutdown / Power-Outage Resilience
 - Default ext4 setups risk corrupting container databases (SQLite in Jellyfin/Paperless, PostgreSQL).
@@ -89,11 +90,11 @@ This addendum preserves technical depth, architectural ideas, candidate software
   - Automatically routes uploaded videos, audio tracks, and audiobooks into their designated target directories and triggers library refresh/metadata indexing.
 - **Managed LLM Backend Administration & Shared API Endpoint**:
   - **Candidate Runtime**: `llama.cpp` (`llama-server`) running as an independent, lightweight C++ container on internal bridge network (`http://sovereign-ai-backend:8080/v1`).
-  - **Turnkey Default Setup**: First boot provisions a recommended default quantized GGUF model (e.g., Qwen 2.5 7B Instruct or Llama 3.2 Q4_K_M), autodetects available GPU acceleration (CUDA, Vulkan, SYCL, or CPU), and wires the internal OpenAI-compatible endpoint to Open WebUI and Paperless-ngx.
+  - **Turnkey Default Setup**: First boot provisions a recommended default quantized GGUF model (e.g., Qwen 2.5 7B Instruct or Llama 3.2 Q4_K_M), autodetects available GPU acceleration (CUDA, Vulkan, SYCL, or CPU), enables FlashAttention (`-fa`) by default, and wires the internal OpenAI-compatible endpoint to Open WebUI and Paperless-ngx.
   - **Admin Surface in Sovereign**: Dedicated management controls in the Admin Interface allow the user to:
-    - View active model, memory footprint (RAM/VRAM), and inference speed (tokens/sec).
-    - Select from downloaded GGUF models in `/data/models`.
-    - Adjust GPU offload layer slider (`-ngl`), context window presets (`-c`: 2048, 4096, 8192), and idle surrender timeout.
+    - View active model, FlashAttention status, memory footprint (RAM/VRAM), and inference speed (tokens/sec).
+    - Select from downloaded GGUF models in `/data/models`, with download lifecycle safeguarded by atomic staging (`.downloading` + SHA-256 verification) and resumable HTTP transfers.
+    - Adjust GPU offload layer slider (`-ngl`), context window presets (`-c`: 2048, 4096, 8192), CPU thread allocation (auto-capped to `physical_cores - 2` on CPU-only hosts with "CPU-Optimized Mode" indicator), and idle surrender timeout.
     - Reload backend model or restart container with a single click.
     - Inspect backend inference and error logs without CLI access.
   - **Zero-Touch Feature Integration**: Any installed feature supporting AI integration automatically inherits the internal API URL and mock token during container provisioning.

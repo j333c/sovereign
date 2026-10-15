@@ -301,16 +301,21 @@
       <section class="settings-card" aria-labelledby="card-ai-backend">
         <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 4px;">
           <h2 id="card-ai-backend" class="card-heading" style="margin-bottom: 0;">AI Inference Engine (llama.cpp)</h2>
-          <span style="display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 9999px; font-size: 12px; font-weight: 600; background: #ECFDF5; color: #065F46; border: 1px solid #A7F3D0;">
-            <span style="font-size: 8px;">●</span> Default Setup Active
-          </span>
+          <div style="display: flex; gap: 8px; align-items: center;">
+            <span style="display: inline-flex; align-items: center; gap: 4px; padding: 3px 8px; border-radius: 9999px; font-size: 11px; font-weight: 600; background: #F0FDF4; color: #166534; border: 1px solid #BBF7D0;">
+              ⚡ FlashAttention Active
+            </span>
+            <span style="display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 9999px; font-size: 12px; font-weight: 600; background: #ECFDF5; color: #065F46; border: 1px solid #A7F3D0;">
+              <span style="font-size: 8px;">●</span> Default Setup Active
+            </span>
+          </div>
         </div>
         <div class="card-subheading">Administer the local inference engine powering Open WebUI and Paperless-ngx document intelligence.</div>
 
         <div class="setting-row">
           <div>
             <label for="select-model" class="setting-label">Active Model</label>
-            <div class="setting-description">Current GGUF model loaded in memory for local queries.</div>
+            <div class="setting-description">Current GGUF model loaded in memory for local queries. Checksum verified (SHA-256).</div>
           </div>
           <select id="select-model" style="padding: 6px 12px; border-radius: 6px; border: 1px solid #CBD5E1; font-size: 13px; font-weight: 500; color: #0F172A; background: #FFFFFF;">
             <option selected>Qwen 2.5 7B Instruct (Q4_K_M) — Default</option>
@@ -322,7 +327,7 @@
         <div class="setting-row">
           <div>
             <div class="setting-label">Context Window Size</div>
-            <div class="setting-description">Maximum conversation and document memory length.</div>
+            <div class="setting-description">Maximum conversation and document memory length (protected by FlashAttention KV-compression).</div>
           </div>
           <div style="display: flex; gap: 6px;">
             <button type="button" style="padding: 4px 10px; border-radius: 6px; border: 1px solid #CBD5E1; font-size: 12px; font-weight: 500; background: #FFFFFF; cursor: pointer;">2048</button>
@@ -334,7 +339,7 @@
         <div class="setting-row">
           <div>
             <div class="setting-label">GPU Layer Offload (-ngl)</div>
-            <div class="setting-description">Transformer layers offloaded to GPU VRAM (auto-tuned for hardware transcode headroom).</div>
+            <div class="setting-description">Transformer layers offloaded to GPU VRAM (CPU threads: auto-capped to 6 of 8 cores for host headroom).</div>
           </div>
           <div style="display: flex; align-items: center; gap: 10px;">
             <span style="font-size: 12px; font-weight: 600; color: #0F172A;">33 / 33 layers (100% GPU)</span>
@@ -344,7 +349,7 @@
         <div class="setting-row">
           <div>
             <div id="lbl-idle-release" class="setting-label">Dynamic Idle Memory Release</div>
-            <div class="setting-description">Surrender GPU VRAM after 5 minutes of inactivity so video transcoding has full headroom.</div>
+            <div class="setting-description">Surrender GPU VRAM after 5 minutes of inactivity; video library uses direct-play profiles to minimize transcode contention.</div>
           </div>
           <label class="switch"><input type="checkbox" checked aria-labelledby="lbl-idle-release"><span class="slider"></span></label>
         </div>

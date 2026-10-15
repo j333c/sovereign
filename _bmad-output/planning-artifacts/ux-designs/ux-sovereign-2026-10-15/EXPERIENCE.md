@@ -124,10 +124,12 @@ Sovereign speaks with **reassuring consumer clarity**. It protects family data a
 ### AIBackendSettings
 - **Visual reference**: `DESIGN.md.components.AIBackendCard`.
 - **Behavior**:
-  - Displays turnkey default setup badge: *"Default Setup: Qwen 2.5 7B (Q4_K_M) · Autodetected GPU Offload Active"*.
+  - Displays turnkey setup badge: *"Default Setup: Qwen 2.5 7B (Q4_K_M) · Autodetected GPU Offload Active"* (on zero-GPU hosts: *"CPU-Optimized Mode: Balanced Core Allocation Active"*).
+  - **FlashAttention Status**: Pill badge displaying *"FlashAttention Active · KV Cache Optimized"*.
   - **Active Model Selector**: Dropdown showing available `.gguf` files in storage; switching model triggers graceful reload with progress spinner.
+  - **Model Download Lifecycle**: Integrated download progress indicator showing transfer rate, ETA, and automatic SHA-256 verification badge, with inline "Resume Download" action on network interruption.
   - **Context Window Sizing**: Segmented button pills for `2048`, `4096` (default), and `8192` tokens; displays estimated memory usage badge.
-  - **GPU Acceleration Slider**: Range slider controlling transformer layer offload (`-ngl`) from `0% (CPU Only)` to `100% (Full GPU Offload)`.
+  - **GPU Acceleration Slider**: Range slider controlling transformer layer offload (`-ngl`) from `0% (CPU Only)` to `100% (Full GPU Offload)`; automatically locked to CPU-only on headless systems without dedicated hardware.
   - **Dynamic Idle Surrender Toggle**: Accessible switch with caption: *"Release GPU memory after 5 minutes of inactivity (reserves VRAM for video streaming)"*.
   - **Operational Actions**: Buttons for *"Reload Backend Engine"* and *"View Inference Logs"*, executing inline without page navigation.
 
@@ -153,7 +155,7 @@ Sovereign speaks with **reassuring consumer clarity**. It protects family data a
 ### 1. Universal Appliance States
 1. **Healthy / Running (Green ●)**: All service cards display primary metrics.
 2. **Attention Required / Degraded (Amber ◆)**: Service active with temporary degradation; explanatory banner visible directly inside card (e.g. NAS unreachable, email sync paused).
-3. **Transient AI Warm-up (Amber ◆)**: Badge reading: *"Starting AI model..."* (maximum 5 seconds when reloading model into GPU VRAM from idle state).
+3. **Transient AI Warm-up (Amber ◆)**: In daytime mode when model wakes from dynamic idle surrender, badge reads: *"Waking local AI model into memory..."* (reverse proxy protected with >= 60s timeout guard to prevent gateway timeouts).
 4. **Error / Stopped (Red ▲)**: Card provides immediate "Restart Service" and "Roll Back" options.
 5. **Background Updating**: Status badge displays subtle rotating indicator: *"Updating to latest release..."*.
 6. **Outage Recovery**: Boot diagnostics screen renders within 15 seconds of power restoration with reassuring status message.

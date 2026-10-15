@@ -270,8 +270,14 @@ Sovereign avoids deep or fuzzy shadows. Visual hierarchy is established through 
 - Background: `{components.AIBackendCard.background}`
 - Border: 1px solid `{colors.border}`, Radius: `{rounded.lg}`
 - Anatomy:
-  1. Header: Section heading ("AI Backend & Inference Engine") + turnkey default badge (`{colors.status-green-bg}`, `{colors.status-green-fg}`, green ● dot).
-  2. Setting Rows: Model selector dropdown, segmented context window button pills, GPU offload slider with percentage readout, idle surrender switch.
+  1. Header: Section heading ("AI Backend & Inference Engine") + status badges:
+     - Turnkey default badge (`{colors.status-green-bg}`, `{colors.status-green-fg}`, green ● dot) or CPU-Optimized Mode badge (`{colors.canvas}`, `{colors.text-primary}`, border `{colors.border}`).
+     - FlashAttention indicator badge (`{colors.status-green-bg}`, `{colors.status-green-fg}`, "⚡ FlashAttention Active").
+  2. Setting Rows:
+     - Model selector dropdown with atomic download progress bar (ETA, transfer rate, SHA-256 verification status).
+     - Context window segmented button pills (`2048`, `4096`, `8192`) with memory budget readout.
+     - GPU layer offload slider with percentage readout (or capped CPU-thread allocation display `physical_cores - 2`).
+     - Dynamic idle memory surrender switch.
   3. Action Footer: Secondary action buttons ("Reload Engine", "View Logs") with standard AA contrast and keyboard focus rings.
 
 ### RollbackModal
