@@ -2,7 +2,7 @@
 title: 'Story 1.1: Greenfield Monorepo Scaffold & Core Supervisor Daemon Boundary'
 type: 'feature'
 created: '2026-10-15'
-status: 'in-review'
+status: 'done'
 baseline_commit: 'ebaca11d28fa65fdb90b31390cef38c02cf2fec9'
 route: 'dispatch'
 review_loop_iteration: 0
