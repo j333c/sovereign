@@ -45,16 +45,16 @@ func (c *CaddyClient) AdminURL() string {
 }
 
 // BuildCaddyConfig constructs a Caddy JSON configuration payload
-// supporting /api/* proxying to sovereign-daemon:8080, subpath routing
+// supporting /api and /api/* proxying to sovereign-daemon:8080, subpath routing
 // with prefix trimming for registered spokes, and fallback to sovereign-web:3000.
 func (c *CaddyClient) BuildCaddyConfig(routes []RouteConfig) map[string]any {
 	var caddyRoutes []map[string]any
 
-	// 1. API route: reverse proxy /api/* to sovereign-daemon:8080 preserving path
+	// 1. API route: reverse proxy /api and /api/* to sovereign-daemon:8080 preserving path
 	caddyRoutes = append(caddyRoutes, map[string]any{
 		"@id": "route-api",
 		"match": []map[string]any{
-			{"path": []string{"/api/*"}},
+			{"path": []string{"/api", "/api/*"}},
 		},
 		"handle": []map[string]any{
 			{
@@ -66,6 +66,10 @@ func (c *CaddyClient) BuildCaddyConfig(routes []RouteConfig) map[string]any {
 					"request": map[string]any{
 						"set": map[string][]string{
 							"Host":               {"{http.request.host}"},
+							"X-Real-IP":          {"{http.request.remote.host}"},
+							"X-Forwarded-For":    {"{http.request.remote.host}"},
+							"X-Forwarded-Proto":  {"{http.request.scheme}"},
+							"X-Forwarded-Host":   {"{http.request.host}"},
 							"X-Forwarded-Prefix": {"/api"},
 						},
 					},
@@ -74,17 +78,28 @@ func (c *CaddyClient) BuildCaddyConfig(routes []RouteConfig) map[string]any {
 		},
 	})
 
-	// 2. Dynamic spoke routes: subpath prefix trimming via handle_path rewrite pattern
+	// 2. Dynamic spoke routes: guard against empty subpaths or duplicates, subpath prefix trimming
+	seenSubpaths := make(map[string]bool)
 	for _, r := range routes {
-		if r.Subpath == "" || r.Service == "" || r.Port == 0 {
+		if r.Service == "" || r.Port == 0 {
 			continue
 		}
 
-		cleanSubpath := "/" + strings.Trim(r.Subpath, "/")
+		trimmed := strings.Trim(r.Subpath, "/")
+		if trimmed == "" {
+			continue
+		}
+
+		cleanSubpath := "/" + trimmed
+		if seenSubpaths[cleanSubpath] {
+			continue
+		}
+		seenSubpaths[cleanSubpath] = true
+
 		upstreamDial := fmt.Sprintf("%s:%d", r.Service, r.Port)
 
 		caddyRoutes = append(caddyRoutes, map[string]any{
-			"@id": fmt.Sprintf("route-spoke-%s", strings.Trim(cleanSubpath, "/")),
+			"@id": fmt.Sprintf("route-spoke-%s", trimmed),
 			"match": []map[string]any{
 				{"path": []string{cleanSubpath, cleanSubpath + "/*"}},
 			},
@@ -102,6 +117,10 @@ func (c *CaddyClient) BuildCaddyConfig(routes []RouteConfig) map[string]any {
 						"request": map[string]any{
 							"set": map[string][]string{
 								"Host":               {"{http.request.host}"},
+								"X-Real-IP":          {"{http.request.remote.host}"},
+								"X-Forwarded-For":    {"{http.request.remote.host}"},
+								"X-Forwarded-Proto":  {"{http.request.scheme}"},
+								"X-Forwarded-Host":   {"{http.request.host}"},
 								"X-Forwarded-Prefix": {cleanSubpath},
 							},
 						},
@@ -123,7 +142,11 @@ func (c *CaddyClient) BuildCaddyConfig(routes []RouteConfig) map[string]any {
 				"headers": map[string]any{
 					"request": map[string]any{
 						"set": map[string][]string{
-							"Host": {"{http.request.host}"},
+							"Host":              {"{http.request.host}"},
+							"X-Real-IP":         {"{http.request.remote.host}"},
+							"X-Forwarded-For":   {"{http.request.remote.host}"},
+							"X-Forwarded-Proto": {"{http.request.scheme}"},
+							"X-Forwarded-Host":  {"{http.request.host}"},
 						},
 					},
 				},
@@ -140,6 +163,9 @@ func (c *CaddyClient) BuildCaddyConfig(routes []RouteConfig) map[string]any {
 				"servers": map[string]any{
 					"srv0": map[string]any{
 						"listen": []string{":80", ":443"},
+						"auto_https": map[string]any{
+							"disable_redirects": true,
+						},
 						"routes": caddyRoutes,
 					},
 				},

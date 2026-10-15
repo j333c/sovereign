@@ -9,8 +9,9 @@
 
 # Common proxy routing configuration
 (common_ingress) {
-	# Route API endpoints directly to daemon supervisor preserving path
-	handle /api/* {
+	# Route API endpoints directly to daemon supervisor preserving path (/api and /api/*)
+	@api path /api /api/*
+	handle @api {
 		reverse_proxy sovereign-daemon:8080 {
 			header_up Host {host}
 			header_up X-Real-IP {remote_host}
@@ -21,7 +22,19 @@
 		}
 	}
 
-	# Route UI routes (/ and /drop) and all web client assets to web frontend
+	# Route /drop explicit entrypoint to web frontend
+	@drop path /drop /drop/*
+	handle @drop {
+		reverse_proxy sovereign-web:3000 {
+			header_up Host {host}
+			header_up X-Real-IP {remote_host}
+			header_up X-Forwarded-For {remote_host}
+			header_up X-Forwarded-Proto {scheme}
+			header_up X-Forwarded-Host {host}
+		}
+	}
+
+	# Route UI root (/) and all remaining web client assets to web frontend
 	handle {
 		reverse_proxy sovereign-web:3000 {
 			header_up Host {host}

@@ -2,7 +2,7 @@
 title: 'Story 1.2: Dedicated Caddy Ingress Gateway & Local mDNS Discovery'
 type: 'feature'
 created: '2026-10-15'
-status: 'completed'
+status: 'in-review'
 baseline_commit: 'b6c45a75e73f000a6cfd4cce945233e531573870'
 route: 'dispatch'
 review_loop_iteration: 0
@@ -93,6 +93,33 @@ Implemented dedicated Caddy ingress gateway and mDNS responder:
 ## Spec Change Log
 
 ## Review Triage Log
+
+| ID | Layer | Finding | Verdict | Evidence / Disposition |
+|---|---|---|---|---|
+| B1 | blind-hunter | `zeroconf` is DNS-SD and does not handle direct A/AAAA queries | medium | zeroconf announces _http._tcp.local; direct hostname lookup is handled by Avahi/Bonjour or mDNS proxy. Route: defer/patch. |
+| B2 | blind-hunter | `SyncRoutes` replaces Caddy config dropping TLS & auto_https | medium | POST /load drops disable_redirects and proxy headers. Route: patch. |
+| B3 | blind-hunter | Daemon bridge mode restricts mDNS multicast | low | Local development and container network boundary; verified. Route: reject (container environment design). |
+| B4 | blind-hunter | Virtual bridge interfaces (docker0, etc) advertised by mDNS | medium | Bridge interfaces without filtering advertise unreachable IPs. Route: patch. |
+| B5 | blind-hunter | NEXT_PUBLIC_API_URL points to internal docker daemon hostname | medium | Browser clients cannot resolve sovereign-daemon; should route relatively through Caddy. Route: patch. |
+| B6 | blind-hunter | handleIngressStatus hardcodes static route list | low | Route list reflects static base routes; dynamic routes are added in Story 2.1. Route: patch. |
+| B7 | blind-hunter | Missing route handling for /api without trailing slash | low | /api without slash falls through to web frontend. Route: patch. |
+| B8 | blind-hunter | Caddy sync loop terminates after first attempt | low | Sync on boot is sufficient for scaffold; ongoing watcher in Story 2.1. Route: reject. |
+| B9 | blind-hunter | Discrepancy regarding /drop route in Caddyfile | low | /drop handled by root fallback, but explicit route ensures clarity. Route: patch. |
+| B10 | blind-hunter | Caddy Admin API binds to 0.0.0.0:2019 | low | sovereign-control is isolated bridge network. Route: reject. |
+| B11 | blind-hunter | RouteConfig.TLSEnabled field unused in Caddy config | low | Upstream services in Epic 2 run over internal HTTP. Route: reject. |
+| B12 | blind-hunter | zeroconf indirect in go.mod | low | Run go mod tidy. Route: patch. |
+| B13 | blind-hunter | Absence of IPv6 address discovery | low | IPv4 primary scope for Story 1.2. Route: reject. |
+| V1 | verification-gap | Broken verification in TestServer_StartBackgroundServices | medium | Test does not assert background service startup or Caddy sync call. Route: patch. |
+| V2 | verification-gap | Regression gap in TestServer_IngressStatus_Success | medium | Test does not assert res.Status == "ok" and res.MDNSActive == true. Route: patch. |
+| V3 | verification-gap | BuildCaddyConfig drops auto_https disable_redirects on /load | medium | Duplicate of B2. Route: patch. |
+| V4 | verification-gap | NEXT_PUBLIC_API_URL in docker-compose breaks browser requests | medium | Duplicate of B5. Route: patch. |
+| E1 | edge-case-hunter | Request to /api without slash bypasses daemon | low | Duplicate of B7. Route: patch. |
+| E2 | edge-case-hunter | Subpath "/" or only slashes generates malformed route | low | Guard empty / invalid subpath strings in BuildCaddyConfig. Route: patch. |
+| E3 | edge-case-hunter | Multiple routes with identical subpath collide on @id | low | Duplicate subpath guard in BuildCaddyConfig. Route: patch. |
+| E4 | edge-case-hunter | Non-loopback Docker bridge interfaces advertised | medium | Duplicate of B4. Route: patch. |
+| E5 | edge-case-hunter | mDNS Start encounters transient port error | low | mDNS already has graceful degradation. Route: reject. |
+| E6 | edge-case-hunter | BuildCaddyConfig omits X-Forwarded-Host | medium | Forwarded headers need X-Forwarded-Host and X-Forwarded-Proto. Route: patch. |
+| E7 | edge-case-hunter | Direct IP access redirect loops on missing auto_https | medium | Duplicate of B2. Route: patch. |
 
 ## Design Notes
 

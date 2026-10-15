@@ -25,6 +25,17 @@ func TestCaddyClient_BuildConfigurationPayload(t *testing.T) {
 			Subpath:    "docs/",
 			TLSEnabled: false,
 		},
+		// Empty and duplicate subpaths should be guarded and ignored
+		{
+			Service: "ignored-empty",
+			Port:    7000,
+			Subpath: "/",
+		},
+		{
+			Service: "ignored-duplicate",
+			Port:    7001,
+			Subpath: "/media",
+		},
 	}
 
 	cfg := client.BuildCaddyConfig(routes)
@@ -49,12 +60,17 @@ func TestCaddyClient_BuildConfigurationPayload(t *testing.T) {
 		t.Fatalf("expected srv0 server block in caddy config")
 	}
 
+	autoHTTPS, ok := srv0["auto_https"].(map[string]any)
+	if !ok || autoHTTPS["disable_redirects"] != true {
+		t.Fatalf("expected auto_https.disable_redirects = true, got %v", srv0["auto_https"])
+	}
+
 	caddyRoutes, ok := srv0["routes"].([]map[string]any)
 	if !ok {
 		t.Fatalf("expected routes list in srv0 block")
 	}
 
-	// Route 0: /api/* -> sovereign-daemon:8080
+	// Route 0: /api and /api/* -> sovereign-daemon:8080
 	// Route 1: /media -> jellyfin:8096
 	// Route 2: /docs -> paperless:8000
 	// Route 3: fallback -> sovereign-web:3000
@@ -65,6 +81,14 @@ func TestCaddyClient_BuildConfigurationPayload(t *testing.T) {
 	// Verify route 0: API
 	if caddyRoutes[0]["@id"] != "route-api" {
 		t.Errorf("expected route 0 to have id route-api, got %v", caddyRoutes[0]["@id"])
+	}
+	matchList, ok := caddyRoutes[0]["match"].([]map[string]any)
+	if !ok || len(matchList) == 0 {
+		t.Fatalf("expected match block in route-api")
+	}
+	paths, ok := matchList[0]["path"].([]string)
+	if !ok || len(paths) != 2 || paths[0] != "/api" || paths[1] != "/api/*" {
+		t.Errorf("expected route-api path match [/api /api/*], got %v", matchList[0]["path"])
 	}
 
 	// Verify route 1: Jellyfin prefix rewrite and upstream
@@ -81,6 +105,18 @@ func TestCaddyClient_BuildConfigurationPayload(t *testing.T) {
 	}
 	if handles[1]["handler"] != "reverse_proxy" {
 		t.Errorf("expected reverse_proxy handler, got %v", handles[1])
+	}
+	headers, ok := handles[1]["headers"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected headers map in reverse_proxy")
+	}
+	requestHeaders, ok := headers["request"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected request headers map in reverse_proxy")
+	}
+	setHeaders, ok := requestHeaders["set"].(map[string][]string)
+	if !ok || len(setHeaders["X-Forwarded-Host"]) == 0 || len(setHeaders["X-Forwarded-Proto"]) == 0 || len(setHeaders["X-Forwarded-For"]) == 0 {
+		t.Errorf("missing proxy forwarded headers: %v", setHeaders)
 	}
 
 	// Verify route 3: Web Fallback

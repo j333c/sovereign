@@ -48,7 +48,7 @@ services:
     # Isolated presentation boundary: strictly NO docker.sock mount or host shell access
     environment:
       - NODE_ENV=production
-      - NEXT_PUBLIC_API_URL=http://sovereign-daemon:8080
+      - NEXT_PUBLIC_API_URL=
     ports:
       - "127.0.0.1:3000:3000"
     networks:

@@ -24,6 +24,12 @@ func GetLocalIPv4s() ([]string, error) {
 			continue
 		}
 
+		// Filter out internal container bridge and virtual interfaces (docker0, br-*, veth*)
+		name := strings.ToLower(iface.Name)
+		if strings.HasPrefix(name, "docker") || strings.HasPrefix(name, "br-") || strings.HasPrefix(name, "veth") {
+			continue
+		}
+
 		addrs, err := iface.Addrs()
 		if err != nil {
 			continue

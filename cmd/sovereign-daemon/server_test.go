@@ -7,7 +7,9 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
+	"time"
 
 	"sovereign/internal/ingress"
 	"sovereign/internal/storage"
@@ -203,12 +205,23 @@ func TestServer_UnwritableDirectory(t *testing.T) {
 }
 
 type mockIngressManager struct {
-	status map[string]any
-	err    error
+	status    map[string]any
+	err       error
+	syncCalls int
+	mu        sync.Mutex
 }
 
 func (m *mockIngressManager) SyncRoutes(ctx context.Context, routes []ingress.RouteConfig) error {
+	m.mu.Lock()
+	m.syncCalls++
+	m.mu.Unlock()
 	return m.err
+}
+
+func (m *mockIngressManager) SyncCalls() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.syncCalls
 }
 
 func (m *mockIngressManager) GetStatus(ctx context.Context) (map[string]any, error) {
@@ -252,6 +265,12 @@ func TestServer_IngressStatus_Success(t *testing.T) {
 		t.Fatalf("failed to parse ingress status response: %v", err)
 	}
 
+	if res.Status != "ok" {
+		t.Errorf("expected status 'ok', got %q", res.Status)
+	}
+	if !res.MDNSActive {
+		t.Errorf("expected MDNSActive = true")
+	}
 	if !res.CaddyConnected {
 		t.Errorf("expected CaddyConnected = true")
 	}
@@ -321,12 +340,46 @@ func TestServer_IngressStatus_DegradedAndError(t *testing.T) {
 }
 
 func TestServer_StartBackgroundServices(t *testing.T) {
-	srv, _ := setupTestServer(t)
+	tempDir := t.TempDir()
+	dataDir := filepath.Join(tempDir, "data")
+
+	mockIngress := &mockIngressManager{
+		status: map[string]any{"connected": true, "status": "ok"},
+	}
+
+	cfg := ingress.DefaultMDNSConfig(nil)
+	cfg.IPs = []string{"127.0.0.1"}
+	mdnsSvc := ingress.NewMDNSService(cfg)
+
+	srv, err := NewServer(Config{
+		DataDir:     dataDir,
+		IngressMgr:  mockIngress,
+		MDNSService: mdnsSvc,
+	})
+	if err != nil {
+		t.Fatalf("failed to create server: %v", err)
+	}
 	defer srv.Close()
 
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	srv.StartBackgroundServices(ctx)
-	// Cancel immediately to verify shutdown without hanging
-	cancel()
+
+	// Wait up to 1 second for background routines to execute
+	deadline := time.Now().Add(1 * time.Second)
+	for time.Now().Before(deadline) {
+		if mockIngress.SyncCalls() > 0 && mdnsSvc.IsActive() {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	if calls := mockIngress.SyncCalls(); calls == 0 {
+		t.Errorf("expected Caddy SyncRoutes to be called by background routine, got %d calls", calls)
+	}
+	if !mdnsSvc.IsActive() {
+		t.Errorf("expected mDNS responder to be active after StartBackgroundServices")
+	}
 }
 
