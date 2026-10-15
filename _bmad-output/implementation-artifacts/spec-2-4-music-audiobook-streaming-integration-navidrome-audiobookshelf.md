@@ -2,7 +2,7 @@
 title: 'Story 2.4: Music & Audiobook Streaming Integration (Navidrome & Audiobookshelf)'
 type: 'feature'
 created: '2026-10-15'
-status: 'review'
+status: 'done'
 route: 'dispatch'
 baseline_commit: 'ffdc94178cc3016f19fc8b652ce9576c95a6db28'
 review_loop_iteration: 0
@@ -97,4 +97,21 @@ context:
 
 ## Review Triage Log
 
-*(To be populated during code review)*
+1. **Navidrome Periodic Automatic Scan Interval**:
+   - *Finding*: Navidrome defaulted to infrequent scan intervals, requiring manual API triggers or slow background pickup when new tracks were added.
+   - *Resolution*: Configured `ND_SCANINTERVAL: "1m"` in Navidrome container environment in `internal/supervisor/audio.go` so newly added tracks are indexed within 1 minute.
+2. **Audiobookshelf Container Execution Identity (Non-root Least Privilege)**:
+   - *Finding*: Running Audiobookshelf as root (`UID 0`) was sub-optimal for security and could create root-owned files in shared storage.
+   - *Resolution*: Configured `AUDIOBOOKSHELF_UID: "1000"` and `AUDIOBOOKSHELF_GID: "1000"` in `internal/supervisor/audio.go` matching standard host storage user privileges.
+3. **AudioProvisioner Concurrent URL Configuration Safety**:
+   - *Finding*: Dynamic updates or reads to `AudioProvisioner` base URLs lacked synchronization.
+   - *Resolution*: Protected `navidromeBaseURL` and `audiobookshelfBaseURL` with a `sync.RWMutex` (`getNavidromeBaseURL`, `getAudiobookshelfBaseURL`, `SetNavidromeBaseURL`, `SetAudiobookshelfBaseURL`).
+4. **Container Host Fallback URL Resolution**:
+   - *Finding*: In-container supervisor needed seamless communication with Navidrome and Audiobookshelf when running across container networks without explicit env overrides.
+   - *Resolution*: Enhanced `resolveAudioBaseURL` to attempt container hostname lookup (`sovereign-navidrome`, `sovereign-audiobookshelf`) before falling back to `127.0.0.1`.
+5. **Audio Bundle Lifecycle Symmetry & Rollback**:
+   - *Finding*: While bundle activation was supported via `"audio"`, bundle deactivation and restart were missing. Furthermore, if Audiobookshelf failed during bundle activation, Navidrome remained in a running state without cleanup.
+   - *Resolution*: Implemented `DeactivateService(ctx, "audio")` and `RestartService(ctx, "audio")` in `internal/supervisor/supervisor.go`. Added rollback deactivation of Navidrome if Audiobookshelf fails during bundle start. Updated `RefreshService(ctx, "audio")` to succeed if at least one service was refreshed.
+6. **Audio Test Suite Coverage Expansion**:
+   - *Finding*: Unit tests needed to cover new environment variables, Audiobookshelf volume mounts, bundle restart/deactivation, activation rollback, and partial active bundle refresh.
+   - *Resolution*: Updated `internal/supervisor/audio_test.go` with tests for `ND_SCANINTERVAL: "1m"`, `AUDIOBOOKSHELF_UID/GID: "1000"`, Audiobookshelf compose volume mounts (`/audiobooks`, `/config`, `/metadata`), bundle restart and deactivation, rollback on failure, and partial refresh.

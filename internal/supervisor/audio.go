@@ -4,17 +4,21 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 )
 
 // Default base URLs for audio streaming services
 const (
-	DefaultNavidromeBaseURL      = "http://127.0.0.1:4533"
-	DefaultAudiobookshelfBaseURL = "http://127.0.0.1:13378"
+	DefaultNavidromeContainerURL      = "http://sovereign-navidrome:4533"
+	DefaultNavidromeLocalURL          = "http://127.0.0.1:4533"
+	DefaultAudiobookshelfContainerURL = "http://sovereign-audiobookshelf:13378"
+	DefaultAudiobookshelfLocalURL     = "http://127.0.0.1:13378"
 )
 
 // AudioProvisionResult contains provisioning output for starting an audio service container.
@@ -27,6 +31,7 @@ type AudioProvisionResult struct {
 // AudioProvisioner manages volume layout provisioning, environment synthesis,
 // and library scan triggers for Navidrome and Audiobookshelf.
 type AudioProvisioner struct {
+	mu                        sync.RWMutex
 	dataDir                   string
 	logger                    *slog.Logger
 	httpClient                *http.Client
@@ -34,6 +39,18 @@ type AudioProvisioner struct {
 	audiobookshelfBaseURL     string
 	NavidromeRefreshFunc      func(ctx context.Context) error
 	AudiobookshelfRefreshFunc func(ctx context.Context) error
+}
+
+func resolveAudioBaseURL(envKey, containerHostPort, localhostPort string) string {
+	if env := os.Getenv(envKey); env != "" {
+		return strings.TrimRight(env, "/")
+	}
+	// Check if container host resolves on network
+	host := strings.Split(strings.TrimPrefix(containerHostPort, "http://"), ":")[0]
+	if _, err := net.LookupHost(host); err == nil {
+		return containerHostPort
+	}
+	return localhostPort
 }
 
 // NewAudioProvisioner constructs a new AudioProvisioner.
@@ -45,38 +62,51 @@ func NewAudioProvisioner(dataDir string, logger *slog.Logger) *AudioProvisioner 
 		logger = slog.Default()
 	}
 
-	navURL := os.Getenv("SOVEREIGN_NAVIDROME_URL")
-	if navURL == "" {
-		navURL = DefaultNavidromeBaseURL
-	}
-
-	absURL := os.Getenv("SOVEREIGN_AUDIOBOOKSHELF_URL")
-	if absURL == "" {
-		absURL = DefaultAudiobookshelfBaseURL
-	}
+	navURL := resolveAudioBaseURL("SOVEREIGN_NAVIDROME_URL", DefaultNavidromeContainerURL, DefaultNavidromeLocalURL)
+	absURL := resolveAudioBaseURL("SOVEREIGN_AUDIOBOOKSHELF_URL", DefaultAudiobookshelfContainerURL, DefaultAudiobookshelfLocalURL)
 
 	return &AudioProvisioner{
 		dataDir:               dataDir,
 		logger:                logger,
 		httpClient:            &http.Client{Timeout: 5 * time.Second},
-		navidromeBaseURL:      strings.TrimRight(navURL, "/"),
-		audiobookshelfBaseURL: strings.TrimRight(absURL, "/"),
+		navidromeBaseURL:      navURL,
+		audiobookshelfBaseURL: absURL,
 	}
 }
 
-// SetNavidromeBaseURL overrides the Navidrome base URL.
+// SetNavidromeBaseURL overrides the Navidrome base URL in a thread-safe manner.
 func (p *AudioProvisioner) SetNavidromeBaseURL(url string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	p.navidromeBaseURL = strings.TrimRight(url, "/")
 }
 
-// SetAudiobookshelfBaseURL overrides the Audiobookshelf base URL.
+// SetAudiobookshelfBaseURL overrides the Audiobookshelf base URL in a thread-safe manner.
 func (p *AudioProvisioner) SetAudiobookshelfBaseURL(url string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	p.audiobookshelfBaseURL = strings.TrimRight(url, "/")
 }
 
-// SetHTTPClient overrides the HTTP client.
+// SetHTTPClient overrides the HTTP client in a thread-safe manner.
 func (p *AudioProvisioner) SetHTTPClient(client *http.Client) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	p.httpClient = client
+}
+
+// SetNavidromeRefreshFunc overrides the Navidrome refresh callback for testing.
+func (p *AudioProvisioner) SetNavidromeRefreshFunc(fn func(ctx context.Context) error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.NavidromeRefreshFunc = fn
+}
+
+// SetAudiobookshelfRefreshFunc overrides the Audiobookshelf refresh callback for testing.
+func (p *AudioProvisioner) SetAudiobookshelfRefreshFunc(fn func(ctx context.Context) error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.AudiobookshelfRefreshFunc = fn
 }
 
 // Provision ensures directories exist and returns runtime parameters for the specified audio service.
@@ -109,7 +139,7 @@ func (p *AudioProvisioner) ProvisionNavidrome(ctx context.Context) (*AudioProvis
 		"ND_DATAFOLDER":   "/data",
 		"ND_PORT":         "4533",
 		"ND_LOGLEVEL":     "info",
-		"ND_SCANINTERVAL": "0",
+		"ND_SCANINTERVAL": "1m",
 	}
 
 	p.logger.Info("provisioned navidrome environment successfully", "music_dir", musicDir, "data_dir", dataDir)
@@ -139,8 +169,8 @@ func (p *AudioProvisioner) ProvisionAudiobookshelf(ctx context.Context) (*AudioP
 		"PORT":               "13378",
 		"CONFIG_PATH":        "/config",
 		"METADATA_PATH":      "/metadata",
-		"AUDIOBOOKSHELF_UID": "0",
-		"AUDIOBOOKSHELF_GID": "0",
+		"AUDIOBOOKSHELF_UID": "1000",
+		"AUDIOBOOKSHELF_GID": "1000",
 	}
 
 	p.logger.Info("provisioned audiobookshelf environment successfully", "audiobooks_dir", audiobooksDir, "config_dir", configDir)
@@ -154,20 +184,25 @@ func (p *AudioProvisioner) ProvisionAudiobookshelf(ctx context.Context) (*AudioP
 
 // TriggerNavidromeRefresh dispatches a library scan webhook to Navidrome.
 func (p *AudioProvisioner) TriggerNavidromeRefresh(ctx context.Context) error {
-	if p.NavidromeRefreshFunc != nil {
-		return p.NavidromeRefreshFunc(ctx)
-	}
-
-	if p.httpClient == nil {
-		p.httpClient = &http.Client{Timeout: 5 * time.Second}
-	}
-
+	p.mu.RLock()
+	refreshFn := p.NavidromeRefreshFunc
+	client := p.httpClient
 	baseURL := p.navidromeBaseURL
+	p.mu.RUnlock()
+
+	if refreshFn != nil {
+		return refreshFn(ctx)
+	}
+
+	if client == nil {
+		client = &http.Client{Timeout: 5 * time.Second}
+		p.mu.Lock()
+		p.httpClient = client
+		p.mu.Unlock()
+	}
+
 	if baseURL == "" {
-		baseURL = os.Getenv("SOVEREIGN_NAVIDROME_URL")
-		if baseURL == "" {
-			baseURL = DefaultNavidromeBaseURL
-		}
+		baseURL = resolveAudioBaseURL("SOVEREIGN_NAVIDROME_URL", DefaultNavidromeContainerURL, DefaultNavidromeLocalURL)
 	}
 	baseURL = strings.TrimRight(baseURL, "/")
 
@@ -178,7 +213,7 @@ func (p *AudioProvisioner) TriggerNavidromeRefresh(ctx context.Context) error {
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := p.httpClient.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return fmt.Errorf("failed to dispatch navidrome library refresh: %w", err)
 	}
@@ -194,20 +229,25 @@ func (p *AudioProvisioner) TriggerNavidromeRefresh(ctx context.Context) error {
 
 // TriggerAudiobookshelfRefresh dispatches a library scan webhook to Audiobookshelf.
 func (p *AudioProvisioner) TriggerAudiobookshelfRefresh(ctx context.Context) error {
-	if p.AudiobookshelfRefreshFunc != nil {
-		return p.AudiobookshelfRefreshFunc(ctx)
-	}
-
-	if p.httpClient == nil {
-		p.httpClient = &http.Client{Timeout: 5 * time.Second}
-	}
-
+	p.mu.RLock()
+	refreshFn := p.AudiobookshelfRefreshFunc
+	client := p.httpClient
 	baseURL := p.audiobookshelfBaseURL
+	p.mu.RUnlock()
+
+	if refreshFn != nil {
+		return refreshFn(ctx)
+	}
+
+	if client == nil {
+		client = &http.Client{Timeout: 5 * time.Second}
+		p.mu.Lock()
+		p.httpClient = client
+		p.mu.Unlock()
+	}
+
 	if baseURL == "" {
-		baseURL = os.Getenv("SOVEREIGN_AUDIOBOOKSHELF_URL")
-		if baseURL == "" {
-			baseURL = DefaultAudiobookshelfBaseURL
-		}
+		baseURL = resolveAudioBaseURL("SOVEREIGN_AUDIOBOOKSHELF_URL", DefaultAudiobookshelfContainerURL, DefaultAudiobookshelfLocalURL)
 	}
 	baseURL = strings.TrimRight(baseURL, "/")
 
@@ -217,7 +257,7 @@ func (p *AudioProvisioner) TriggerAudiobookshelfRefresh(ctx context.Context) err
 		return fmt.Errorf("failed to create audiobookshelf refresh request: %w", err)
 	}
 
-	resp, err := p.httpClient.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return fmt.Errorf("failed to dispatch audiobookshelf library refresh: %w", err)
 	}

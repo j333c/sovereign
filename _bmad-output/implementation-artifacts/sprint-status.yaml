@@ -49,7 +49,7 @@ development_status:
   2-1-on-demand-container-lifecycle-engine-health-probing: done
   2-2-servicecard-statusbadge-appliance-ui-controls: done
   2-3-in-house-video-streaming-integration-jellyfin: done
-  2-4-music-audiobook-streaming-integration-navidrome-audiobookshe: review
+  2-4-music-audiobook-streaming-integration-navidrome-audiobookshe: done
   2-5-staged-dropzone-ingestion-pipeline-web-upload-interface: backlog
   epic-2-retrospective: optional
 

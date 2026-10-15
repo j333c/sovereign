@@ -49,10 +49,11 @@ func TestAudioProvisioner_ProvisionNavidrome(t *testing.T) {
 
 	// Verify required environment variables
 	expectedEnv := map[string]string{
-		"ND_MUSICFOLDER": "/music",
-		"ND_DATAFOLDER":  "/data",
-		"ND_PORT":        "4533",
-		"ND_LOGLEVEL":    "info",
+		"ND_MUSICFOLDER":  "/music",
+		"ND_DATAFOLDER":   "/data",
+		"ND_PORT":         "4533",
+		"ND_LOGLEVEL":     "info",
+		"ND_SCANINTERVAL": "1m",
 	}
 	for k, expectedVal := range expectedEnv {
 		if val, ok := res.Env[k]; !ok || val != expectedVal {
@@ -114,9 +115,11 @@ func TestAudioProvisioner_ProvisionAudiobookshelf(t *testing.T) {
 
 	// Verify required environment variables
 	expectedEnv := map[string]string{
-		"PORT":          "13378",
-		"CONFIG_PATH":   "/config",
-		"METADATA_PATH": "/metadata",
+		"PORT":               "13378",
+		"CONFIG_PATH":        "/config",
+		"METADATA_PATH":      "/metadata",
+		"AUDIOBOOKSHELF_UID": "1000",
+		"AUDIOBOOKSHELF_GID": "1000",
 	}
 	for k, expectedVal := range expectedEnv {
 		if val, ok := res.Env[k]; !ok || val != expectedVal {
@@ -356,6 +359,25 @@ func TestSupervisor_Audio_Activation_And_Compose_Synthesis(t *testing.T) {
 	if absSpec.Deploy == nil || absSpec.Deploy.Resources.Limits.Memory != "512M" {
 		t.Errorf("expected 512M memory limit in compose file, got %v", absSpec.Deploy)
 	}
+
+	// Verify Audiobookshelf volume mounts
+	expectedAbsVols := []string{
+		"media/audiobooks:/audiobooks",
+		"state/services/audiobookshelf/config:/config",
+		"state/services/audiobookshelf/metadata:/metadata",
+	}
+	for _, exp := range expectedAbsVols {
+		found := false
+		for _, v := range absSpec.Volumes {
+			if strings.Contains(v, exp) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("expected volume containing %s, got volumes: %v", exp, absSpec.Volumes)
+		}
+	}
 }
 
 func TestSupervisor_Audio_Bundle_Activation(t *testing.T) {
@@ -389,6 +411,36 @@ func TestSupervisor_Audio_Bundle_Activation(t *testing.T) {
 	if err != nil || absStatus.Status != StatusRunning {
 		t.Errorf("expected audiobookshelf to be running after audio bundle activation, got status=%s, err=%v", absStatus.Status, err)
 	}
+
+	// Verify audio bundle restart
+	restartedSvc, err := mgr.RestartService(ctx, "audio")
+	if err != nil {
+		t.Fatalf("failed to restart audio bundle: %v", err)
+	}
+	if restartedSvc == nil {
+		t.Fatalf("expected non-nil service status from audio bundle restart")
+	}
+	navStatus, err = mgr.GetService(ctx, ServiceNavidrome)
+	if err != nil || navStatus.Status != StatusRunning {
+		t.Errorf("expected navidrome to be running after audio bundle restart, got status=%s, err=%v", navStatus.Status, err)
+	}
+	absStatus, err = mgr.GetService(ctx, ServiceAudiobookshelf)
+	if err != nil || absStatus.Status != StatusRunning {
+		t.Errorf("expected audiobookshelf to be running after audio bundle restart, got status=%s, err=%v", absStatus.Status, err)
+	}
+
+	// Verify audio bundle deactivation
+	if _, err := mgr.DeactivateService(ctx, "audio"); err != nil {
+		t.Fatalf("failed to deactivate audio bundle: %v", err)
+	}
+	navStatus, err = mgr.GetService(ctx, ServiceNavidrome)
+	if err != nil || navStatus.Status != StatusInactive {
+		t.Errorf("expected navidrome to be inactive after audio bundle deactivation, got status=%s, err=%v", navStatus.Status, err)
+	}
+	absStatus, err = mgr.GetService(ctx, ServiceAudiobookshelf)
+	if err != nil || absStatus.Status != StatusInactive {
+		t.Errorf("expected audiobookshelf to be inactive after audio bundle deactivation, got status=%s, err=%v", absStatus.Status, err)
+	}
 }
 
 func TestSupervisor_Audio_Bundle_Activation_FailureGraceful(t *testing.T) {
@@ -411,6 +463,15 @@ func TestSupervisor_Audio_Bundle_Activation_FailureGraceful(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "audio bundle failed") {
 		t.Errorf("expected descriptive audio bundle error, got: %v", err)
+	}
+
+	// Verify Navidrome was rolled back and is not running
+	navStatus, err := mgr.GetService(ctx, ServiceNavidrome)
+	if err != nil {
+		t.Fatalf("failed to get navidrome status: %v", err)
+	}
+	if navStatus.Status == StatusRunning {
+		t.Errorf("expected navidrome to be rolled back (not running) after audio bundle failure, got: %s", navStatus.Status)
 	}
 }
 
@@ -500,5 +561,29 @@ func TestSupervisor_Audio_RefreshService_Lifecycle(t *testing.T) {
 	}
 	if !navRefreshed || !absRefreshed {
 		t.Errorf("expected bundle refresh to trigger both navidrome (%v) and audiobookshelf (%v)", navRefreshed, absRefreshed)
+	}
+
+	// 8. Test partial bundle refresh when only one service is running
+	if _, err := mgr.DeactivateService(ctx, ServiceNavidrome); err != nil {
+		t.Fatalf("failed to deactivate navidrome: %v", err)
+	}
+	navRefreshed = false
+	absRefreshed = false
+	if err := mgr.RefreshService(ctx, "audio"); err != nil {
+		t.Fatalf("expected partial bundle refresh to succeed when audiobookshelf is active, got: %v", err)
+	}
+	if navRefreshed {
+		t.Errorf("did not expect inactive navidrome to be refreshed")
+	}
+	if !absRefreshed {
+		t.Errorf("expected active audiobookshelf to be refreshed during partial bundle refresh")
+	}
+
+	// 9. When both are inactive, bundle refresh returns ErrServiceInactive
+	if _, err := mgr.DeactivateService(ctx, ServiceAudiobookshelf); err != nil {
+		t.Fatalf("failed to deactivate audiobookshelf: %v", err)
+	}
+	if err := mgr.RefreshService(ctx, "audio"); !errors.Is(err, ErrServiceInactive) {
+		t.Errorf("expected ErrServiceInactive when both audio services are inactive, got: %v", err)
 	}
 }

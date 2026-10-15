@@ -456,6 +456,12 @@ func (m *ServiceManager) GetService(ctx context.Context, id string) (*ServiceSta
 
 // ActivateService pulls the image on-demand, streams SSE progress, synthesizes Compose spec, and starts the container.
 func (m *ServiceManager) ActivateService(ctx context.Context, id string) (*ServiceStatus, error) {
+	m.mu.Lock()
+	if m.audioProvisioner == nil {
+		m.audioProvisioner = NewAudioProvisioner(m.dataDir, m.logger)
+	}
+	m.mu.Unlock()
+
 	if id == "audio" {
 		navSvc, err := m.ActivateService(ctx, ServiceNavidrome)
 		if err != nil {
@@ -463,6 +469,7 @@ func (m *ServiceManager) ActivateService(ctx context.Context, id string) (*Servi
 		}
 		if _, err := m.ActivateService(ctx, ServiceAudiobookshelf); err != nil {
 			m.logger.Warn("audio bundle failed to activate audiobookshelf", "error", err)
+			_, _ = m.DeactivateService(ctx, ServiceNavidrome)
 			return nil, fmt.Errorf("audio bundle failed to activate %s: %w", ServiceAudiobookshelf, err)
 		}
 		return navSvc, nil
@@ -637,6 +644,25 @@ func (m *ServiceManager) ActivateService(ctx context.Context, id string) (*Servi
 
 // DeactivateService stops the container runtime while strictly preserving all data volumes under /data.
 func (m *ServiceManager) DeactivateService(ctx context.Context, id string) (*ServiceStatus, error) {
+	if id == "audio" {
+		var lastErr error
+		var lastSt *ServiceStatus
+		if st, err := m.DeactivateService(ctx, ServiceNavidrome); err != nil {
+			lastErr = err
+		} else {
+			lastSt = st
+		}
+		if st, err := m.DeactivateService(ctx, ServiceAudiobookshelf); err != nil {
+			lastErr = err
+		} else if lastSt == nil {
+			lastSt = st
+		}
+		if lastErr != nil && lastSt == nil {
+			return nil, lastErr
+		}
+		return lastSt, nil
+	}
+
 	id = m.resolveID(id)
 	m.mu.Lock()
 	_, exists := m.definitions[id]
@@ -678,6 +704,21 @@ func (m *ServiceManager) DeactivateService(ctx context.Context, id string) (*Ser
 
 // RestartService restarts the container instance with current configuration.
 func (m *ServiceManager) RestartService(ctx context.Context, id string) (*ServiceStatus, error) {
+	if id == "audio" {
+		navSt, errNav := m.RestartService(ctx, ServiceNavidrome)
+		_, errAbs := m.RestartService(ctx, ServiceAudiobookshelf)
+		if errNav != nil && errAbs != nil {
+			return nil, fmt.Errorf("audio bundle failed to restart: navidrome: %w, audiobookshelf: %v", errNav, errAbs)
+		}
+		if errNav != nil {
+			return nil, errNav
+		}
+		if errAbs != nil {
+			return nil, errAbs
+		}
+		return navSt, nil
+	}
+
 	id = m.resolveID(id)
 	m.mu.Lock()
 	_, exists := m.definitions[id]
@@ -820,24 +861,30 @@ func (m *ServiceManager) JellyfinProvisioner() *JellyfinProvisioner {
 
 // AudioProvisioner returns the provisioner used for audio services.
 func (m *ServiceManager) AudioProvisioner() *AudioProvisioner {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.audioProvisioner == nil {
+		m.audioProvisioner = NewAudioProvisioner(m.dataDir, m.logger)
+	}
 	return m.audioProvisioner
 }
 
 // RefreshService triggers a library scan or metadata refresh for the specified service.
 func (m *ServiceManager) RefreshService(ctx context.Context, id string) error {
+	m.mu.Lock()
+	if m.audioProvisioner == nil {
+		m.audioProvisioner = NewAudioProvisioner(m.dataDir, m.logger)
+	}
+	m.mu.Unlock()
+
 	if id == "audio" {
 		errNav := m.RefreshService(ctx, ServiceNavidrome)
 		errAbs := m.RefreshService(ctx, ServiceAudiobookshelf)
-		if errNav != nil && errAbs != nil {
-			return fmt.Errorf("audio bundle refresh failed: navidrome: %w, audiobookshelf: %v", errNav, errAbs)
+		// Do not fail if at least one service was successfully refreshed
+		if errNav == nil || errAbs == nil {
+			return nil
 		}
-		if errNav != nil {
-			return errNav
-		}
-		if errAbs != nil {
-			return errAbs
-		}
-		return nil
+		return fmt.Errorf("audio bundle refresh failed: navidrome: %w, audiobookshelf: %v", errNav, errAbs)
 	}
 
 	id = m.resolveID(id)
