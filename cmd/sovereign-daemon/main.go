@@ -59,6 +59,11 @@ func main() {
 	}
 	defer server.Close()
 
+	// Start background supervisor routines (mDNS discovery responder, Caddy route sync)
+	bgCtx, bgCancel := context.WithCancel(context.Background())
+	defer bgCancel()
+	server.StartBackgroundServices(bgCtx)
+
 	httpServer := &http.Server{
 		Addr:              listenAddr,
 		Handler:           server.Handler(),
@@ -86,6 +91,7 @@ func main() {
 		os.Exit(1)
 	case sig := <-shutdownSig:
 		logger.Info("received shutdown signal, draining connections...", "signal", sig.String())
+		bgCancel()
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 

@@ -50,6 +50,25 @@ paths:
               schema:
                 $ref: '#/components/schemas/ProblemDetails'
 
+  /api/v1/system/ingress:
+    get:
+      summary: Ingress gateway and mDNS discovery status
+      description: Returns operational status of Caddy ingress gateway, dynamic route table, and mDNS responder.
+      operationId: getIngressStatus
+      responses:
+        '200':
+          description: Ingress and network discovery status details.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IngressStatusResponse'
+        '500':
+          description: Internal supervisor error retrieving ingress status.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
 components:
   schemas:
     HealthResponse:
@@ -92,6 +111,50 @@ components:
         message:
           type: string
           example: All systems operational
+
+    IngressStatusResponse:
+      type: object
+      required:
+        - status
+        - caddy_connected
+        - mdns_active
+        - hostname
+        - routes
+      properties:
+        status:
+          type: string
+          enum: [ok, degraded, error]
+          example: ok
+        caddy_connected:
+          type: boolean
+          example: true
+        mdns_active:
+          type: boolean
+          example: true
+        hostname:
+          type: string
+          example: sovereign.local
+        routes:
+          type: array
+          items:
+            $ref: '#/components/schemas/IngressRoute'
+
+    IngressRoute:
+      type: object
+      required:
+        - service
+        - subpath
+        - upstream
+      properties:
+        service:
+          type: string
+          example: web
+        subpath:
+          type: string
+          example: /
+        upstream:
+          type: string
+          example: sovereign-web:3000
 
     ProblemDetails:
       type: object

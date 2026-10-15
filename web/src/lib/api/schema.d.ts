@@ -44,6 +44,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/system/ingress": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Ingress gateway and mDNS discovery status
+         * @description Returns operational status of Caddy ingress gateway, dynamic route table, and mDNS responder.
+         */
+        get: operations["getIngressStatus"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -74,6 +94,28 @@ export interface components {
             diagnostics_completed: boolean;
             /** @example All systems operational */
             message: string;
+        };
+        IngressStatusResponse: {
+            /**
+             * @example ok
+             * @enum {string}
+             */
+            status: "ok" | "degraded" | "error";
+            /** @example true */
+            caddy_connected: boolean;
+            /** @example true */
+            mdns_active: boolean;
+            /** @example sovereign.local */
+            hostname: string;
+            routes: components["schemas"]["IngressRoute"][];
+        };
+        IngressRoute: {
+            /** @example web */
+            service: string;
+            /** @example / */
+            subpath: string;
+            /** @example sovereign-web:3000 */
+            upstream: string;
         };
         ProblemDetails: {
             /**
@@ -147,6 +189,35 @@ export interface operations {
                 };
             };
             /** @description Internal supervisor error retrieving boot state. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    getIngressStatus: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Ingress and network discovery status details. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IngressStatusResponse"];
+                };
+            };
+            /** @description Internal supervisor error retrieving ingress status. */
             500: {
                 headers: {
                     [name: string]: unknown;

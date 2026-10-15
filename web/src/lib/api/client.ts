@@ -2,6 +2,8 @@ import type { components } from "./schema";
 
 export type HealthResponse = components["schemas"]["HealthResponse"];
 export type BootStatusResponse = components["schemas"]["BootStatusResponse"];
+export type IngressStatusResponse = components["schemas"]["IngressStatusResponse"];
+export type IngressRoute = components["schemas"]["IngressRoute"];
 export type ProblemDetails = components["schemas"]["ProblemDetails"];
 
 /**
@@ -108,6 +110,13 @@ export class SovereignApiClient {
    */
   async getBootStatus(): Promise<BootStatusResponse> {
     return this.request<BootStatusResponse>("/api/v1/system/boot-status");
+  }
+
+  /**
+   * Ingress gateway, route configuration, and mDNS discovery status.
+   */
+  async getIngressStatus(): Promise<IngressStatusResponse> {
+    return this.request<IngressStatusResponse>("/api/v1/system/ingress");
   }
 }
 

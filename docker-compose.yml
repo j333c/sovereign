@@ -1,4 +1,19 @@
 services:
+  caddy:
+    image: caddy:2-alpine
+    container_name: caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./data/caddy/data:/data
+      - ./data/caddy/config:/config
+    networks:
+      - sovereign-ingress
+      - sovereign-control
+
   sovereign-daemon:
     build:
       context: .
@@ -15,6 +30,7 @@ services:
     environment:
       - SOVEREIGN_ADDR=:8080
       - SOVEREIGN_DATA_DIR=/data
+      - SOVEREIGN_CADDY_URL=http://caddy:2019
     ports:
       - "127.0.0.1:8080:8080"
     networks:
@@ -34,7 +50,7 @@ services:
       - NODE_ENV=production
       - NEXT_PUBLIC_API_URL=http://sovereign-daemon:8080
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     networks:
       - sovereign-ingress
 

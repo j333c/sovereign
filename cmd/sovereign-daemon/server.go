@@ -6,10 +6,12 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"os"
 	"path/filepath"
 	"sync"
 	"time"
 
+	"sovereign/internal/ingress"
 	"sovereign/internal/storage"
 	"sovereign/internal/store"
 )
@@ -34,25 +36,46 @@ type HealthResponse struct {
 	Database string `json:"database"`
 }
 
+// IngressRoute matches the OpenAPI 3.1 contract.
+type IngressRoute struct {
+	Service  string `json:"service"`
+	Subpath  string `json:"subpath"`
+	Upstream string `json:"upstream"`
+}
+
+// IngressStatusResponse matches the OpenAPI 3.1 contract.
+type IngressStatusResponse struct {
+	Status         string         `json:"status"`
+	CaddyConnected bool           `json:"caddy_connected"`
+	MDNSActive     bool           `json:"mdns_active"`
+	Hostname       string         `json:"hostname"`
+	Routes         []IngressRoute `json:"routes"`
+}
+
 // Config specifies runtime options for the daemon server.
 type Config struct {
-	ListenAddr string
-	DataDir    string
-	DBPath     string
-	Logger     *slog.Logger
+	ListenAddr  string
+	DataDir     string
+	DBPath      string
+	CaddyURL    string
+	Logger      *slog.Logger
+	IngressMgr  ingress.IngressManager
+	MDNSService *ingress.MDNSService
 }
 
 // Server is the appliance core supervisor HTTP daemon.
 type Server struct {
-	cfg    Config
-	db     *store.DB
-	logger *slog.Logger
-	router *http.ServeMux
-	mu     sync.RWMutex
+	cfg         Config
+	db          *store.DB
+	logger      *slog.Logger
+	router      *http.ServeMux
+	ingressMgr  ingress.IngressManager
+	mdnsService *ingress.MDNSService
+	mu          sync.RWMutex
 }
 
 // NewServer initializes the supervisor server, ensures storage directories,
-// and connects to the SQLite WAL database.
+// connects to SQLite WAL, and initializes ingress/mDNS managers.
 func NewServer(cfg Config) (*Server, error) {
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
@@ -64,6 +87,13 @@ func NewServer(cfg Config) (*Server, error) {
 
 	if cfg.DBPath == "" {
 		cfg.DBPath = filepath.Join(cfg.DataDir, "state", "sovereign.db")
+	}
+
+	if cfg.CaddyURL == "" {
+		cfg.CaddyURL = os.Getenv("SOVEREIGN_CADDY_URL")
+		if cfg.CaddyURL == "" {
+			cfg.CaddyURL = "http://caddy:2019"
+		}
 	}
 
 	// Ensure required storage layout: /data/{media,documents,models,state,drop}
@@ -81,21 +111,85 @@ func NewServer(cfg Config) (*Server, error) {
 		return nil, fmt.Errorf("database initialization failed: %w", err)
 	}
 
+	if cfg.IngressMgr == nil {
+		cfg.IngressMgr = ingress.NewCaddyClient(cfg.CaddyURL, cfg.Logger)
+	}
+
+	if cfg.MDNSService == nil {
+		cfg.MDNSService = ingress.NewMDNSService(ingress.DefaultMDNSConfig(cfg.Logger))
+	}
+
 	s := &Server{
-		cfg:    cfg,
-		db:     db,
-		logger: cfg.Logger,
-		router: http.NewServeMux(),
+		cfg:         cfg,
+		db:          db,
+		logger:      cfg.Logger,
+		router:      http.NewServeMux(),
+		ingressMgr:  cfg.IngressMgr,
+		mdnsService: cfg.MDNSService,
 	}
 
 	s.routes()
 	return s, nil
 }
 
-// Close closes database handles and resources.
+// StartBackgroundServices initializes background supervisor routines:
+// starts mDNS responder broadcasting sovereign.local, and launches
+// background route sync loop with Caddy.
+func (s *Server) StartBackgroundServices(ctx context.Context) {
+	// 1. Start mDNS responder
+	if s.mdnsService != nil {
+		go func() {
+			if err := s.mdnsService.Start(); err != nil {
+				s.logger.Warn("mDNS discovery responder failed to start", "error", err)
+			}
+		}()
+	}
+
+	// 2. Initial Caddy route synchronization with retry in background
+	if s.ingressMgr != nil {
+		go func() {
+			s.logger.Info("starting background caddy route synchronization")
+			ticker := time.NewTicker(2 * time.Second)
+			defer ticker.Stop()
+
+			// Try initial sync immediately
+			syncCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+			err := s.ingressMgr.SyncRoutes(syncCtx, nil)
+			cancel()
+			if err == nil {
+				s.logger.Info("initial caddy route synchronization succeeded")
+				return
+			}
+
+			// Retry until successful or context cancelled
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+					retryCtx, retryCancel := context.WithTimeout(ctx, 3*time.Second)
+					err := s.ingressMgr.SyncRoutes(retryCtx, nil)
+					retryCancel()
+					if err == nil {
+						s.logger.Info("caddy route synchronization succeeded after retry")
+						return
+					}
+					s.logger.Debug("retrying caddy route sync...", "error", err)
+				}
+			}
+		}()
+	}
+}
+
+// Close closes database handles and frees ingress/mDNS resources.
 func (s *Server) Close() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	if s.mdnsService != nil {
+		s.mdnsService.Close()
+	}
+
 	if s.db != nil {
 		return s.db.Close()
 	}
@@ -106,6 +200,7 @@ func (s *Server) Close() error {
 func (s *Server) routes() {
 	s.router.HandleFunc("GET /api/v1/health", s.handleHealth)
 	s.router.HandleFunc("GET /api/v1/system/boot-status", s.handleBootStatus)
+	s.router.HandleFunc("GET /api/v1/system/ingress", s.handleIngressStatus)
 }
 
 // Handler returns the HTTP handler for the server with CORS middleware.
@@ -190,4 +285,52 @@ func (s *Server) handleBootStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.writeJSON(w, http.StatusOK, status)
+}
+
+func (s *Server) handleIngressStatus(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+	defer cancel()
+
+	s.mu.RLock()
+	ingressMgr := s.ingressMgr
+	mdnsSvc := s.mdnsService
+	s.mu.RUnlock()
+
+	caddyConnected := false
+	if ingressMgr != nil {
+		caddyStatus, err := ingressMgr.GetStatus(ctx)
+		if err == nil {
+			if conn, ok := caddyStatus["connected"].(bool); ok && conn {
+				caddyConnected = true
+			}
+		}
+	}
+
+	mdnsActive := false
+	hostname := "sovereign.local"
+	if mdnsSvc != nil {
+		mdnsActive = mdnsSvc.IsActive()
+		hostname = mdnsSvc.Hostname()
+	}
+
+	overallStatus := "ok"
+	if !caddyConnected {
+		overallStatus = "error"
+	} else if !mdnsActive {
+		overallStatus = "degraded"
+	}
+
+	routes := []IngressRoute{
+		{Service: "web", Subpath: "/", Upstream: "sovereign-web:3000"},
+		{Service: "web", Subpath: "/drop", Upstream: "sovereign-web:3000"},
+		{Service: "daemon", Subpath: "/api/*", Upstream: "sovereign-daemon:8080"},
+	}
+
+	s.writeJSON(w, http.StatusOK, IngressStatusResponse{
+		Status:         overallStatus,
+		CaddyConnected: caddyConnected,
+		MDNSActive:     mdnsActive,
+		Hostname:       hostname,
+		Routes:         routes,
+	})
 }

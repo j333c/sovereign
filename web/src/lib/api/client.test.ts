@@ -63,6 +63,44 @@ describe("SovereignApiClient", () => {
     assert.equal(status.message, "All systems operational");
   });
 
+  it("successfully fetches getIngressStatus with typed response", async () => {
+    const mockFetch: typeof fetch = async (input, init) => {
+      const url = String(input);
+      assert.equal(url, "http://localhost:8080/api/v1/system/ingress");
+
+      return new Response(
+        JSON.stringify({
+          status: "ok",
+          caddy_connected: true,
+          mdns_active: true,
+          hostname: "sovereign.local",
+          routes: [
+            { service: "web", subpath: "/", upstream: "sovereign-web:3000" },
+            { service: "web", subpath: "/drop", upstream: "sovereign-web:3000" },
+            { service: "daemon", subpath: "/api/*", upstream: "sovereign-daemon:8080" },
+          ],
+        }),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }
+      );
+    };
+
+    const client = new SovereignApiClient({
+      baseUrl: "http://localhost:8080",
+      fetchFn: mockFetch,
+    });
+
+    const ingress = await client.getIngressStatus();
+    assert.equal(ingress.status, "ok");
+    assert.equal(ingress.caddy_connected, true);
+    assert.equal(ingress.mdns_active, true);
+    assert.equal(ingress.hostname, "sovereign.local");
+    assert.equal(ingress.routes.length, 3);
+    assert.equal(ingress.routes[0].upstream, "sovereign-web:3000");
+  });
+
   it("throws typed ProblemDetailsError on HTTP 503 problem response", async () => {
     const mockFetch: typeof fetch = async () => {
       return new Response(

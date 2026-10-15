@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -8,6 +9,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"sovereign/internal/ingress"
 	"sovereign/internal/storage"
 )
 
@@ -199,3 +201,132 @@ func TestServer_UnwritableDirectory(t *testing.T) {
 		t.Fatalf("expected error for unwritable data dir, got nil")
 	}
 }
+
+type mockIngressManager struct {
+	status map[string]any
+	err    error
+}
+
+func (m *mockIngressManager) SyncRoutes(ctx context.Context, routes []ingress.RouteConfig) error {
+	return m.err
+}
+
+func (m *mockIngressManager) GetStatus(ctx context.Context) (map[string]any, error) {
+	return m.status, m.err
+}
+
+func TestServer_IngressStatus_Success(t *testing.T) {
+	tempDir := t.TempDir()
+	dataDir := filepath.Join(tempDir, "data")
+
+	mockIngress := &mockIngressManager{
+		status: map[string]any{"connected": true, "status": "ok"},
+	}
+
+	cfg := ingress.DefaultMDNSConfig(nil)
+	cfg.IPs = []string{"192.168.1.100"}
+	mdnsSvc := ingress.NewMDNSService(cfg)
+	_ = mdnsSvc.Start()
+
+	srv, err := NewServer(Config{
+		DataDir:     dataDir,
+		IngressMgr:  mockIngress,
+		MDNSService: mdnsSvc,
+	})
+	if err != nil {
+		t.Fatalf("failed to create server: %v", err)
+	}
+	defer srv.Close()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/system/ingress", nil)
+	w := httptest.NewRecorder()
+
+	srv.Handler().ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: body=%s", w.Code, w.Body.String())
+	}
+
+	var res IngressStatusResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &res); err != nil {
+		t.Fatalf("failed to parse ingress status response: %v", err)
+	}
+
+	if !res.CaddyConnected {
+		t.Errorf("expected CaddyConnected = true")
+	}
+	if res.Hostname != "sovereign.local" {
+		t.Errorf("expected hostname sovereign.local, got %s", res.Hostname)
+	}
+	if len(res.Routes) != 3 {
+		t.Errorf("expected 3 default routes, got %d", len(res.Routes))
+	}
+}
+
+func TestServer_IngressStatus_DegradedAndError(t *testing.T) {
+	tempDir := t.TempDir()
+	dataDir := filepath.Join(tempDir, "data")
+
+	// 1. Caddy disconnected -> status = "error"
+	mockIngressOffline := &mockIngressManager{
+		status: map[string]any{"connected": false, "status": "error"},
+	}
+	mdnsOffline := ingress.NewMDNSService(ingress.DefaultMDNSConfig(nil))
+
+	srvErr, err := NewServer(Config{
+		DataDir:     dataDir,
+		IngressMgr:  mockIngressOffline,
+		MDNSService: mdnsOffline,
+	})
+	if err != nil {
+		t.Fatalf("failed to create server: %v", err)
+	}
+	defer srvErr.Close()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/system/ingress", nil)
+	w := httptest.NewRecorder()
+	srvErr.Handler().ServeHTTP(w, req)
+
+	var resErr IngressStatusResponse
+	_ = json.Unmarshal(w.Body.Bytes(), &resErr)
+	if resErr.Status != "error" || resErr.CaddyConnected != false {
+		t.Errorf("expected status 'error' when caddy disconnected, got %+v", resErr)
+	}
+
+	// 2. Caddy connected, but mDNS offline -> status = "degraded"
+	mockIngressOnline := &mockIngressManager{
+		status: map[string]any{"connected": true, "status": "ok"},
+	}
+	tempDir2 := t.TempDir()
+	dataDir2 := filepath.Join(tempDir2, "data")
+	srvDegraded, err := NewServer(Config{
+		DataDir:     dataDir2,
+		IngressMgr:  mockIngressOnline,
+		MDNSService: mdnsOffline, // inactive
+	})
+	if err != nil {
+		t.Fatalf("failed to create server: %v", err)
+	}
+	defer srvDegraded.Close()
+
+	req2 := httptest.NewRequest(http.MethodGet, "/api/v1/system/ingress", nil)
+	w2 := httptest.NewRecorder()
+	srvDegraded.Handler().ServeHTTP(w2, req2)
+
+	var resDegraded IngressStatusResponse
+	_ = json.Unmarshal(w2.Body.Bytes(), &resDegraded)
+	if resDegraded.Status != "degraded" || !resDegraded.CaddyConnected || resDegraded.MDNSActive {
+		t.Errorf("expected status 'degraded' when mdns inactive, got %+v", resDegraded)
+	}
+}
+
+func TestServer_StartBackgroundServices(t *testing.T) {
+	srv, _ := setupTestServer(t)
+	defer srv.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	srv.StartBackgroundServices(ctx)
+	// Cancel immediately to verify shutdown without hanging
+	cancel()
+}
+

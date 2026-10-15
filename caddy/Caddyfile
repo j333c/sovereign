@@ -1,0 +1,45 @@
+# Global configuration
+{
+	# Enable Admin API accessible from sovereign-daemon over sovereign-control network
+	admin 0.0.0.0:2019
+
+	# Prevent automatic HTTP->HTTPS redirect loops for local IP / mDNS addresses
+	auto_https disable_redirects
+}
+
+# Common proxy routing configuration
+(common_ingress) {
+	# Route API endpoints directly to daemon supervisor preserving path
+	handle /api/* {
+		reverse_proxy sovereign-daemon:8080 {
+			header_up Host {host}
+			header_up X-Real-IP {remote_host}
+			header_up X-Forwarded-For {remote_host}
+			header_up X-Forwarded-Proto {scheme}
+			header_up X-Forwarded-Host {host}
+			header_up X-Forwarded-Prefix /api
+		}
+	}
+
+	# Route UI routes (/ and /drop) and all web client assets to web frontend
+	handle {
+		reverse_proxy sovereign-web:3000 {
+			header_up Host {host}
+			header_up X-Real-IP {remote_host}
+			header_up X-Forwarded-For {remote_host}
+			header_up X-Forwarded-Proto {scheme}
+			header_up X-Forwarded-Host {host}
+		}
+	}
+}
+
+# HTTP Ingress: matches sovereign.local, direct LAN IPs, localhost, and catch-all port 80
+http://sovereign.local, http://localhost, :80 {
+	import common_ingress
+}
+
+# HTTPS Ingress: matches sovereign.local, direct LAN IPs, localhost, and catch-all port 443 with internal TLS
+https://sovereign.local, https://localhost, :443 {
+	tls internal
+	import common_ingress
+}
