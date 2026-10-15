@@ -2,7 +2,7 @@
 title: 'Story 2.1: On-Demand Container Lifecycle Engine & Health Probing'
 type: 'feature'
 created: '2026-10-15'
-status: 'review'
+status: 'done'
 route: 'dispatch'
 baseline_commit: 'd7c620ed031d7bc217987c01640ee732e4216c02'
 review_loop_iteration: 0
@@ -90,6 +90,14 @@ context:
 ## Spec Change Log
 
 ## Review Triage Log
+
+- **Watchdog Degradation & Recovery Debouncer Reset (`internal/supervisor/supervisor.go`)**: Fixed infinite restart storm by invoking `debouncer.Reset(id)` on recovery restart, checking active status under read-lock before acting, and running container restarts in non-blocking goroutines.
+- **Docker Network Attachment & Localhost Binding (`internal/supervisor/docker.go`)**: Added secondary network attachment (`sovereign-ingress`) via Docker Engine API `POST /networks/{network}/connect`, bound host ports explicitly to `127.0.0.1`, and aligned container naming with `sovereign-<name>`.
+- **SSE Pull Progress Calculation (`internal/supervisor/docker.go`)**: Implemented multi-layer progress aggregation with monotonic percentage reporting, eliminating erratic oscillations.
+- **Error Cleanup & Lifecycle Guards (`internal/supervisor/supervisor.go`)**: Added in-flight activation tracking to prevent concurrent activation races, reverted status to error and broadcast `service.error` on startup failures, and rejected restarts on inactive services with `400 Bad Request`.
+- **Test Isolation (`cmd/sovereign-daemon/server_test.go`)**: Explicitly configured `MockRuntimeEngine` in `setupTestServer` to guarantee zero dependency on host Docker daemon.
+- **Individual Service Endpoint (`cmd/sovereign-daemon/server.go`, `client.ts`, `api/openapi.yaml`)**: Added `GET /api/v1/services/{id}` endpoint and `getService(id)` client method.
+- **Test Coverage Expansion (`internal/supervisor/supervisor_test.go`, `server_test.go`)**: Added unit tests for watchdog loop, debouncer reset, recovery restart, in-flight activation guard, and inactive restart rejection. All 64 frontend tests and all Go package tests pass cleanly.
 
 ## Design Notes
 
