@@ -96,7 +96,11 @@ func (c *CaddyClient) BuildCaddyConfig(routes []RouteConfig) map[string]any {
 		}
 		seenSubpaths[cleanSubpath] = true
 
-		upstreamDial := fmt.Sprintf("%s:%d", r.Service, r.Port)
+		upstreamHost := r.Service
+		if !strings.HasPrefix(upstreamHost, "sovereign-") && !strings.Contains(upstreamHost, ".") && upstreamHost != "localhost" {
+			upstreamHost = "sovereign-" + upstreamHost
+		}
+		upstreamDial := fmt.Sprintf("%s:%d", upstreamHost, r.Port)
 
 		caddyRoutes = append(caddyRoutes, map[string]any{
 			"@id": fmt.Sprintf("route-spoke-%s", trimmed),
@@ -154,21 +158,64 @@ func (c *CaddyClient) BuildCaddyConfig(routes []RouteConfig) map[string]any {
 		},
 	})
 
+	servers := map[string]any{
+		"srv0": map[string]any{
+			"listen": []string{":80", ":443"},
+			"auto_https": map[string]any{
+				"disable_redirects": true,
+			},
+			"routes": caddyRoutes,
+		},
+	}
+
+	// Add dedicated port reverse proxy servers for spokes
+	seenPorts := make(map[int]bool)
+	for _, r := range routes {
+		if r.Port > 0 && r.Port != 80 && r.Port != 443 && !seenPorts[r.Port] {
+			seenPorts[r.Port] = true
+			serverID := fmt.Sprintf("srv_%d", r.Port)
+			upstreamHost := r.Service
+			if !strings.HasPrefix(upstreamHost, "sovereign-") && !strings.Contains(upstreamHost, ".") && upstreamHost != "localhost" {
+				upstreamHost = "sovereign-" + upstreamHost
+			}
+			upstreamDial := fmt.Sprintf("%s:%d", upstreamHost, r.Port)
+			servers[serverID] = map[string]any{
+				"listen": []string{fmt.Sprintf(":%d", r.Port)},
+				"routes": []map[string]any{
+					{
+						"@id": fmt.Sprintf("route-direct-%d", r.Port),
+						"handle": []map[string]any{
+							{
+								"handler": "reverse_proxy",
+								"upstreams": []map[string]any{
+									{"dial": upstreamDial},
+								},
+								"headers": map[string]any{
+									"request": map[string]any{
+										"set": map[string][]string{
+											"Host":              {"{http.request.host}"},
+											"X-Real-IP":         {"{http.request.remote.host}"},
+											"X-Forwarded-For":   {"{http.request.remote.host}"},
+											"X-Forwarded-Proto": {"{http.request.scheme}"},
+											"X-Forwarded-Host":  {"{http.request.host}"},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			}
+		}
+	}
+
 	return map[string]any{
 		"admin": map[string]any{
 			"listen": "0.0.0.0:2019",
 		},
 		"apps": map[string]any{
 			"http": map[string]any{
-				"servers": map[string]any{
-					"srv0": map[string]any{
-						"listen": []string{":80", ":443"},
-						"auto_https": map[string]any{
-							"disable_redirects": true,
-						},
-						"routes": caddyRoutes,
-					},
-				},
+				"servers": servers,
 			},
 		},
 	}

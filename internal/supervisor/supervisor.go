@@ -60,6 +60,7 @@ var (
 	ErrServiceNotFound = errors.New("service not found")
 	ErrPullFailed      = errors.New("image pull failed")
 	ErrInactiveService = errors.New("cannot restart inactive service; activate it first")
+	ErrServiceInactive = errors.New("service is inactive")
 )
 
 // ServiceDef holds the immutable specification of a managed service.
@@ -230,27 +231,30 @@ func (w *WatchdogDebouncer) GetState(serviceID string) ServiceWatchdogState {
 
 // ServiceManagerConfig holds options for initializing the ServiceManager.
 type ServiceManagerConfig struct {
-	DataDir          string
-	Engine           RuntimeEngine
-	Logger           *slog.Logger
-	WatchdogConfig   WatchdogConfig
-	EventBroadcaster EventBroadcaster
+	DataDir             string
+	Engine              RuntimeEngine
+	Logger              *slog.Logger
+	WatchdogConfig      WatchdogConfig
+	EventBroadcaster    EventBroadcaster
+	HardwareOpts        HardwareProbeOptions
+	JellyfinProvisioner *JellyfinProvisioner
 }
 
 // ServiceManager orchestrates on-demand container lifecycles, health probing, and volume preservation.
 type ServiceManager struct {
-	mu          sync.RWMutex
-	dataDir     string
-	engine      RuntimeEngine
-	logger      *slog.Logger
-	broadcaster EventBroadcaster
-	debouncer   *WatchdogDebouncer
-	definitions map[string]ServiceDef
-	statuses    map[string]*ServiceStatus
-	activating  map[string]bool
-	cancelWatch context.CancelFunc
-	stopOnce    sync.Once
-	timeNow     func() time.Time
+	mu                  sync.RWMutex
+	dataDir             string
+	engine              RuntimeEngine
+	logger              *slog.Logger
+	broadcaster         EventBroadcaster
+	debouncer           *WatchdogDebouncer
+	definitions         map[string]ServiceDef
+	statuses            map[string]*ServiceStatus
+	activating          map[string]bool
+	cancelWatch         context.CancelFunc
+	stopOnce            sync.Once
+	timeNow             func() time.Time
+	jellyfinProvisioner *JellyfinProvisioner
 }
 
 // NewServiceManager constructs and initializes the appliance service lifecycle manager.
@@ -263,6 +267,11 @@ func NewServiceManager(cfg ServiceManagerConfig) *ServiceManager {
 	}
 	if cfg.Engine == nil {
 		cfg.Engine = NewMockRuntimeEngine()
+	}
+
+	jp := cfg.JellyfinProvisioner
+	if jp == nil {
+		jp = NewJellyfinProvisioner(cfg.DataDir, cfg.Logger, cfg.HardwareOpts)
 	}
 
 	timeFunc := cfg.WatchdogConfig.TimeFunc
@@ -342,15 +351,16 @@ func NewServiceManager(cfg ServiceManagerConfig) *ServiceManager {
 	}
 
 	return &ServiceManager{
-		dataDir:     cfg.DataDir,
-		engine:      cfg.Engine,
-		logger:      cfg.Logger,
-		broadcaster: cfg.EventBroadcaster,
-		debouncer:   debouncer,
-		definitions: defs,
-		statuses:    statuses,
-		activating:  make(map[string]bool),
-		timeNow:     timeFunc,
+		dataDir:             cfg.DataDir,
+		engine:              cfg.Engine,
+		logger:              cfg.Logger,
+		broadcaster:         cfg.EventBroadcaster,
+		debouncer:           debouncer,
+		definitions:         defs,
+		statuses:            statuses,
+		activating:          make(map[string]bool),
+		timeNow:             timeFunc,
+		jellyfinProvisioner: jp,
 	}
 }
 
@@ -526,6 +536,20 @@ func (m *ServiceManager) ActivateService(ctx context.Context, id string) (*Servi
 		}
 	}
 
+	var devices []string
+	var udpPorts map[int]int
+
+	if id == ServiceJellyfin && m.jellyfinProvisioner != nil {
+		jellyfinRes, err := m.jellyfinProvisioner.Provision(ctx)
+		if err != nil {
+			m.logger.Error("failed to provision jellyfin specialized environment", "error", err)
+			emitError(fmt.Sprintf("Failed to provision Jellyfin: %v", err))
+			return nil, fmt.Errorf("failed to provision jellyfin: %w", err)
+		}
+		devices = jellyfinRes.Devices
+		udpPorts = jellyfinRes.UDPPorts
+	}
+
 	// 3. Synthesize Compose specification
 	containerSpec := ContainerSpec{
 		Name:                   def.ID,
@@ -533,6 +557,8 @@ func (m *ServiceManager) ActivateService(ctx context.Context, id string) (*Servi
 		MemoryLimitBytes:       def.MemLimitBytes,
 		MemoryReservationBytes: def.MemReservationBytes,
 		Ports:                  map[int]int{def.Port: def.Port},
+		UDPPorts:               udpPorts,
+		Devices:                devices,
 		Volumes:                volumes,
 		Networks:               []string{"sovereign-ingress", "sovereign-control"},
 	}
@@ -751,6 +777,34 @@ func (m *ServiceManager) Debouncer() *WatchdogDebouncer {
 // Engine returns the runtime engine.
 func (m *ServiceManager) Engine() RuntimeEngine {
 	return m.engine
+}
+
+// JellyfinProvisioner returns the provisioner used for Jellyfin.
+func (m *ServiceManager) JellyfinProvisioner() *JellyfinProvisioner {
+	return m.jellyfinProvisioner
+}
+
+// RefreshService triggers a library scan or metadata refresh for the specified service.
+func (m *ServiceManager) RefreshService(ctx context.Context, id string) error {
+	id = m.resolveID(id)
+	m.mu.RLock()
+	_, exists := m.definitions[id]
+	if !exists {
+		m.mu.RUnlock()
+		return ErrServiceNotFound
+	}
+	st, exists := m.statuses[id]
+	if !exists || st.Status != StatusRunning {
+		m.mu.RUnlock()
+		return ErrServiceInactive
+	}
+	m.mu.RUnlock()
+
+	if id == ServiceJellyfin && m.jellyfinProvisioner != nil {
+		return m.jellyfinProvisioner.TriggerLibraryRefresh(ctx)
+	}
+
+	return nil
 }
 
 // Close stops background routines.

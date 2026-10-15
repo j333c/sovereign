@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -27,6 +28,8 @@ type ContainerSpec struct {
 	MemoryLimitBytes       int64             `yaml:"mem_limit_bytes"`
 	MemoryReservationBytes int64             `yaml:"mem_reservation_bytes"`
 	Ports                  map[int]int       `yaml:"ports"`   // hostPort: containerPort
+	UDPPorts               map[int]int       `yaml:"udp_ports,omitempty"`
+	Devices                []string          `yaml:"devices,omitempty"`
 	Volumes                []string          `yaml:"volumes"` // hostPath:containerPath[:ro]
 	Networks               []string          `yaml:"networks"`
 	Env                    map[string]string `yaml:"environment,omitempty"`
@@ -454,23 +457,55 @@ func (d *DockerEngine) StartContainer(ctx context.Context, spec ContainerSpec) e
 		}}
 		exposedPorts[key] = struct{}{}
 	}
+	for hostPort, containerPort := range spec.UDPPorts {
+		key := fmt.Sprintf("%d/udp", containerPort)
+		portBindings[key] = []portBinding{{
+			HostIP:   "0.0.0.0",
+			HostPort: fmt.Sprintf("%d", hostPort),
+		}}
+		exposedPorts[key] = struct{}{}
+	}
 
 	primaryNet := "sovereign-control"
 	if len(spec.Networks) > 0 {
 		primaryNet = spec.Networks[0]
 	}
 
+	hostConfig := map[string]any{
+		"Memory":            spec.MemoryLimitBytes,
+		"MemoryReservation": spec.MemoryReservationBytes,
+		"Binds":             spec.Volumes,
+		"PortBindings":      portBindings,
+		"RestartPolicy":     map[string]string{"Name": "unless-stopped"},
+		"NetworkMode":       primaryNet,
+	}
+
+	if len(spec.Devices) > 0 {
+		var dockerDevices []map[string]string
+		for _, dev := range spec.Devices {
+			parts := strings.Split(dev, ":")
+			hostPath := parts[0]
+			containerPath := hostPath
+			perms := "rwm"
+			if len(parts) >= 2 {
+				containerPath = parts[1]
+			}
+			if len(parts) >= 3 {
+				perms = parts[2]
+			}
+			dockerDevices = append(dockerDevices, map[string]string{
+				"PathOnHost":        hostPath,
+				"PathInContainer":   containerPath,
+				"CgroupPermissions": perms,
+			})
+		}
+		hostConfig["Devices"] = dockerDevices
+	}
+
 	createPayload := map[string]any{
 		"Image":        spec.Image,
 		"ExposedPorts": exposedPorts,
-		"HostConfig": map[string]any{
-			"Memory":            spec.MemoryLimitBytes,
-			"MemoryReservation": spec.MemoryReservationBytes,
-			"Binds":             spec.Volumes,
-			"PortBindings":      portBindings,
-			"RestartPolicy":     map[string]string{"Name": "unless-stopped"},
-			"NetworkMode":       primaryNet,
-		},
+		"HostConfig":   hostConfig,
 	}
 
 	payloadBytes, err := json.Marshal(createPayload)
@@ -644,6 +679,7 @@ type ComposeServiceSpec struct {
 	Restart       string            `yaml:"restart"`
 	Ports         []string          `yaml:"ports,omitempty"`
 	Volumes       []string          `yaml:"volumes,omitempty"`
+	Devices       []string          `yaml:"devices,omitempty"`
 	Environment   map[string]string `yaml:"environment,omitempty"`
 	Deploy        *ComposeDeploy    `yaml:"deploy,omitempty"`
 	Networks      []string          `yaml:"networks,omitempty"`
@@ -674,9 +710,23 @@ func SynthesizeComposeSpec(dataDir string, spec ContainerSpec) (string, error) {
 		return "", fmt.Errorf("failed to create compose directory: %w", err)
 	}
 
-	ports := make([]string, 0, len(spec.Ports))
-	for hostPort, containerPort := range spec.Ports {
-		ports = append(ports, fmt.Sprintf("127.0.0.1:%d:%d", hostPort, containerPort))
+	ports := make([]string, 0, len(spec.Ports)+len(spec.UDPPorts))
+	tcpKeys := make([]int, 0, len(spec.Ports))
+	for k := range spec.Ports {
+		tcpKeys = append(tcpKeys, k)
+	}
+	sort.Ints(tcpKeys)
+	for _, hostPort := range tcpKeys {
+		ports = append(ports, fmt.Sprintf("127.0.0.1:%d:%d", hostPort, spec.Ports[hostPort]))
+	}
+
+	udpKeys := make([]int, 0, len(spec.UDPPorts))
+	for k := range spec.UDPPorts {
+		udpKeys = append(udpKeys, k)
+	}
+	sort.Ints(udpKeys)
+	for _, hostPort := range udpKeys {
+		ports = append(ports, fmt.Sprintf("%d:%d/udp", hostPort, spec.UDPPorts[hostPort]))
 	}
 
 	// Format memory bounds in megabytes for Compose compatibility
@@ -691,6 +741,7 @@ func SynthesizeComposeSpec(dataDir string, spec ContainerSpec) (string, error) {
 				Restart:       "unless-stopped",
 				Ports:         ports,
 				Volumes:       spec.Volumes,
+				Devices:       spec.Devices,
 				Environment:   spec.Env,
 				Deploy: &ComposeDeploy{
 					Resources: ComposeResources{

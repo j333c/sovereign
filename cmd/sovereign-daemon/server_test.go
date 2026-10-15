@@ -1808,3 +1808,197 @@ func TestServer_Services_UnknownService(t *testing.T) {
 		}
 	}
 }
+
+func TestServer_Jellyfin_ActivationAndRefresh(t *testing.T) {
+	tempDir := t.TempDir()
+	dataDir := filepath.Join(tempDir, "data")
+
+	stateDir := filepath.Join(dataDir, "state")
+	_ = os.MkdirAll(stateDir, 0755)
+	_ = os.WriteFile(filepath.Join(stateDir, "boot_state.json"), []byte(`{"clean_shutdown": true}`), 0644)
+
+	mockEngine := supervisor.NewMockRuntimeEngine()
+	mockIngress := &mockIngressManager{
+		status: map[string]any{"connected": true, "status": "ok"},
+	}
+
+	svcMgr := supervisor.NewServiceManager(supervisor.ServiceManagerConfig{
+		DataDir: dataDir,
+		Engine:  mockEngine,
+	})
+
+	srv, err := NewServer(Config{
+		DataDir:    dataDir,
+		IngressMgr: mockIngress,
+		ServiceMgr: svcMgr,
+	})
+	if err != nil {
+		t.Fatalf("failed to create test server: %v", err)
+	}
+	defer srv.Close()
+
+	// 1. Refresh on inactive service returns 503 Service Unavailable
+	reqRefreshInactive := httptest.NewRequest(http.MethodPost, "/api/v1/services/jellyfin/refresh", nil)
+	wRefreshInactive := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(wRefreshInactive, reqRefreshInactive)
+
+	if wRefreshInactive.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503 Service Unavailable for refresh when inactive, got: %d: %s", wRefreshInactive.Code, wRefreshInactive.Body.String())
+	}
+	var probInactive ProblemDetails
+	_ = json.Unmarshal(wRefreshInactive.Body.Bytes(), &probInactive)
+	if probInactive.Title != "Service Inactive" {
+		t.Errorf("expected title 'Service Inactive', got: %s", probInactive.Title)
+	}
+
+	// 2. Refresh on nonexistent service returns 404 Not Found
+	reqRefresh404 := httptest.NewRequest(http.MethodPost, "/api/v1/services/nonexistent/refresh", nil)
+	wRefresh404 := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(wRefresh404, reqRefresh404)
+	if wRefresh404.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 Not Found for nonexistent refresh, got: %d", wRefresh404.Code)
+	}
+
+	// 3. Initial ingress check: Jellyfin is inactive, so only default routes present
+	reqIngressInit := httptest.NewRequest(http.MethodGet, "/api/v1/system/ingress", nil)
+	wIngressInit := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(wIngressInit, reqIngressInit)
+	var ingressInit IngressStatusResponse
+	_ = json.Unmarshal(wIngressInit.Body.Bytes(), &ingressInit)
+	if len(ingressInit.Routes) != 3 {
+		t.Fatalf("expected 3 default routes initially, got: %d", len(ingressInit.Routes))
+	}
+
+	// 4. Activate Jellyfin
+	actReq := httptest.NewRequest(http.MethodPost, "/api/v1/services/jellyfin/activate", nil)
+	wAct := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(wAct, actReq)
+
+	if wAct.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK activating Jellyfin, got: %d: %s", wAct.Code, wAct.Body.String())
+	}
+
+	var actRes supervisor.ServiceStatus
+	_ = json.Unmarshal(wAct.Body.Bytes(), &actRes)
+	if actRes.ID != "jellyfin" || actRes.Status != "running" || !actRes.ImageDownloaded {
+		t.Errorf("unexpected activation status: %+v", actRes)
+	}
+
+	// 5. Verify library paths and direct-play configuration exist
+	moviesDir := filepath.Join(dataDir, "media", "movies")
+	tvDir := filepath.Join(dataDir, "media", "tv")
+	configDir := filepath.Join(dataDir, "state", "services", "jellyfin", "config")
+	cacheDir := filepath.Join(dataDir, "state", "services", "jellyfin", "cache")
+
+	for _, d := range []string{moviesDir, tvDir, configDir, cacheDir} {
+		if fi, err := os.Stat(d); err != nil || !fi.IsDir() {
+			t.Errorf("expected directory %s to be created", d)
+		}
+	}
+
+	encData, err := os.ReadFile(filepath.Join(configDir, "encoding.xml"))
+	if err != nil {
+		t.Fatalf("encoding.xml not generated: %v", err)
+	}
+	if !strings.Contains(string(encData), "<EnableDirectPlay>true</EnableDirectPlay>") {
+		t.Errorf("encoding.xml missing EnableDirectPlay: %s", string(encData))
+	}
+	if !strings.Contains(string(encData), "<EnableAudioVbr>true</EnableAudioVbr>") {
+		t.Errorf("encoding.xml missing EnableAudioVbr: %s", string(encData))
+	}
+
+	sysData, err := os.ReadFile(filepath.Join(configDir, "system.xml"))
+	if err != nil {
+		t.Fatalf("system.xml not generated: %v", err)
+	}
+	if !strings.Contains(string(sysData), "<Port>8096</Port>") {
+		t.Errorf("system.xml missing Port 8096: %s", string(sysData))
+	}
+
+	// 6. Verify Caddy ingress route was dynamically synchronized
+	if mockIngress.SyncCalls() == 0 {
+		t.Errorf("expected Caddy route sync to be called on Jellyfin activation")
+	}
+
+	reqIngressActive := httptest.NewRequest(http.MethodGet, "/api/v1/system/ingress", nil)
+	wIngressActive := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(wIngressActive, reqIngressActive)
+	var ingressActive IngressStatusResponse
+	_ = json.Unmarshal(wIngressActive.Body.Bytes(), &ingressActive)
+
+	hasJellyfinRoute := false
+	for _, r := range ingressActive.Routes {
+		if r.Service == "jellyfin" && r.Subpath == "/media" && r.Upstream == "sovereign-jellyfin:8096" {
+			hasJellyfinRoute = true
+			break
+		}
+	}
+	if !hasJellyfinRoute {
+		t.Errorf("expected jellyfin ingress route in /api/v1/system/ingress, found: %+v", ingressActive.Routes)
+	}
+
+	// 7. Refresh library when Jellyfin is active
+	refreshInvoked := false
+	srv.ServiceManager().JellyfinProvisioner().RefreshFunc = func(ctx context.Context) error {
+		refreshInvoked = true
+		return nil
+	}
+
+	reqRefresh := httptest.NewRequest(http.MethodPost, "/api/v1/services/jellyfin/refresh", nil)
+	wRefresh := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(wRefresh, reqRefresh)
+
+	if wRefresh.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK for refresh on active service, got: %d: %s", wRefresh.Code, wRefresh.Body.String())
+	}
+	if !refreshInvoked {
+		t.Errorf("expected refresh webhook to be dispatched to Jellyfin")
+	}
+
+	var refreshRes struct {
+		Status    string `json:"status"`
+		Service   string `json:"service"`
+		Refreshed bool   `json:"refreshed"`
+	}
+	_ = json.Unmarshal(wRefresh.Body.Bytes(), &refreshRes)
+	if refreshRes.Status != "ok" || refreshRes.Service != "jellyfin" || !refreshRes.Refreshed {
+		t.Errorf("unexpected refresh response payload: %+v", refreshRes)
+	}
+
+	// Test alias 'video'
+	aliasInvoked := false
+	srv.ServiceManager().JellyfinProvisioner().RefreshFunc = func(ctx context.Context) error {
+		aliasInvoked = true
+		return nil
+	}
+	reqAlias := httptest.NewRequest(http.MethodPost, "/api/v1/services/video/refresh", nil)
+	wAlias := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(wAlias, reqAlias)
+	if wAlias.Code != http.StatusOK || !aliasInvoked {
+		t.Errorf("expected alias /video/refresh to succeed and invoke refresh, got status: %d", wAlias.Code)
+	}
+
+	// 8. Place media file in movies directory and deactivate Jellyfin
+	testVideo := filepath.Join(moviesDir, "Gladiator.mkv")
+	_ = os.WriteFile(testVideo, []byte("gladiator-video-bytes"), 0644)
+
+	deactReq := httptest.NewRequest(http.MethodPost, "/api/v1/services/jellyfin/deactivate", nil)
+	wDeact := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(wDeact, deactReq)
+	if wDeact.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK deactivating, got: %d", wDeact.Code)
+	}
+
+	// Verify video file is strictly preserved!
+	if _, err := os.Stat(testVideo); os.IsNotExist(err) {
+		t.Fatalf("CRITICAL: media file %s was deleted during deactivation!", testVideo)
+	}
+
+	// Subsequent refresh returns 503 Service Unavailable
+	reqRefreshPostDeact := httptest.NewRequest(http.MethodPost, "/api/v1/services/jellyfin/refresh", nil)
+	wRefreshPostDeact := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(wRefreshPostDeact, reqRefreshPostDeact)
+	if wRefreshPostDeact.Code != http.StatusServiceUnavailable {
+		t.Errorf("expected 503 after deactivation, got: %d", wRefreshPostDeact.Code)
+	}
+}

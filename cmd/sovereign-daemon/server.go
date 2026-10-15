@@ -461,6 +461,7 @@ func (s *Server) routes() {
 	s.router.HandleFunc("POST /api/v1/services/{id}/activate", s.handleActivateService)
 	s.router.HandleFunc("POST /api/v1/services/{id}/deactivate", s.handleDeactivateService)
 	s.router.HandleFunc("POST /api/v1/services/{id}/restart", s.requireSetupOrAdmin(s.handleRestartService))
+	s.router.HandleFunc("POST /api/v1/services/{id}/refresh", s.handleRefreshService)
 }
 
 
@@ -616,6 +617,20 @@ func (s *Server) handleIngressStatus(w http.ResponseWriter, r *http.Request) {
 		{Service: "web", Subpath: "/", Upstream: "sovereign-web:3000"},
 		{Service: "web", Subpath: "/drop", Upstream: "sovereign-web:3000"},
 		{Service: "daemon", Subpath: "/api/*", Upstream: "sovereign-daemon:8080"},
+	}
+
+	if s.serviceMgr != nil {
+		if svcs, err := s.serviceMgr.ListServices(ctx); err == nil {
+			for _, svc := range svcs {
+				if svc.Status == supervisor.StatusRunning {
+					routes = append(routes, IngressRoute{
+						Service:  svc.ID,
+						Subpath:  svc.Subpath,
+						Upstream: fmt.Sprintf("sovereign-%s:%d", svc.ID, svc.Port),
+					})
+				}
+			}
+		}
 	}
 
 	s.writeJSON(w, http.StatusOK, IngressStatusResponse{
@@ -1195,6 +1210,8 @@ func (s *Server) handleActivateService(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	s.syncIngressRoutes(r.Context())
+
 	s.writeJSON(w, http.StatusOK, svc)
 }
 
@@ -1224,6 +1241,8 @@ func (s *Server) handleDeactivateService(w http.ResponseWriter, r *http.Request)
 		s.writeProblem(w, http.StatusInternalServerError, "Internal Server Error", fmt.Sprintf("Failed to deactivate service '%s': %v", id, err), r.URL.Path)
 		return
 	}
+
+	s.syncIngressRoutes(r.Context())
 
 	s.writeJSON(w, http.StatusOK, svc)
 }
@@ -1259,5 +1278,79 @@ func (s *Server) handleRestartService(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	s.syncIngressRoutes(r.Context())
+
 	s.writeJSON(w, http.StatusOK, svc)
+}
+
+func (s *Server) handleRefreshService(w http.ResponseWriter, r *http.Request) {
+	s.mu.RLock()
+	mgr := s.serviceMgr
+	s.mu.RUnlock()
+
+	if mgr == nil {
+		s.writeProblem(w, http.StatusInternalServerError, "Internal Server Error", "Service manager is not initialized", r.URL.Path)
+		return
+	}
+
+	id := extractServiceID(r, "refresh")
+	if id == "" {
+		s.writeProblem(w, http.StatusBadRequest, "Invalid Request", "Service ID missing in request path", r.URL.Path)
+		return
+	}
+
+	err := mgr.RefreshService(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, supervisor.ErrServiceNotFound) {
+			s.writeProblem(w, http.StatusNotFound, "Service Not Found", fmt.Sprintf("Service '%s' is not defined", id), r.URL.Path)
+			return
+		}
+		if errors.Is(err, supervisor.ErrServiceInactive) || errors.Is(err, supervisor.ErrInactiveService) {
+			s.writeProblem(w, http.StatusServiceUnavailable, "Service Inactive", fmt.Sprintf("Service '%s' is not active", id), r.URL.Path)
+			return
+		}
+		s.logger.Error("failed to refresh service library", "service", id, "error", err)
+		s.writeProblem(w, http.StatusInternalServerError, "Refresh Failed", fmt.Sprintf("Failed to refresh service '%s': %v", id, err), r.URL.Path)
+		return
+	}
+
+	s.writeJSON(w, http.StatusOK, map[string]any{
+		"status":    "ok",
+		"service":   id,
+		"refreshed": true,
+	})
+}
+
+func (s *Server) syncIngressRoutes(ctx context.Context) {
+	s.mu.RLock()
+	ingressMgr := s.ingressMgr
+	mgr := s.serviceMgr
+	s.mu.RUnlock()
+
+	if ingressMgr == nil || mgr == nil {
+		return
+	}
+
+	services, err := mgr.ListServices(ctx)
+	if err != nil {
+		s.logger.Warn("failed to list services for ingress route sync", "error", err)
+		return
+	}
+
+	var routes []ingress.RouteConfig
+	for _, svc := range services {
+		if svc.Status == supervisor.StatusRunning {
+			routes = append(routes, ingress.RouteConfig{
+				Service: svc.ID,
+				Port:    svc.Port,
+				Subpath: svc.Subpath,
+			})
+		}
+	}
+
+	syncCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	if err := ingressMgr.SyncRoutes(syncCtx, routes); err != nil {
+		s.logger.Warn("failed to sync ingress routes with caddy", "error", err)
+	}
 }
