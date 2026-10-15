@@ -69,6 +69,7 @@ export interface DashboardTranslations {
   rollbackPreservedNote: string;
   diagnosticLogsDownloaded: string;
   close: string;
+  inactive: string;
 }
 
 export const translations: Record<Language, DashboardTranslations> = {
@@ -141,6 +142,7 @@ export const translations: Record<Language, DashboardTranslations> = {
     rollbackPreservedNote: "Your media, files, and documents are preserved and will not be touched.",
     diagnosticLogsDownloaded: "Diagnostic logs downloaded",
     close: "Close",
+    inactive: "Inactive",
   },
   de: {
     crestTitle: "Sovereign",
@@ -211,6 +213,7 @@ export const translations: Record<Language, DashboardTranslations> = {
     rollbackPreservedNote: "Ihre Medien, Dateien und Dokumente bleiben erhalten und werden nicht verändert.",
     diagnosticLogsDownloaded: "Diagnoseprotokolle heruntergeladen",
     close: "Schließen",
+    inactive: "Inaktiv",
   },
   es: {
     crestTitle: "Sovereign",
@@ -281,6 +284,7 @@ export const translations: Record<Language, DashboardTranslations> = {
     rollbackPreservedNote: "Sus medios, archivos y documentos se conservan y no se tocarán.",
     diagnosticLogsDownloaded: "Registros de diagnóstico descargados",
     close: "Cerrar",
+    inactive: "Inactivo",
   },
   fr: {
     crestTitle: "Sovereign",
@@ -351,5 +355,6 @@ export const translations: Record<Language, DashboardTranslations> = {
     rollbackPreservedNote: "Vos médias, fichiers et documents sont préservés et ne seront pas modifiés.",
     diagnosticLogsDownloaded: "Journaux de diagnostic téléchargés",
     close: "Fermer",
+    inactive: "Inactif",
   },
 };

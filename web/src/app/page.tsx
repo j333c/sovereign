@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState, useCallback } from "react";
+import React, { useEffect, useState, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import {
   apiClient as defaultApiClient,
@@ -33,6 +33,7 @@ export interface HomePageProps {
   initialAuthenticated?: boolean;
   initialReady?: boolean;
   initialServices?: Record<string, ServiceStateOverride>;
+  initialPendingAction?: string | null;
 }
 
 export function HomeScreen(props: HomePageProps) {
@@ -91,6 +92,40 @@ const backendServiceMap: Record<string, string> = {
   ai: "llama-server",
 };
 
+export function mapServiceStatus(status?: string, health?: string): StatusLevel {
+  const s = (status || "").toLowerCase().trim();
+  const h = (health || "").toLowerCase().trim();
+
+  if (s === "starting" || h === "starting") {
+    return "starting";
+  }
+  if (
+    s === "inactive" ||
+    s === "stopped" ||
+    h === "inactive" ||
+    h === "stopped"
+  ) {
+    return "stopped";
+  }
+  if (s === "error" || h === "unhealthy" || h === "error") {
+    return "error";
+  }
+  if (s === "degraded" || h === "degraded" || s === "amber" || h === "amber") {
+    return "degraded";
+  }
+  if (
+    s === "healthy" ||
+    s === "operational" ||
+    s === "running" ||
+    h === "healthy" ||
+    h === "operational" ||
+    h === "running"
+  ) {
+    return "healthy";
+  }
+  return "healthy";
+}
+
 function HomeScreenContent({
   apiClientOverride,
   router,
@@ -100,6 +135,7 @@ function HomeScreenContent({
   initialAuthenticated = false,
   initialReady = false,
   initialServices = {},
+  initialPendingAction = null,
 }: HomePageProps & { router?: { replace: (url: string) => void } }) {
   const client = apiClientOverride ?? defaultApiClient;
   const [isReady, setIsReady] = useState(initialReady);
@@ -112,9 +148,12 @@ function HomeScreenContent({
     }
     return initialLanguage;
   });
+  const t = translations[language];
   const [isAuthenticated, setIsAuthenticated] = useState(initialAuthenticated);
   const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
-  const [pendingAction, setPendingAction] = useState<string | null>(null);
+  const [pendingAction, setPendingAction] = useState<string | null>(initialPendingAction);
+  const [activeRollbackService, setActiveRollbackService] = useState<string | null>(null);
+  const problemDetailsRef = useRef<HTMLDivElement>(null);
   const [enabledFeatures, setEnabledFeatures] = useState<string[] | null>(null);
   const [serviceStates, setServiceStates] = useState<
     Record<string, ServiceStateOverride>
@@ -138,33 +177,11 @@ function HomeScreenContent({
       const cardId = serviceIdMap[evt.service_id];
       if (!cardId) return;
 
-      let mappedStatus: StatusLevel = "healthy";
-      let reassuranceMsg: string | undefined = undefined;
-
-      const statusStr = (evt.status || "").toLowerCase();
-      const healthStr = (evt.health || "").toLowerCase();
-
-      if (statusStr === "starting") {
-        mappedStatus = "starting";
-      } else if (
-        statusStr === "degraded" ||
-        healthStr === "degraded"
-      ) {
-        mappedStatus = "degraded";
-        reassuranceMsg = evt.detail;
-      } else if (
-        statusStr === "error" ||
-        statusStr === "stopped" ||
-        healthStr === "unhealthy"
-      ) {
-        mappedStatus = "error";
-        reassuranceMsg = evt.detail;
-      } else if (
-        statusStr === "running" &&
-        (healthStr === "healthy" || !healthStr)
-      ) {
-        mappedStatus = "healthy";
-      }
+      const mappedStatus = mapServiceStatus(evt.status, evt.health);
+      const reassuranceMsg =
+        mappedStatus === "degraded" || mappedStatus === "error"
+          ? evt.detail
+          : undefined;
 
       setServiceStates((prev) => ({
         ...prev,
@@ -237,17 +254,7 @@ function HomeScreenContent({
         for (const s of res.services) {
           const cardId = serviceIdMap[s.id];
           if (!cardId) continue;
-          let status: StatusLevel = "healthy";
-          if (s.status === "starting") status = "starting";
-          else if (s.status === "degraded" || s.health === "degraded")
-            status = "degraded";
-          else if (
-            s.status === "error" ||
-            s.status === "stopped" ||
-            s.health === "unhealthy"
-          )
-            status = "error";
-          else if (s.status === "running") status = "healthy";
+          const status = mapServiceStatus(s.status, s.health);
           updates[cardId] = { status };
         }
         setServiceStates((prev) => ({ ...prev, ...updates }));
@@ -286,6 +293,7 @@ function HomeScreenContent({
   const executeRestart = useCallback(
     async (serviceId: string) => {
       const backendId = backendServiceMap[serviceId] || serviceId;
+      const previousState = serviceStates[serviceId];
       setServiceStates((prev) => ({
         ...prev,
         [serviceId]: {
@@ -298,7 +306,7 @@ function HomeScreenContent({
       try {
         await client.restartService(backendId);
       } catch (err: unknown) {
-        let title = "Failed to restart service";
+        let title = t.restartFailed;
         let detail = "An unexpected error occurred while restarting the service.";
         if (err instanceof ProblemDetailsError) {
           title = err.title || title;
@@ -311,12 +319,13 @@ function HomeScreenContent({
           ...prev,
           [serviceId]: {
             ...prev[serviceId],
+            status: previousState?.status || "error",
             isRestarting: false,
           },
         }));
       }
     },
-    [client]
+    [client, serviceStates, t.restartFailed]
   );
 
   const handleRestart = useCallback(
@@ -329,6 +338,14 @@ function HomeScreenContent({
       await executeRestart(serviceId);
     },
     [isAuthenticated, executeRestart]
+  );
+
+  const handleRollback = useCallback(
+    async (serviceId: string) => {
+      setActiveRollbackService(null);
+      await executeRestart(serviceId);
+    },
+    [executeRestart]
   );
 
   const handleSettingsClick = useCallback(() => {
@@ -356,19 +373,50 @@ function HomeScreenContent({
       const serviceId = pendingAction.slice("restart:".length);
       setPendingAction(null);
       void executeRestart(serviceId);
+    } else if (pendingAction?.startsWith("rollback:")) {
+      const serviceId = pendingAction.slice("rollback:".length);
+      setPendingAction(null);
+      setActiveRollbackService(serviceId);
     } else if (pendingAction === "restart") {
       setPendingAction(null);
       void executeRestart("video");
+    } else if (pendingAction === "rollback") {
+      setPendingAction(null);
+      setActiveRollbackService("video");
     } else {
       setPendingAction(null);
     }
   }, [pendingAction, router, executeRestart]);
 
+  useEffect(() => {
+    if (!restartError) return;
+
+    function handleClickOutside(event: MouseEvent) {
+      if (
+        problemDetailsRef.current &&
+        !problemDetailsRef.current.contains(event.target as Node)
+      ) {
+        setRestartError(null);
+      }
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setRestartError(null);
+      }
+    }
+
+    document.addEventListener("mousedown", handleClickOutside);
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [restartError]);
+
   if (!isReady) {
     return null;
   }
-
-  const t = translations[language];
 
   // Aggregate health derived from telemetry or default to operational
   const rawStatus = telemetry?.overall_status ?? "operational";
@@ -481,6 +529,9 @@ function HomeScreenContent({
                   onRequireAdmin={handleRequireAdmin}
                   isAuthenticated={isAuthenticated}
                   onRestart={handleRestart}
+                  onRollback={handleRollback}
+                  isRollbackOpen={activeRollbackService === svc.id}
+                  onRollbackClose={() => setActiveRollbackService(null)}
                   isRestarting={svc.isRestarting}
                   reassuranceMessage={svc.reassuranceMessage}
                 />
@@ -514,7 +565,10 @@ function HomeScreenContent({
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
           data-testid="problem-details-modal"
         >
-          <div className="w-full max-w-md rounded-xl border border-red-200 bg-white p-6 shadow-xl text-[#0F172A]">
+          <div
+            ref={problemDetailsRef}
+            className="w-full max-w-md rounded-xl border border-red-200 bg-white p-6 shadow-xl text-[#0F172A]"
+          >
             <div className="flex items-center gap-3">
               <span className="text-2xl text-red-600" aria-hidden="true">
                 ⚠️

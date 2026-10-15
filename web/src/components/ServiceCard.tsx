@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import { StatusBadge, StatusLevel } from "./StatusBadge";
 import { Language, translations } from "@/lib/i18n";
 
@@ -21,6 +21,9 @@ export interface ServiceCardProps {
   onRollback?: (id: string) => Promise<void> | void;
   isRestarting?: boolean;
   reassuranceMessage?: string;
+  isRollbackOpen?: boolean;
+  onRollbackClose?: () => void;
+  initialMenuOpen?: boolean;
 }
 
 export function ServiceCard({
@@ -40,13 +43,22 @@ export function ServiceCard({
   onRollback,
   isRestarting = false,
   reassuranceMessage,
+  isRollbackOpen: controlledRollbackOpen,
+  onRollbackClose,
+  initialMenuOpen = false,
 }: ServiceCardProps) {
   const t = translations[currentLanguage];
-  const [isMenuOpen, setIsMenuOpen] = useState(false);
-  const [isRollbackOpen, setIsRollbackOpen] = useState(false);
+  const [isMenuOpen, setIsMenuOpen] = useState(initialMenuOpen);
+  const [localRollbackOpen, setLocalRollbackOpen] = useState(false);
+  const isRollbackOpen = Boolean(controlledRollbackOpen || localRollbackOpen);
   const menuRef = useRef<HTMLDivElement>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
   const rollbackRef = useRef<HTMLDivElement>(null);
+
+  const closeRollback = useCallback(() => {
+    setLocalRollbackOpen(false);
+    onRollbackClose?.();
+  }, [onRollbackClose]);
 
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
@@ -62,7 +74,7 @@ export function ServiceCard({
         rollbackRef.current &&
         !rollbackRef.current.contains(event.target as Node)
       ) {
-        setIsRollbackOpen(false);
+        closeRollback();
       }
     }
 
@@ -73,7 +85,7 @@ export function ServiceCard({
           buttonRef.current?.focus();
         }
         if (isRollbackOpen) {
-          setIsRollbackOpen(false);
+          closeRollback();
         }
       }
     }
@@ -86,7 +98,7 @@ export function ServiceCard({
       document.removeEventListener("mousedown", handleClickOutside);
       window.removeEventListener("keydown", handleKeyDown);
     };
-  }, [isMenuOpen, isRollbackOpen]);
+  }, [isMenuOpen, isRollbackOpen, closeRollback]);
 
   async function handlePrivilegedAction(actionName: "restart" | "rollback") {
     setIsMenuOpen(false);
@@ -100,11 +112,7 @@ export function ServiceCard({
         await onRestart(id);
       }
     } else if (actionName === "rollback") {
-      if (onRollback) {
-        await onRollback(id);
-      } else {
-        setIsRollbackOpen(true);
-      }
+      setLocalRollbackOpen(true);
     }
   }
 
@@ -132,7 +140,9 @@ export function ServiceCard({
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
-        URL.revokeObjectURL(url);
+        setTimeout(() => {
+          URL.revokeObjectURL(url);
+        }, 1000);
       } catch {
         // Fallback for restricted test environments
       }
@@ -144,7 +154,8 @@ export function ServiceCard({
     (status === "healthy" || status === "operational" || status === "running") &&
     !isStarting;
   const isAmber =
-    status === "amber" || status === "degraded" || isStarting;
+    (status === "amber" || status === "degraded") && !isStarting;
+  const isStoppedOrInactive = status === "stopped" || status === "inactive";
 
   const effectiveStatus: StatusLevel = isStarting
     ? "starting"
@@ -152,6 +163,8 @@ export function ServiceCard({
     ? "healthy"
     : isAmber
     ? "degraded"
+    : isStoppedOrInactive
+    ? "stopped"
     : "error";
 
   const statusLabel = isStarting
@@ -162,6 +175,8 @@ export function ServiceCard({
     ? t.runningHealthy
     : isAmber
     ? t.attentionRequired
+    : isStoppedOrInactive
+    ? `${t.stoppedError} (${t.inactive})`
     : t.stoppedError;
 
   // Reassurance microcopy filtering: strictly eliminate raw exit codes or terminal traces
@@ -178,10 +193,9 @@ export function ServiceCard({
         : t.pausedMemoryUse
       : reassuranceMessage;
 
-  const showReassurance =
-    Boolean(reassuranceMessage) ||
-    status === "degraded" ||
-    status === "amber";
+  const showReassurance = Boolean(
+    reassuranceMessage && reassuranceMessage.trim().length > 0
+  );
 
   return (
     <article
@@ -338,7 +352,7 @@ export function ServiceCard({
             className="flex h-11 md:h-10 w-full items-center justify-center rounded-lg bg-[#F1F5F9] border border-[#E2E8F0] px-4 text-xs sm:text-sm font-medium text-[#64748B] cursor-not-allowed focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:outline-none"
             data-testid={`service-action-${id}`}
           >
-            <span>{actionLabel}</span>
+            <span>{isStoppedOrInactive ? `${actionLabel} (${t.inactive})` : actionLabel}</span>
           </button>
         )}
       </div>
@@ -373,20 +387,20 @@ export function ServiceCard({
             <div className="mt-6 flex justify-end gap-3">
               <button
                 type="button"
-                onClick={() => setIsRollbackOpen(false)}
-                className="h-11 rounded-lg border border-[#E5E7EB] px-4 text-xs font-medium text-[#64748B] hover:bg-[#F8F9FA] focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:outline-none"
+                onClick={closeRollback}
+                className="h-11 rounded-lg border border-[#E5E7EB] px-4 text-xs font-medium text-[#64748B] hover:bg-[#F8F9FA] focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:outline-none cursor-pointer"
               >
                 {t.cancel}
               </button>
               <button
                 type="button"
                 onClick={async () => {
-                  setIsRollbackOpen(false);
+                  closeRollback();
                   if (onRollback) {
                     await onRollback(id);
                   }
                 }}
-                className="h-11 rounded-lg bg-[#0F172A] px-4 text-xs font-medium text-white hover:bg-[#1E293B] focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:outline-none"
+                className="h-11 rounded-lg bg-[#0F172A] px-4 text-xs font-medium text-white hover:bg-[#1E293B] focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:outline-none cursor-pointer"
                 data-testid={`confirm-rollback-${id}`}
               >
                 {t.rollbackVersion}

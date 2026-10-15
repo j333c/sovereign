@@ -580,3 +580,31 @@ func TestSupervisor_ServiceManager_WatchdogProbingAndRecovery(t *testing.T) {
 		t.Errorf("expected service.health_changed event to be emitted")
 	}
 }
+
+func TestSupervisor_ResolveID(t *testing.T) {
+	mgr, _, _, _ := setupTestManager(t, nil)
+	defer mgr.Close()
+
+	if resolved := mgr.resolveID("video"); resolved != ServiceJellyfin {
+		t.Errorf("expected resolveID(\"video\") == %s, got %s", ServiceJellyfin, resolved)
+	}
+	if resolved := mgr.resolveID("audio"); resolved != ServiceNavidrome {
+		t.Errorf("expected resolveID(\"audio\") == %s, got %s", ServiceNavidrome, resolved)
+	}
+	if resolved := mgr.resolveID("jellyfin"); resolved != ServiceJellyfin {
+		t.Errorf("expected resolveID(\"jellyfin\") == %s, got %s", ServiceJellyfin, resolved)
+	}
+	if resolved := mgr.resolveID("custom"); resolved != "custom" {
+		t.Errorf("expected resolveID(\"custom\") == \"custom\", got %s", resolved)
+	}
+
+	// Verify GetService accepts alias "video"
+	ctx := context.Background()
+	svc, err := mgr.GetService(ctx, "video")
+	if err != nil {
+		t.Fatalf("GetService(\"video\") failed: %v", err)
+	}
+	if svc.ID != ServiceJellyfin {
+		t.Errorf("expected service ID %s, got %s", ServiceJellyfin, svc.ID)
+	}
+}

@@ -2,7 +2,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { HomeScreen, checkBootAndSetup } from "./page";
+import { HomeScreen, checkBootAndSetup, mapServiceStatus } from "./page";
 import { SovereignApiClient, TelemetryUpdate } from "../lib/api/client";
 import { AppHeader } from "../components/AppHeader";
 
@@ -11,6 +11,46 @@ import { ServiceCard } from "../components/ServiceCard";
 import { AdminLoginModal } from "../components/AdminLoginModal";
 import { StatusBadge } from "../components/StatusBadge";
 import { translations } from "../lib/i18n";
+
+function renderComponent<T>(fn: (props: T) => React.ReactNode, props: T): any {
+  let result: any = null;
+  function Wrapper() {
+    result = fn(props);
+    return null;
+  }
+  renderToStaticMarkup(React.createElement(Wrapper));
+  return result;
+}
+
+function findByTestId(node: any, testId: string): any {
+  if (!node) return null;
+  if (node.props?.["data-testid"] === testId) return node;
+  if (node.props?.children) {
+    const children = Array.isArray(node.props.children)
+      ? node.props.children
+      : [node.props.children];
+    for (const child of children) {
+      const found = findByTestId(child, testId);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
+function findByType(node: any, type: any): any {
+  if (!node) return null;
+  if (node.type === type) return node;
+  if (node.props?.children) {
+    const children = Array.isArray(node.props.children)
+      ? node.props.children
+      : [node.props.children];
+    for (const child of children) {
+      const found = findByType(child, type);
+      if (found) return found;
+    }
+  }
+  return null;
+}
 
 describe("HomePage Component", () => {
   it("renders null before isReady is set", () => {
@@ -510,6 +550,29 @@ describe("ServiceCard & StatusBadge Components", () => {
     );
   });
 
+  it("does not render reassurance banner when degraded without reassuranceMessage (e.g. NAS degradation)", () => {
+    const htmlDegradedNas = renderToStaticMarkup(
+      <ServiceCard
+        id="video"
+        name="Video Streaming"
+        techSubtitle="Jellyfin"
+        icon="🎬"
+        status="degraded"
+        metric="124 Movies"
+        secondaryDescriptor="4K Transcoding Ready"
+        actionUrl="/media"
+        actionLabel="Open Streaming UI"
+        currentLanguage="en"
+        onRequireAdmin={() => {}}
+        isAuthenticated={false}
+      />
+    );
+    assert.ok(
+      !htmlDegradedNas.includes("data-testid=\"reassurance-banner-video\""),
+      "Must not display memory reassurance alert for normal NAS degradation"
+    );
+  });
+
   it("renders localized reassurance microcopy across EN, DE, ES, and FR", () => {
     const htmlEn = renderToStaticMarkup(
       <ServiceCard
@@ -518,6 +581,7 @@ describe("ServiceCard & StatusBadge Components", () => {
         techSubtitle="Jellyfin"
         icon="🎬"
         status="degraded"
+        reassuranceMessage="exit code 137"
         metric="124 Movies"
         secondaryDescriptor="4K Transcoding Ready"
         actionUrl="/media"
@@ -540,6 +604,7 @@ describe("ServiceCard & StatusBadge Components", () => {
         techSubtitle="Jellyfin"
         icon="🎬"
         status="degraded"
+        reassuranceMessage="exit code 137"
         metric="124 Filme"
         secondaryDescriptor="4K-Transkodierung bereit"
         actionUrl="/media"
@@ -562,6 +627,7 @@ describe("ServiceCard & StatusBadge Components", () => {
         techSubtitle="Jellyfin"
         icon="🎬"
         status="degraded"
+        reassuranceMessage="exit code 137"
         metric="124 Películas"
         secondaryDescriptor="Transcodificación 4K lista"
         actionUrl="/media"
@@ -584,6 +650,7 @@ describe("ServiceCard & StatusBadge Components", () => {
         techSubtitle="Jellyfin"
         icon="🎬"
         status="degraded"
+        reassuranceMessage="exit code 137"
         metric="124 Films"
         secondaryDescriptor="Transcodage 4K prêt"
         actionUrl="/media"
@@ -603,9 +670,50 @@ describe("ServiceCard & StatusBadge Components", () => {
     );
   });
 
-  it("triggers onRequireAdmin with action and service ID when unauthenticated", () => {
+  it("renders primary action button with inactive suffix and Red ▲ status when stopped or inactive", () => {
+    const htmlStopped = renderToStaticMarkup(
+      <ServiceCard
+        id="video"
+        name="Video Streaming"
+        techSubtitle="Jellyfin"
+        icon="🎬"
+        status="stopped"
+        metric="124 Movies"
+        secondaryDescriptor="4K Transcoding Ready"
+        actionUrl="/media"
+        actionLabel="Open Streaming UI"
+        currentLanguage="en"
+        onRequireAdmin={() => {}}
+        isAuthenticated={false}
+      />
+    );
+    assert.ok(htmlStopped.includes("Open Streaming UI (Inactive)"));
+    assert.ok(htmlStopped.includes("Stopped / Error (Inactive)"));
+    assert.ok(htmlStopped.includes("▲"));
+
+    const htmlInactive = renderToStaticMarkup(
+      <ServiceCard
+        id="video"
+        name="Video Streaming"
+        techSubtitle="Jellyfin"
+        icon="🎬"
+        status="inactive"
+        metric="124 Movies"
+        secondaryDescriptor="4K Transcoding Ready"
+        actionUrl="/media"
+        actionLabel="Open Streaming UI"
+        currentLanguage="en"
+        onRequireAdmin={() => {}}
+        isAuthenticated={false}
+      />
+    );
+    assert.ok(htmlInactive.includes("Open Streaming UI (Inactive)"));
+    assert.ok(htmlInactive.includes("Stopped / Error (Inactive)"));
+    assert.ok(htmlInactive.includes("▲"));
+  });
+
+  it("triggers onRequireAdmin with action and service ID when clicking overflow restart or rollback unauthenticated", () => {
     let capturedAction = "";
-    // Render and simulate action handler directly
     const props = {
       id: "video",
       name: "Video Streaming",
@@ -621,15 +729,66 @@ describe("ServiceCard & StatusBadge Components", () => {
         capturedAction = actionName;
       },
       isAuthenticated: false,
+      initialMenuOpen: true,
     };
 
-    // Verify component renders without crashing
-    const html = renderToStaticMarkup(<ServiceCard {...props} />);
-    assert.ok(html.includes("Video Streaming"));
-
-    // Test the handler contract
-    props.onRequireAdmin("restart:video");
+    const tree = renderComponent(ServiceCard, props);
+    const restartBtn = findByTestId(tree, "overflow-restart-video");
+    assert.ok(restartBtn, "Overflow restart button must be present when menu is open");
+    restartBtn.props.onClick();
     assert.equal(capturedAction, "restart:video");
+
+    const rollbackBtn = findByTestId(tree, "overflow-rollback-video");
+    assert.ok(rollbackBtn, "Overflow rollback button must be present when menu is open");
+    rollbackBtn.props.onClick();
+    assert.equal(capturedAction, "rollback:video");
+  });
+
+  it("opens rollback confirmation modal and executes onRollback when confirmed", async () => {
+    let rolledBackId = "";
+    let closedCalled = false;
+    const props = {
+      id: "video",
+      name: "Video Streaming",
+      techSubtitle: "Jellyfin",
+      icon: "🎬",
+      status: "healthy" as const,
+      metric: "124 Movies",
+      secondaryDescriptor: "4K Transcoding Ready",
+      actionUrl: "/media",
+      actionLabel: "Open Streaming UI",
+      currentLanguage: "en" as const,
+      onRequireAdmin: () => {},
+      isAuthenticated: true,
+      isRollbackOpen: true,
+      onRollbackClose: () => {
+        closedCalled = true;
+      },
+      onRollback: (id: string) => {
+        rolledBackId = id;
+      },
+    };
+
+    const tree = renderComponent(ServiceCard, props);
+    const confirmBtn = findByTestId(tree, "confirm-rollback-video");
+    assert.ok(confirmBtn, "Confirm rollback button must be present when isRollbackOpen is true");
+    await confirmBtn.props.onClick();
+    assert.equal(rolledBackId, "video");
+    assert.equal(closedCalled, true);
+  });
+
+  it("mapServiceStatus correctly maps service states", () => {
+    assert.equal(mapServiceStatus("inactive"), "stopped");
+    assert.equal(mapServiceStatus("stopped"), "stopped");
+    assert.equal(mapServiceStatus("running", "inactive"), "stopped");
+    assert.equal(mapServiceStatus("running", "stopped"), "stopped");
+    assert.equal(mapServiceStatus("starting"), "starting");
+    assert.equal(mapServiceStatus("degraded"), "degraded");
+    assert.equal(mapServiceStatus("amber"), "degraded");
+    assert.equal(mapServiceStatus("error"), "error");
+    assert.equal(mapServiceStatus("running", "unhealthy"), "error");
+    assert.equal(mapServiceStatus("running", "healthy"), "healthy");
+    assert.equal(mapServiceStatus("operational"), "healthy");
   });
 });
 
@@ -937,6 +1096,50 @@ describe("Central Admin Dashboard Integration & i18n", () => {
         assert.equal(pErr.title, "Authentication Required");
         return true;
       }
+    );
+  });
+
+  it("executes pending restart for service after successful admin login", async () => {
+    let restartCalledWith = "";
+    const mockFetch: typeof fetch = async (input) => {
+      const url = String(input);
+      if (url.includes("/restart")) {
+        restartCalledWith = url;
+        return new Response(
+          JSON.stringify({
+            id: "jellyfin",
+            name: "Jellyfin",
+            status: "running",
+            health: "healthy",
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      return new Response("{}", { status: 200 });
+    };
+
+    const client = new SovereignApiClient({
+      baseUrl: "http://localhost:8080",
+      fetchFn: mockFetch,
+    });
+
+    const root = renderComponent(HomeScreen, {
+      initialReady: true,
+      routerOverride: { replace: () => {} },
+      apiClientOverride: client,
+      initialPendingAction: "restart:video",
+    });
+
+    const contentTree = renderComponent(root.type, root.props);
+    const modalNode = findByType(contentTree, AdminLoginModal);
+    assert.ok(modalNode, "AdminLoginModal must be present in tree");
+
+    modalNode.props.onSuccess();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    assert.ok(
+      restartCalledWith.endsWith("/api/v1/services/jellyfin/restart"),
+      `Expected restart to be called for jellyfin, but was: ${restartCalledWith}`
     );
   });
 });

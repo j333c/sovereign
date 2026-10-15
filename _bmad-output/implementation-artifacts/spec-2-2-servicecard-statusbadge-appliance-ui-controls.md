@@ -2,9 +2,9 @@
 title: 'Story 2.2: ServiceCard & StatusBadge Appliance UI Controls'
 type: 'feature'
 created: '2026-10-15'
-status: 'done'
+status: 'review'
 route: 'dispatch'
-baseline_commit: '5c0e3ca914a8449c25dbb2c9ad320ba1fc414571'
+baseline_commit: '5c0e3ca55b21f4545a0aebab1d6d25b761de67e3'
 review_loop_iteration: 0
 context:
   - '_bmad-output/planning-artifacts/architecture/architecture-sovereign-2026-10-15/ARCHITECTURE-SPINE.md'

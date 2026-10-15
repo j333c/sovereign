@@ -1,12 +1,13 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { SovereignApiClient, TelemetryUpdate } from "./api";
+import { SovereignApiClient, TelemetryUpdate, ServiceHealthChangedEvent, ServiceErrorEvent } from "./api";
+import { attachTelemetryListeners } from "./useTelemetry";
 
 // Mock EventSource implementation for testing SSE hook integration
 class MockEventSource {
   url: string;
   options?: { withCredentials?: boolean };
-  listeners: Record<string, ((evt: unknown) => void)[]> = {};
+  listeners: Record<string, ((evt: any) => void)[]> = {};
   onopen: (() => void) | null = null;
   onerror: (() => void) | null = null;
   closed = false;
@@ -16,14 +17,14 @@ class MockEventSource {
     this.options = options;
   }
 
-  addEventListener(event: string, cb: (evt: unknown) => void) {
+  addEventListener(event: string, cb: (evt: any) => void) {
     if (!this.listeners[event]) {
       this.listeners[event] = [];
     }
     this.listeners[event].push(cb);
   }
 
-  removeEventListener(event: string, cb: (evt: unknown) => void) {
+  removeEventListener(event: string, cb: (evt: any) => void) {
     if (this.listeners[event]) {
       this.listeners[event] = this.listeners[event].filter((l) => l !== cb);
     }
@@ -91,5 +92,52 @@ describe("useTelemetry Hook & SSE streaming contract", () => {
 
     mockES.close();
     assert.equal(mockES.closed, true);
+  });
+
+  it("dispatches service.health_changed, service.status_changed, and service.error events via MockEventSource", () => {
+    const mockES = new MockEventSource("http://localhost:8080/api/v1/system/events");
+
+    let receivedHealth: ServiceHealthChangedEvent | null = null;
+    let receivedStatus: ServiceHealthChangedEvent | null = null;
+    let receivedError: ServiceErrorEvent | null = null;
+
+    attachTelemetryListeners(mockES, {
+      onServiceHealthChanged: (evt) => {
+        receivedHealth = evt;
+      },
+      onServiceStatusChanged: (evt) => {
+        receivedStatus = evt;
+      },
+      onServiceError: (evt) => {
+        receivedError = evt;
+      },
+    });
+
+    const healthEvt: ServiceHealthChangedEvent = {
+      service_id: "jellyfin",
+      status: "degraded",
+      health: "unhealthy",
+      detail: "High memory pressure",
+      timestamp: "2026-10-15T19:00:00Z",
+    };
+    mockES.emit("service.health_changed", healthEvt);
+    assert.deepEqual(receivedHealth, healthEvt);
+
+    const statusEvt: ServiceHealthChangedEvent = {
+      service_id: "navidrome",
+      status: "running",
+      health: "healthy",
+      timestamp: "2026-10-15T19:01:00Z",
+    };
+    mockES.emit("service.status_changed", statusEvt);
+    assert.deepEqual(receivedStatus, statusEvt);
+
+    const errorEvt: ServiceErrorEvent = {
+      service_id: "paperless",
+      message: "Worker thread crashed",
+      timestamp: "2026-10-15T19:02:00Z",
+    };
+    mockES.emit("service.error", errorEvt);
+    assert.deepEqual(receivedError, errorEvt);
   });
 });

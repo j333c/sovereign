@@ -17,6 +17,54 @@ export interface UseTelemetryOptions {
   onServiceError?: (event: ServiceErrorEvent) => void;
 }
 
+export interface TelemetryListenerCallbacks {
+  onTelemetryUpdate?: (data: TelemetryUpdate) => void;
+  onServiceHealthChanged?: (event: ServiceHealthChangedEvent) => void;
+  onServiceStatusChanged?: (event: ServiceHealthChangedEvent) => void;
+  onServiceError?: (event: ServiceErrorEvent) => void;
+}
+
+export function attachTelemetryListeners(
+  es: { addEventListener: (event: string, cb: (event: any) => void) => void },
+  callbacks: TelemetryListenerCallbacks
+) {
+  es.addEventListener("telemetry.update", (event: { data: string }) => {
+    try {
+      const data = JSON.parse(event.data) as TelemetryUpdate;
+      callbacks.onTelemetryUpdate?.(data);
+    } catch {
+      // Ignore malformed payloads
+    }
+  });
+
+  es.addEventListener("service.health_changed", (event: { data: string }) => {
+    try {
+      const data = JSON.parse(event.data) as ServiceHealthChangedEvent;
+      callbacks.onServiceHealthChanged?.(data);
+    } catch {
+      // Ignore malformed payloads
+    }
+  });
+
+  es.addEventListener("service.status_changed", (event: { data: string }) => {
+    try {
+      const data = JSON.parse(event.data) as ServiceHealthChangedEvent;
+      callbacks.onServiceStatusChanged?.(data);
+    } catch {
+      // Ignore malformed payloads
+    }
+  });
+
+  es.addEventListener("service.error", (event: { data: string }) => {
+    try {
+      const data = JSON.parse(event.data) as ServiceErrorEvent;
+      callbacks.onServiceError?.(data);
+    } catch {
+      // Ignore malformed payloads
+    }
+  });
+}
+
 export function useTelemetry({
   client,
   initialTelemetry = null,
@@ -59,46 +107,25 @@ export function useTelemetry({
           }
         };
 
-        es.addEventListener("telemetry.update", (event: MessageEvent) => {
-          if (!isMounted) return;
-          try {
-            const data = JSON.parse(event.data) as TelemetryUpdate;
+        attachTelemetryListeners(es, {
+          onTelemetryUpdate: (data) => {
+            if (!isMounted) return;
             setTelemetry(data);
             setIsConnected(true);
             setHasError(false);
-          } catch {
-            // Ignore malformed payloads
-          }
-        });
-
-        es.addEventListener("service.health_changed", (event: MessageEvent) => {
-          if (!isMounted) return;
-          try {
-            const data = JSON.parse(event.data) as ServiceHealthChangedEvent;
+          },
+          onServiceHealthChanged: (data) => {
+            if (!isMounted) return;
             onHealthChangedRef.current?.(data);
-          } catch {
-            // Ignore malformed payloads
-          }
-        });
-
-        es.addEventListener("service.status_changed", (event: MessageEvent) => {
-          if (!isMounted) return;
-          try {
-            const data = JSON.parse(event.data) as ServiceHealthChangedEvent;
+          },
+          onServiceStatusChanged: (data) => {
+            if (!isMounted) return;
             onStatusChangedRef.current?.(data);
-          } catch {
-            // Ignore malformed payloads
-          }
-        });
-
-        es.addEventListener("service.error", (event: MessageEvent) => {
-          if (!isMounted) return;
-          try {
-            const data = JSON.parse(event.data) as ServiceErrorEvent;
+          },
+          onServiceError: (data) => {
+            if (!isMounted) return;
             onErrorRef.current?.(data);
-          } catch {
-            // Ignore malformed payloads
-          }
+          },
         });
 
         es.onerror = () => {
