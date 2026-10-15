@@ -76,6 +76,11 @@ func NewStorageProbe(dataDir string, db *store.DB, diskOps DiskOps, nasOps NASOp
 			Status:     StatusLevelNotConfigured,
 			PoolType:   PoolTypeNone,
 			MountPoint: dataDir,
+			NAS: &StorageNASStatus{
+				Configured: false,
+				Status:     NASStatusDisconnected,
+				Message:    "No network storage configured",
+			},
 		},
 	}
 
@@ -120,6 +125,9 @@ func (p *StorageProbe) Start(ctx context.Context) {
 
 	go func() {
 		defer func() {
+			p.mu.Lock()
+			p.running = false
+			p.mu.Unlock()
 			if r := recover(); r != nil {
 				p.logger.Error("recovered from storage probe panic", "panic", r)
 			}
@@ -164,36 +172,37 @@ func (p *StorageProbe) ProbeOnce(ctx context.Context) StorageStatusResponse {
 	}()
 
 	p.mu.Lock()
-	defer p.mu.Unlock()
-
 	// Try loading NAS config from DB if not already set
 	if p.activeNASConfig == nil && p.db != nil {
 		if cfg, err := LoadNASConfig(ctx, p.db); err == nil && cfg != nil {
 			p.activeNASConfig = cfg
 		}
 	}
+	nasCfg := p.activeNASConfig
+	localPool := p.activeLocalPool
+	p.mu.Unlock()
 
-	nasStatus := &StorageNASStatus{
-		Configured: false,
-	}
-
+	var nasStatus *StorageNASStatus
 	nasDegraded := false
-	if p.activeNASConfig != nil {
-		nasStatus.Configured = true
-		nasStatus.Type = p.activeNASConfig.Type
-		nasStatus.Host = p.activeNASConfig.Host
-		nasStatus.Share = p.activeNASConfig.Share
-		nasStatus.Username = p.activeNASConfig.Username
-		nasStatus.MountPoint = p.activeNASConfig.MountPoint
+
+	if nasCfg != nil {
+		nasStatus = &StorageNASStatus{
+			Configured: true,
+			Type:       nasCfg.Type,
+			Host:       nasCfg.Host,
+			Share:      nasCfg.Share,
+			Username:   nasCfg.Username,
+			MountPoint: nasCfg.MountPoint,
+		}
 
 		// Invariant: password never returned in plaintext, redacted as "***"
-		if p.activeNASConfig.Password != "" {
+		if nasCfg.Password != "" {
 			nasStatus.Password = "***"
 		}
 
-		// Non-blocking accessibility check with timeout guard
+		// Perform network accessibility check outside lock
 		checkCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
-		err := p.nasOps.CheckAccessibility(checkCtx, *p.activeNASConfig)
+		err := p.nasOps.CheckAccessibility(checkCtx, *nasCfg)
 		cancel()
 
 		if err != nil {
@@ -201,20 +210,26 @@ func (p *StorageProbe) ProbeOnce(ctx context.Context) StorageStatusResponse {
 			nasStatus.Status = NASStatusDegraded
 			nasStatus.Message = ConsumerNASDegradedMsg
 			p.logger.Warn("network storage share temporarily disconnected, transitioning to degraded status",
-				"host", p.activeNASConfig.Host,
-				"share", p.activeNASConfig.Share,
+				"host", nasCfg.Host,
+				"share", nasCfg.Share,
 				"error", err)
 		} else {
 			nasStatus.Status = NASStatusConnected
 			nasStatus.Message = "Connected"
 		}
+	} else {
+		nasStatus = &StorageNASStatus{
+			Configured: false,
+			Status:     NASStatusDisconnected,
+			Message:    "No network storage configured",
+		}
 	}
 
 	// Calculate overall pool type and status
 	poolType := PoolTypeNone
-	if p.activeLocalPool != nil && nasStatus.Configured {
+	if localPool != nil && nasStatus.Configured {
 		poolType = PoolTypeHybrid
-	} else if p.activeLocalPool != nil {
+	} else if localPool != nil {
 		poolType = PoolTypeLocal
 	} else if nasStatus.Configured {
 		poolType = PoolTypeNAS
@@ -227,12 +242,13 @@ func (p *StorageProbe) ProbeOnce(ctx context.Context) StorageStatusResponse {
 		overallStatus = StatusLevelDegraded
 	}
 
-	// Fetch filesystem usage statistics for dataDir
+	// Fetch filesystem usage statistics for dataDir outside lock
 	total, avail, used, err := p.diskOps.GetDiskUsage(p.dataDir)
 	if err != nil {
 		p.logger.Debug("unable to retrieve disk usage", "dir", p.dataDir, "error", err)
 	}
 
+	p.mu.Lock()
 	p.currentStatus = StorageStatusResponse{
 		Status:         overallStatus,
 		PoolType:       poolType,
@@ -240,11 +256,13 @@ func (p *StorageProbe) ProbeOnce(ctx context.Context) StorageStatusResponse {
 		TotalBytes:     total,
 		AvailableBytes: avail,
 		UsedBytes:      used,
-		LocalPool:      p.activeLocalPool,
+		LocalPool:      localPool,
 		NAS:            nasStatus,
 	}
+	res := p.currentStatus
+	p.mu.Unlock()
 
-	return p.currentStatus
+	return res
 }
 
 // GetStatus returns the current storage telemetry snapshot.

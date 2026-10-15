@@ -104,7 +104,7 @@ func (d *DefaultDiskOps) SetSafeMode(safe bool) {
 
 // ListDisks enumerates block devices.
 func (d *DefaultDiskOps) ListDisks(ctx context.Context) ([]DiskInfo, error) {
-	if len(d.mockDisks) > 0 {
+	if d.mockDisks != nil {
 		return append([]DiskInfo(nil), d.mockDisks...), nil
 	}
 
@@ -172,7 +172,7 @@ func (d *DefaultDiskOps) ListDisks(ctx context.Context) ([]DiskInfo, error) {
 		mountPoint := ""
 
 		for _, m := range mounts {
-			if m.Device == devPath || strings.HasPrefix(m.Device, devPath) {
+			if isDeviceOrPartition(m.Device, devPath) {
 				mounted = true
 				if mountPoint == "" {
 					mountPoint = m.MountPoint
@@ -227,11 +227,36 @@ func (d *DefaultDiskOps) readMounts() ([]mountEntry, error) {
 	return entries, scanner.Err()
 }
 
+// isDeviceOrPartition checks if candidate is exact device or a partition of diskDev.
+// Matches e.g. /dev/sda1 or /dev/sda2 for /dev/sda, and /dev/nvme0n1p1 for /dev/nvme0n1,
+// while correctly rejecting false prefixes such as /dev/sdab for /dev/sda.
+func isDeviceOrPartition(candidate, diskDev string) bool {
+	if candidate == diskDev {
+		return true
+	}
+	if !strings.HasPrefix(candidate, diskDev) {
+		return false
+	}
+	suffix := candidate[len(diskDev):]
+	if strings.HasPrefix(suffix, "p") && len(suffix) > 1 {
+		suffix = suffix[1:]
+	}
+	if len(suffix) == 0 {
+		return false
+	}
+	for _, c := range suffix {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
+}
+
 // IsSystemDevice checks if the device or any of its partitions are mounted as root or boot.
 func (d *DefaultDiskOps) IsSystemDevice(device string) (bool, error) {
 	// If mock disks are active, check mock disk state
 	for _, md := range d.mockDisks {
-		if md.Path == device || strings.HasPrefix(device, md.Path) {
+		if isDeviceOrPartition(device, md.Path) || isDeviceOrPartition(md.Path, device) {
 			return md.IsSystem, nil
 		}
 	}
@@ -245,7 +270,7 @@ func (d *DefaultDiskOps) IsSystemDevice(device string) (bool, error) {
 	}
 
 	for _, m := range mounts {
-		if m.Device == device || strings.HasPrefix(m.Device, device) {
+		if isDeviceOrPartition(m.Device, device) {
 			if m.MountPoint == "/" || m.MountPoint == "/boot" || strings.HasPrefix(m.MountPoint, "/boot/") {
 				return true, nil
 			}
@@ -258,7 +283,7 @@ func (d *DefaultDiskOps) IsSystemDevice(device string) (bool, error) {
 // IsDeviceMounted checks whether the device is currently mounted anywhere.
 func (d *DefaultDiskOps) IsDeviceMounted(device string) (bool, string, error) {
 	for _, md := range d.mockDisks {
-		if md.Path == device || strings.HasPrefix(device, md.Path) {
+		if isDeviceOrPartition(device, md.Path) || isDeviceOrPartition(md.Path, device) {
 			return md.Mounted, md.MountPoint, nil
 		}
 	}
@@ -272,7 +297,7 @@ func (d *DefaultDiskOps) IsDeviceMounted(device string) (bool, string, error) {
 	}
 
 	for _, m := range mounts {
-		if m.Device == device || strings.HasPrefix(m.Device, device) {
+		if isDeviceOrPartition(m.Device, device) {
 			return true, m.MountPoint, nil
 		}
 	}

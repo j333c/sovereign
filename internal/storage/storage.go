@@ -143,6 +143,9 @@ type StoragePoolInfo struct {
 // InitializeStorage partitions, formats disk with ext4 write-ahead journaling,
 // mounts it under /data, and initializes subdirectories.
 func (e *Engine) InitializeStorage(ctx context.Context, device string) (*StoragePoolInfo, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
 	device = strings.TrimSpace(device)
 	if device == "" || !strings.HasPrefix(device, "/dev/") {
 		return nil, ErrInvalidDevice
@@ -220,6 +223,9 @@ func (e *Engine) TestNAS(ctx context.Context, req NASTestRequest) (*NASTestRespo
 
 // MountNAS mounts a verified network share and persists configuration in SQLite.
 func (e *Engine) MountNAS(ctx context.Context, req NASMountRequest) (*NASMountResponse, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
 	// First perform non-destructive verification
 	testReq := NASTestRequest{
 		Type:     req.Type,
@@ -236,6 +242,14 @@ func (e *Engine) MountNAS(ctx context.Context, req NASMountRequest) (*NASMountRe
 	targetPath := req.TargetPath
 	if strings.TrimSpace(targetPath) == "" {
 		targetPath = filepath.Join(e.dataDir, "media")
+	} else {
+		cleanTarget := filepath.Clean(targetPath)
+		cleanDataDir := filepath.Clean(e.dataDir)
+		rel, err := filepath.Rel(cleanDataDir, cleanTarget)
+		if err != nil || strings.HasPrefix(rel, "..") || rel == "." {
+			return nil, fmt.Errorf("%w: target_path %q must be a subdirectory within data directory %q", ErrInvalidNASConfig, targetPath, e.dataDir)
+		}
+		targetPath = cleanTarget
 	}
 
 	cfg := NASConfig{
@@ -254,7 +268,8 @@ func (e *Engine) MountNAS(ctx context.Context, req NASMountRequest) (*NASMountRe
 
 	if e.db != nil {
 		if err := SaveNASConfig(ctx, e.db, cfg); err != nil {
-			e.logger.Error("failed to persist NAS config to SQLite", "error", err)
+			e.logger.Error("failed to persist NAS config to SQLite, rolling back mount", "error", err)
+			_ = e.nasOps.UnmountShare(ctx, cfg.MountPoint)
 			return nil, fmt.Errorf("persisting network storage configuration failed: %w", err)
 		}
 	}

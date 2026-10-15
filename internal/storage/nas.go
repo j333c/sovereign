@@ -204,20 +204,30 @@ func (n *DefaultNASOps) TestConnection(ctx context.Context, req NASTestRequest) 
 	}
 
 	// Live environment: probe network port first
-	port := "445"
+	defaultPort := "445"
 	if reqType == NASTypeNFS {
-		port = "2049"
+		defaultPort = "2049"
 	}
+	host, port := parseHostAndPort(req.Host, defaultPort)
 
 	dialer := net.Dialer{Timeout: 3 * time.Second}
-	conn, err := dialer.DialContext(ctx, "tcp", net.JoinHostPort(req.Host, port))
+	conn, err := dialer.DialContext(ctx, "tcp", net.JoinHostPort(host, port))
 	if err != nil {
-		n.logger.Warn("network storage port unreachable", "host", req.Host, "port", port, "error", err)
+		n.logger.Warn("network storage port unreachable", "host", host, "port", port, "error", err)
 		return ErrNASUnreachable
 	}
 	conn.Close()
 
 	return nil
+}
+
+// parseHostAndPort extracts host and port, falling back to defaultPort if unspecified.
+func parseHostAndPort(rawHost, defaultPort string) (string, string) {
+	rawHost = strings.TrimSpace(rawHost)
+	if h, p, err := net.SplitHostPort(rawHost); err == nil {
+		return h, p
+	}
+	return rawHost, defaultPort
 }
 
 // MountShare mounts the network share to the specified mount point.
@@ -245,25 +255,48 @@ func (n *DefaultNASOps) MountShare(ctx context.Context, cfg NASConfig) error {
 
 	var cmd *exec.Cmd
 	if strings.ToLower(cfg.Type) == NASTypeSMB {
-		unc := fmt.Sprintf("//%s/%s", cfg.Host, strings.TrimPrefix(cfg.Share, "/"))
+		host, _ := parseHostAndPort(cfg.Host, "445")
+		unc := fmt.Sprintf("//%s/%s", host, strings.TrimPrefix(cfg.Share, "/"))
 		opts := []string{"-t", "cifs", unc, cfg.MountPoint}
-		var optList []string
-		if cfg.Username != "" {
-			optList = append(optList, "username="+cfg.Username)
+
+		// Use temporary credentials file (0600) for CIFS credentials to avoid command-line leaks
+		if cfg.Username != "" || cfg.Password != "" {
+			credFile, err := os.CreateTemp("", "sovereign-smbcred-*")
+			if err != nil {
+				return fmt.Errorf("failed to create temporary credentials file: %w", err)
+			}
+			defer os.Remove(credFile.Name())
+
+			if err := os.Chmod(credFile.Name(), 0600); err != nil {
+				_ = credFile.Close()
+				return fmt.Errorf("failed to set credentials file permissions: %w", err)
+			}
+
+			var credContent strings.Builder
+			if cfg.Username != "" {
+				credContent.WriteString("username=" + cfg.Username + "\n")
+			}
+			if cfg.Password != "" {
+				credContent.WriteString("password=" + cfg.Password + "\n")
+			}
+
+			if _, err := credFile.WriteString(credContent.String()); err != nil {
+				_ = credFile.Close()
+				return fmt.Errorf("failed to write temporary credentials file: %w", err)
+			}
+			_ = credFile.Close()
+
+			opts = append(opts, "-o", "credentials="+credFile.Name())
 		}
-		if cfg.Password != "" {
-			optList = append(optList, "password="+cfg.Password)
-		}
+
 		if cfg.Options != "" {
-			optList = append(optList, cfg.Options)
-		}
-		if len(optList) > 0 {
-			opts = append(opts, "-o", strings.Join(optList, ","))
+			opts = append(opts, "-o", cfg.Options)
 		}
 		cmd = exec.CommandContext(ctx, "mount", opts...)
 	} else {
 		// NFS
-		nfsPath := fmt.Sprintf("%s:%s", cfg.Host, cfg.Share)
+		host, _ := parseHostAndPort(cfg.Host, "2049")
+		nfsPath := fmt.Sprintf("%s:%s", host, cfg.Share)
 		opts := []string{"-t", "nfs", nfsPath, cfg.MountPoint}
 		if cfg.Options != "" {
 			opts = append(opts, "-o", cfg.Options)
@@ -317,16 +350,17 @@ func (n *DefaultNASOps) CheckAccessibility(ctx context.Context, cfg NASConfig) e
 	}
 
 	// First verify TCP connectivity with a quick timeout (1.5s)
-	port := "445"
+	defaultPort := "445"
 	if strings.ToLower(cfg.Type) == NASTypeNFS {
-		port = "2049"
+		defaultPort = "2049"
 	}
+	host, port := parseHostAndPort(cfg.Host, defaultPort)
 
 	dialCtx, dialCancel := context.WithTimeout(ctx, 2*time.Second)
 	defer dialCancel()
 
 	dialer := net.Dialer{}
-	conn, err := dialer.DialContext(dialCtx, "tcp", net.JoinHostPort(cfg.Host, port))
+	conn, err := dialer.DialContext(dialCtx, "tcp", net.JoinHostPort(host, port))
 	if err != nil {
 		return ErrNASUnreachable
 	}

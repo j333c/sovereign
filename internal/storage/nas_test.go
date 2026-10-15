@@ -381,3 +381,195 @@ func TestStorageEngine_PeriodicProbeLoop_NeverCrashes(t *testing.T) {
 		t.Errorf("expected active NAS status, got nil")
 	}
 }
+
+func TestStorageEngine_InitialUnconfiguredStatus(t *testing.T) {
+	engine, dataDir, _ := setupTestStorageEngine(t)
+	defer engine.Close()
+
+	ctx := context.Background()
+	status := engine.GetStorageStatus(ctx)
+
+	if status.Status != StatusLevelNotConfigured {
+		t.Errorf("expected status %q, got %q", StatusLevelNotConfigured, status.Status)
+	}
+	if status.PoolType != PoolTypeNone {
+		t.Errorf("expected pool_type %q, got %q", PoolTypeNone, status.PoolType)
+	}
+	if status.MountPoint != dataDir {
+		t.Errorf("expected mount_point %q, got %q", dataDir, status.MountPoint)
+	}
+	if status.LocalPool != nil {
+		t.Errorf("expected local_pool to be nil, got %+v", status.LocalPool)
+	}
+	if status.NAS == nil {
+		t.Fatalf("expected NAS status object, got nil")
+	}
+	if status.NAS.Configured {
+		t.Errorf("expected NAS configured = false")
+	}
+	if status.NAS.Status != NASStatusDisconnected {
+		t.Errorf("expected NAS status %q, got %q", NASStatusDisconnected, status.NAS.Status)
+	}
+	if status.NAS.Message != "No network storage configured" {
+		t.Errorf("expected message 'No network storage configured', got %q", status.NAS.Message)
+	}
+}
+
+func TestStorageEngine_InitializeStorage_DeviceInUseRejection(t *testing.T) {
+	engine, _, _ := setupTestStorageEngine(t)
+	defer engine.Close()
+
+	defaultOps := engine.DiskOps().(*DefaultDiskOps)
+	defaultOps.SetMockDisks([]DiskInfo{
+		{
+			Name:       "sdb",
+			Path:       "/dev/sdb",
+			Mounted:    true,
+			MountPoint: "/mnt/backup",
+			IsSystem:   false, // Non-system device, but already mounted!
+		},
+	})
+
+	ctx := context.Background()
+	_, err := engine.InitializeStorage(ctx, "/dev/sdb")
+	if err != ErrDeviceInUse {
+		t.Fatalf("expected ErrDeviceInUse for mounted non-system device, got %v", err)
+	}
+}
+
+func TestStorageEngine_MountNAS_ErrorHandling(t *testing.T) {
+	engine, _, _ := setupTestStorageEngine(t)
+	defer engine.Close()
+
+	ctx := context.Background()
+	defaultNASOps := engine.NASOps().(*DefaultNASOps)
+
+	// Unreachable share
+	defaultNASOps.SetMockReachability(false)
+	_, err := engine.MountNAS(ctx, NASMountRequest{
+		Type:  "smb",
+		Host:  "unreachable.share",
+		Share: "files",
+	})
+	if err != ErrNASUnreachable {
+		t.Errorf("expected ErrNASUnreachable, got %v", err)
+	}
+	defaultNASOps.SetMockReachability(true)
+
+	// Auth failure
+	defaultNASOps.SetMockAuthSuccess(false)
+	_, err = engine.MountNAS(ctx, NASMountRequest{
+		Type:     "smb",
+		Host:     "192.168.1.100",
+		Share:    "files",
+		Username: "baduser",
+		Password: "badpass",
+	})
+	if err != ErrNASAuthFailed {
+		t.Errorf("expected ErrNASAuthFailed, got %v", err)
+	}
+	defaultNASOps.SetMockAuthSuccess(true)
+
+	// Path traversal attempt in target_path
+	_, err = engine.MountNAS(ctx, NASMountRequest{
+		Type:       "smb",
+		Host:       "192.168.1.100",
+		Share:      "files",
+		TargetPath: "../../etc/shadow",
+	})
+	if err == nil {
+		t.Fatalf("expected error for path traversal in target_path, got nil")
+	}
+}
+
+func TestStorageEngine_PersistenceRestorationOnRestart(t *testing.T) {
+	tempDir := t.TempDir()
+	dataDir := filepath.Join(tempDir, "data")
+	dbPath := filepath.Join(dataDir, "state", "sovereign.db")
+
+	db, err := store.Open(dbPath)
+	if err != nil {
+		t.Fatalf("failed to open database: %v", err)
+	}
+
+	diskOps1 := NewDefaultDiskOps(nil)
+	diskOps1.SetSafeMode(true)
+	diskOps1.SetMockDisks([]DiskInfo{
+		{Name: "nvme0n1", Path: "/dev/nvme0n1", Mounted: false, IsSystem: false},
+	})
+	nasOps1 := NewDefaultNASOps(nil)
+	nasOps1.SetSafeMode(true)
+
+	engine1, err := NewEngine(EngineConfig{
+		DataDir: dataDir,
+		DB:      db,
+		DiskOps: diskOps1,
+		NASOps:  nasOps1,
+	})
+	if err != nil {
+		t.Fatalf("failed to create engine1: %v", err)
+	}
+
+	ctx := context.Background()
+
+	// 1. Initialize local storage pool
+	_, err = engine1.InitializeStorage(ctx, "/dev/nvme0n1")
+	if err != nil {
+		t.Fatalf("InitializeStorage failed: %v", err)
+	}
+
+	// 2. Mount NAS share
+	_, err = engine1.MountNAS(ctx, NASMountRequest{
+		Type:     "smb",
+		Host:     "nas.home.arpa",
+		Share:    "library",
+		Username: "admin",
+		Password: "vault_password",
+	})
+	if err != nil {
+		t.Fatalf("MountNAS failed: %v", err)
+	}
+
+	// 3. Close engine 1 (simulating daemon shutdown)
+	_ = engine1.Close()
+
+	// 4. Create engine 2 with the same database and data directory (simulating daemon restart)
+	diskOps2 := NewDefaultDiskOps(nil)
+	diskOps2.SetSafeMode(true)
+	nasOps2 := NewDefaultNASOps(nil)
+	nasOps2.SetSafeMode(true)
+
+	engine2, err := NewEngine(EngineConfig{
+		DataDir: dataDir,
+		DB:      db,
+		DiskOps: diskOps2,
+		NASOps:  nasOps2,
+	})
+	if err != nil {
+		t.Fatalf("failed to create engine2: %v", err)
+	}
+	defer engine2.Close()
+
+	// 5. Query status on restarted engine
+	status := engine2.GetStorageStatus(ctx)
+
+	if status.PoolType != PoolTypeHybrid {
+		t.Errorf("expected hybrid pool type after restart, got %q", status.PoolType)
+	}
+	if status.Status != StatusLevelOK {
+		t.Errorf("expected status ok after restart, got %q", status.Status)
+	}
+	if status.LocalPool == nil || status.LocalPool.Device != "/dev/nvme0n1" {
+		t.Errorf("expected restored local pool /dev/nvme0n1, got %+v", status.LocalPool)
+	}
+	if status.NAS == nil || !status.NAS.Configured {
+		t.Fatalf("expected restored NAS config, got %+v", status.NAS)
+	}
+	if status.NAS.Host != "nas.home.arpa" || status.NAS.Share != "library" {
+		t.Errorf("expected restored NAS host and share, got %+v", status.NAS)
+	}
+	if status.NAS.Password != "***" {
+		t.Errorf("expected redacted password '***', got %q", status.NAS.Password)
+	}
+}
+

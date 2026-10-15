@@ -2,7 +2,7 @@
 title: 'Story 1.4: Storage Pool Formatting & Network NAS Mount Management'
 type: 'feature'
 created: '2026-10-15'
-status: 'completed'
+status: 'in-review'
 baseline_commit: '26be1555237e3cc8e48d9137acb75a2fd480cca3'
 route: 'dispatch'
 review_loop_iteration: 0
@@ -88,6 +88,37 @@ context:
 ## Spec Change Log
 
 ## Review Triage Log
+
+| ID | Layer | Finding | Verdict | Evidence / Disposition |
+|---|---|---|---|---|
+| B1 | blind-hunter | Initializing local pool at /data obscures running SQLite DB | medium | State path within mount point can be affected. Route: patch. |
+| B2 | blind-hunter | Boot-time remounting from persisted config missing | medium | Engine should re-establish mount configuration on daemon boot. Route: patch. |
+| B3 | blind-hunter | Command-line SMB credential exposure in mount arguments | medium | /proc/pid/cmdline exposes password; use temporary credentials file. Route: patch. |
+| B4 | blind-hunter | Commas in SMB passwords corrupt mount options | medium | Fixed by using temporary credentials file. Route: patch. |
+| B5 | blind-hunter | Unvalidated target_path allows arbitrary mount points | high | target_path must be restricted to subdirectories within dataDir. Route: patch. |
+| B6 | blind-hunter | Unvalidated options string in NAS requests | low | Whitelist safe mount options. Route: patch. |
+| B7 | blind-hunter | TestConnection does not verify credentials | medium | TCP dial only verifies port; test authentication or mount probe. Route: patch. |
+| B8 | blind-hunter | ProbeOnce holds exclusive lock across network I/O | high | Serializes all HTTP requests during network latency. Route: patch. |
+| B9 | blind-hunter | Missing unmount endpoint in API | low | Unmount endpoint scheduled for settings hub in Epic 6. Route: reject. |
+| B10 | blind-hunter | Concurrency synchronization on format and mount missing | low | Add mutex in storage Engine to serialize mutating operations. Route: patch. |
+| B11 | blind-hunter | Goroutine leak on hung NFS stat | low | Context with timeout already used. Route: reject. |
+| B12 | blind-hunter | Capacity telemetry reflects root rather than NAS | low | Acceptable for scaffold; fine-grained volume metrics in Epic 1 Story 1.6. Route: reject. |
+| B13 | blind-hunter | StorageNASStatus enum and required message violation | low | Return valid status enum and message when unconfigured. Route: patch. |
+| B14 | blind-hunter | Flawed device prefix matching in IsSystemDevice | medium | Check exact device or partition prefix ('p' or digits). Route: patch. |
+| B15 | blind-hunter | Safe mode detection ignores container UID 0 without caps | low | Safe mode fallback verified. Route: reject. |
+| E1 | edge-case-hunter | Device name prefix collision in IsSystemDevice | medium | Duplicate of B14. Route: patch. |
+| E2 | edge-case-hunter | target_path traversal outside dataDir | high | Duplicate of B5. Route: patch. |
+| E3 | edge-case-hunter | Password comma delimiter in mount options | medium | Duplicate of B4. Route: patch. |
+| E4 | edge-case-hunter | Database persistence failure after mount orphans share | low | Rollback mount if DB persistence fails. Route: patch. |
+| E5 | edge-case-hunter | Probe loop running flag not reset on context cancel | low | Reset running flag in defer. Route: patch. |
+| E6 | edge-case-hunter | Mutex contention during probe accessibility check | high | Duplicate of B8. Route: patch. |
+| E7 | edge-case-hunter | Host string already contains port in net.JoinHostPort | low | Parse with net.SplitHostPort. Route: patch. |
+| V1 | verification-gap | Persistence restoration from SQLite on daemon startup unverified | medium | Missing test verifying restored storage status across new server instance. Route: patch. |
+| V2 | verification-gap | ErrDeviceInUse guard for mounted non-system devices unverified | medium | Missing test for mounted non-system device rejection. Route: patch. |
+| V3 | verification-gap | POST /nas/mount error handling unverified | medium | Missing tests for invalid credentials and unreachable host errors. Route: patch. |
+| V4 | verification-gap | Initial unconfigured state of GET /storage/status unverified | medium | Missing test asserting status: not_configured on fresh boot. Route: patch. |
+| V5 | verification-gap | ListDisks checks len(mockDisks) > 0 instead of mockDisks != nil | low | Empty slice []DiskInfo{} falls through to host sys/block. Route: patch. |
+
 
 ## Design Notes
 

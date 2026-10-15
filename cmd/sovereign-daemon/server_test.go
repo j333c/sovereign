@@ -819,4 +819,201 @@ func TestServer_StorageNASMountAndStatus(t *testing.T) {
 	}
 }
 
+func TestServer_StorageStatus_InitialUnconfigured(t *testing.T) {
+	srv, _ := setupTestServer(t)
+	defer srv.Close()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/storage/status", nil)
+	w := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d", w.Code)
+	}
+	var res storage.StorageStatusResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &res); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if res.Status != "not_configured" {
+		t.Errorf("expected status 'not_configured', got %q", res.Status)
+	}
+	if res.PoolType != "none" {
+		t.Errorf("expected pool_type 'none', got %q", res.PoolType)
+	}
+	if res.LocalPool != nil {
+		t.Errorf("expected nil local_pool, got %+v", res.LocalPool)
+	}
+	if res.NAS == nil || res.NAS.Configured {
+		t.Errorf("expected NAS configured = false, got %+v", res.NAS)
+	}
+	if res.NAS.Status != "disconnected" {
+		t.Errorf("expected NAS status 'disconnected', got %q", res.NAS.Status)
+	}
+}
+
+func TestServer_StorageInitialize_DeviceInUse(t *testing.T) {
+	srv, _ := setupTestServer(t)
+	defer srv.Close()
+
+	defaultOps := srv.StorageEngine().DiskOps().(*storage.DefaultDiskOps)
+	defaultOps.SetMockDisks([]storage.DiskInfo{
+		{
+			Name:       "sdc",
+			Path:       "/dev/sdc",
+			Mounted:    true,
+			MountPoint: "/mnt/external",
+			IsSystem:   false, // Non-system device, but mounted
+		},
+	})
+
+	body, _ := json.Marshal(map[string]string{"device": "/dev/sdc"})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/storage/initialize", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 Bad Request for mounted device, got %d: body=%s", w.Code, w.Body.String())
+	}
+	var prob ProblemDetails
+	_ = json.Unmarshal(w.Body.Bytes(), &prob)
+	if !strings.Contains(prob.Detail, "currently in use or mounted") {
+		t.Errorf("expected detail containing 'currently in use or mounted', got %q", prob.Detail)
+	}
+}
+
+func TestServer_StorageNASMount_Errors(t *testing.T) {
+	srv, _ := setupTestServer(t)
+	defer srv.Close()
+
+	defaultNASOps := srv.StorageEngine().NASOps().(*storage.DefaultNASOps)
+
+	// Case 1: Unreachable host
+	defaultNASOps.SetMockReachability(false)
+	bodyUnreachable, _ := json.Marshal(storage.NASMountRequest{
+		Type:  "smb",
+		Host:  "unreachable.host",
+		Share: "media",
+	})
+	req1 := httptest.NewRequest(http.MethodPost, "/api/v1/storage/nas/mount", bytes.NewReader(bodyUnreachable))
+	w1 := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(w1, req1)
+
+	if w1.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 Bad Request for unreachable host, got %d: body=%s", w1.Code, w1.Body.String())
+	}
+	defaultNASOps.SetMockReachability(true)
+
+	// Case 2: Auth failure
+	defaultNASOps.SetMockAuthSuccess(false)
+	bodyAuthFail, _ := json.Marshal(storage.NASMountRequest{
+		Type:     "smb",
+		Host:     "192.168.1.100",
+		Share:    "media",
+		Username: "baduser",
+		Password: "badpassword",
+	})
+	req2 := httptest.NewRequest(http.MethodPost, "/api/v1/storage/nas/mount", bytes.NewReader(bodyAuthFail))
+	w2 := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(w2, req2)
+
+	if w2.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 Bad Request for auth failure, got %d: body=%s", w2.Code, w2.Body.String())
+	}
+	defaultNASOps.SetMockAuthSuccess(true)
+
+	// Case 3: Path traversal attempt
+	bodyTraversal, _ := json.Marshal(storage.NASMountRequest{
+		Type:       "smb",
+		Host:       "192.168.1.100",
+		Share:      "media",
+		TargetPath: "../../etc",
+	})
+	req3 := httptest.NewRequest(http.MethodPost, "/api/v1/storage/nas/mount", bytes.NewReader(bodyTraversal))
+	w3 := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(w3, req3)
+
+	if w3.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 Bad Request for path traversal, got %d", w3.Code)
+	}
+}
+
+func TestServer_StoragePersistenceRestorationOnRestart(t *testing.T) {
+	tempDir := t.TempDir()
+	dataDir := filepath.Join(tempDir, "data")
+	stateDir := filepath.Join(dataDir, "state")
+	_ = os.MkdirAll(stateDir, 0755)
+	_ = os.WriteFile(filepath.Join(stateDir, "boot_state.json"), []byte(`{"clean_shutdown": true}`), 0644)
+
+	// Server 1
+	srv1, err := NewServer(Config{DataDir: dataDir})
+	if err != nil {
+		t.Fatalf("failed to create srv1: %v", err)
+	}
+	defaultDiskOps1 := srv1.StorageEngine().DiskOps().(*storage.DefaultDiskOps)
+	defaultDiskOps1.SetMockDisks([]storage.DiskInfo{
+		{Name: "nvme0n1", Path: "/dev/nvme0n1", Mounted: false, IsSystem: false},
+	})
+
+	// Initialize local storage pool
+	initBody, _ := json.Marshal(map[string]string{"device": "/dev/nvme0n1"})
+	reqInit := httptest.NewRequest(http.MethodPost, "/api/v1/storage/initialize", bytes.NewReader(initBody))
+	wInit := httptest.NewRecorder()
+	srv1.Handler().ServeHTTP(wInit, reqInit)
+	if wInit.Code != http.StatusOK {
+		t.Fatalf("Initialize failed on srv1: %s", wInit.Body.String())
+	}
+
+	// Mount NAS
+	mountBody, _ := json.Marshal(storage.NASMountRequest{
+		Type:     "smb",
+		Host:     "backup.nas",
+		Share:    "videos",
+		Username: "user",
+		Password: "secretpassword",
+	})
+	reqMount := httptest.NewRequest(http.MethodPost, "/api/v1/storage/nas/mount", bytes.NewReader(mountBody))
+	wMount := httptest.NewRecorder()
+	srv1.Handler().ServeHTTP(wMount, reqMount)
+	if wMount.Code != http.StatusOK {
+		t.Fatalf("Mount failed on srv1: %s", wMount.Body.String())
+	}
+
+	// Close Server 1
+	_ = srv1.Close()
+
+	// Server 2 (restart with same data directory)
+	srv2, err := NewServer(Config{DataDir: dataDir})
+	if err != nil {
+		t.Fatalf("failed to create srv2: %v", err)
+	}
+	defer srv2.Close()
+
+	reqStatus := httptest.NewRequest(http.MethodGet, "/api/v1/storage/status", nil)
+	wStatus := httptest.NewRecorder()
+	srv2.Handler().ServeHTTP(wStatus, reqStatus)
+
+	if wStatus.Code != http.StatusOK {
+		t.Fatalf("Status failed on srv2: %d", wStatus.Code)
+	}
+	var status storage.StorageStatusResponse
+	_ = json.Unmarshal(wStatus.Body.Bytes(), &status)
+
+	if status.PoolType != "hybrid" {
+		t.Errorf("expected pool_type 'hybrid', got %q", status.PoolType)
+	}
+	if status.LocalPool == nil || status.LocalPool.Device != "/dev/nvme0n1" {
+		t.Errorf("expected restored local pool, got %+v", status.LocalPool)
+	}
+	if status.NAS == nil || !status.NAS.Configured {
+		t.Fatalf("expected restored NAS config, got %+v", status.NAS)
+	}
+	if status.NAS.Host != "backup.nas" || status.NAS.Share != "videos" {
+		t.Errorf("expected restored NAS host/share, got %+v", status.NAS)
+	}
+	if status.NAS.Password != "***" {
+		t.Errorf("expected redacted password '***', got %q", status.NAS.Password)
+	}
+}
+
+
 
