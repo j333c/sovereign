@@ -2,7 +2,7 @@
 title: 'Story 1.4: Storage Pool Formatting & Network NAS Mount Management'
 type: 'feature'
 created: '2026-10-15'
-status: 'in-review'
+status: 'done'
 baseline_commit: '26be1555237e3cc8e48d9137acb75a2fd480cca3'
 route: 'dispatch'
 review_loop_iteration: 0
