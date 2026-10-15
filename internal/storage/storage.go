@@ -45,6 +45,10 @@ func EnsureDataLayout(dataRoot string) error {
 		}
 	}
 
+	if err := EnsureDropzoneDirectories(dataRoot); err != nil {
+		return fmt.Errorf("failed to provision dropzone layout: %w", err)
+	}
+
 	return nil
 }
 

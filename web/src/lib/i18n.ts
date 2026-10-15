@@ -70,6 +70,23 @@ export interface DashboardTranslations {
   diagnosticLogsDownloaded: string;
   close: string;
   inactive: string;
+  dropzoneTitle: string;
+  dropzoneSubtitle: string;
+  categoryMovies: string;
+  categoryTV: string;
+  categoryMusic: string;
+  categoryAudiobooks: string;
+  dragDropPrompt: string;
+  supportedFormats: string;
+  networkShareTitle: string;
+  networkShareDesc: string;
+  copied: string;
+  copyPath: string;
+  recentUploads: string;
+  noRecentUploads: string;
+  uploading: string;
+  uploadSuccess: string;
+  onlyMediaAccepted: string;
 }
 
 export const translations: Record<Language, DashboardTranslations> = {
@@ -143,6 +160,23 @@ export const translations: Record<Language, DashboardTranslations> = {
     diagnosticLogsDownloaded: "Diagnostic logs downloaded",
     close: "Close",
     inactive: "Inactive",
+    dropzoneTitle: "Media Dropzone",
+    dropzoneSubtitle: "Add movies, TV shows, music, and audiobooks to your home server",
+    categoryMovies: "Movies",
+    categoryTV: "TV Shows",
+    categoryMusic: "Music",
+    categoryAudiobooks: "Audiobooks",
+    dragDropPrompt: "Drop files here or click to browse",
+    supportedFormats: "Supports MP4, MKV, WebM, AVI, TS, MP3, FLAC, WAV, OGG, Opus, M4A, M4B, AAC",
+    networkShareTitle: "Home Network Folder",
+    networkShareDesc: "Drop files here or copy to \\\\sovereign\\drop on your home network.",
+    copied: "Copied!",
+    copyPath: "Copy path",
+    recentUploads: "Recent Uploads",
+    noRecentUploads: "No media files uploaded yet.",
+    uploading: "Uploading...",
+    uploadSuccess: "Media uploaded successfully and added to your library.",
+    onlyMediaAccepted: "Only media files are accepted. Please upload video or audio files.",
   },
   de: {
     crestTitle: "Sovereign",
@@ -214,6 +248,23 @@ export const translations: Record<Language, DashboardTranslations> = {
     diagnosticLogsDownloaded: "Diagnoseprotokolle heruntergeladen",
     close: "Schließen",
     inactive: "Inaktiv",
+    dropzoneTitle: "Medien-Dropzone",
+    dropzoneSubtitle: "Filme, Serien, Musik und Hörbücher auf deinen Heimserver übertragen",
+    categoryMovies: "Filme",
+    categoryTV: "Serien",
+    categoryMusic: "Musik",
+    categoryAudiobooks: "Hörbücher",
+    dragDropPrompt: "Dateien hier ablegen oder zum Auswählen klicken",
+    supportedFormats: "Unterstützt MP4, MKV, WebM, AVI, TS, MP3, FLAC, WAV, OGG, Opus, M4A, M4B, AAC",
+    networkShareTitle: "Heimnetzwerk-Ordner",
+    networkShareDesc: "Dateien hier ablegen oder im Heimnetzwerk nach \\\\sovereign\\drop kopieren.",
+    copied: "Kopiert!",
+    copyPath: "Pfad kopieren",
+    recentUploads: "Kürzliche Uploads",
+    noRecentUploads: "Noch keine Mediendateien hochgeladen.",
+    uploading: "Wird hochgeladen...",
+    uploadSuccess: "Mediendatei erfolgreich hochgeladen und zur Bibliothek hinzugefügt.",
+    onlyMediaAccepted: "Es werden nur Mediendateien akzeptiert. Bitte lade Video- oder Audiodateien hoch.",
   },
   es: {
     crestTitle: "Sovereign",
@@ -285,6 +336,23 @@ export const translations: Record<Language, DashboardTranslations> = {
     diagnosticLogsDownloaded: "Registros de diagnóstico descargados",
     close: "Cerrar",
     inactive: "Inactivo",
+    dropzoneTitle: "Zona de Carga de Medios",
+    dropzoneSubtitle: "Añade películas, series, música y audiolibros a tu servidor",
+    categoryMovies: "Películas",
+    categoryTV: "Series",
+    categoryMusic: "Música",
+    categoryAudiobooks: "Audiolibros",
+    dragDropPrompt: "Arrastra archivos aquí o haz clic para explorar",
+    supportedFormats: "Compatible con MP4, MKV, WebM, AVI, TS, MP3, FLAC, WAV, OGG, Opus, M4A, M4B, AAC",
+    networkShareTitle: "Carpeta de Red Local",
+    networkShareDesc: "Arrastra archivos aquí o cópialos a \\\\sovereign\\drop en tu red local.",
+    copied: "¡Copiado!",
+    copyPath: "Copiar ruta",
+    recentUploads: "Cargas Recientes",
+    noRecentUploads: "Aún no se han subido archivos multimedia.",
+    uploading: "Subiendo...",
+    uploadSuccess: "Archivo subido correctamente y añadido a tu biblioteca.",
+    onlyMediaAccepted: "Solo se aceptan archivos multimedia. Sube archivos de vídeo o audio.",
   },
   fr: {
     crestTitle: "Sovereign",
@@ -356,5 +424,22 @@ export const translations: Record<Language, DashboardTranslations> = {
     diagnosticLogsDownloaded: "Journaux de diagnostic téléchargés",
     close: "Fermer",
     inactive: "Inactif",
+    dropzoneTitle: "Zone de Dépôt Média",
+    dropzoneSubtitle: "Ajoutez des films, séries, musiques et livres audio à votre serveur",
+    categoryMovies: "Films",
+    categoryTV: "Séries",
+    categoryMusic: "Musique",
+    categoryAudiobooks: "Livres audio",
+    dragDropPrompt: "Déposez des fichiers ici ou cliquez pour parcourir",
+    supportedFormats: "Prend en charge MP4, MKV, WebM, AVI, TS, MP3, FLAC, WAV, OGG, Opus, M4A, M4B, AAC",
+    networkShareTitle: "Dossier Réseau Local",
+    networkShareDesc: "Déposez vos fichiers ici ou copiez-les vers \\\\sovereign\\drop sur votre réseau.",
+    copied: "Copié !",
+    copyPath: "Copier le chemin",
+    recentUploads: "Téléversements Récents",
+    noRecentUploads: "Aucun fichier multimédia téléversé pour le moment.",
+    uploading: "Téléversement...",
+    uploadSuccess: "Fichier téléversé avec succès et ajouté à votre bibliothèque.",
+    onlyMediaAccepted: "Seuls les fichiers multimédias sont acceptés. Veuillez envoyer des fichiers vidéo ou audio.",
   },
 };

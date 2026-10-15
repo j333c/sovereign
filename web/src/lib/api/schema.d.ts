@@ -430,6 +430,68 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/services/{id}/refresh": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Refresh media service library
+         * @description Triggers immediate library refresh webhook in the specified media service (e.g. Jellyfin, Navidrome, Audiobookshelf).
+         */
+        post: operations["refreshService"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/drop/upload": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Upload media file to dropzone
+         * @description Streams incoming media upload to atomic staging file, validates magic bytes
+         *     (MP4, MKV, WebM, AVI, MPEG-TS, MP3, FLAC, WAV, OGG, Opus, M4A, M4B, AAC),
+         *     atomically moves verified file to /data/media/:category, and triggers library refresh.
+         */
+        post: operations["uploadDropMedia"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/drop/history": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Retrieve dropzone upload history
+         * @description Returns recent list of ingested media files and promotion status.
+         */
+        get: operations["getDropHistory"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -875,6 +937,67 @@ export interface components {
             message: string;
             /** Format: date-time */
             timestamp?: string;
+        };
+        DropUploadResponse: {
+            /** @example 0192e2fb-3d85-789a-b47e-46cb5d544081 */
+            id: string;
+            /** @example song.mp3 */
+            filename: string;
+            /** @example song.mp3 */
+            original_filename: string;
+            /**
+             * @example music
+             * @enum {string}
+             */
+            category: "movies" | "tv" | "music" | "audiobooks";
+            /**
+             * Format: int64
+             * @example 4194304
+             */
+            size: number;
+            /** @example audio/mpeg */
+            content_type: string;
+            /** @example /data/media/music/song.mp3 */
+            path: string;
+            /**
+             * @example promoted
+             * @enum {string}
+             */
+            status: "promoted" | "failed" | "rejected";
+            /** Format: date-time */
+            uploaded_at: string;
+        };
+        DropHistoryItem: {
+            /** @example 0192e2fb-3d85-789a-b47e-46cb5d544081 */
+            id: string;
+            /** @example song.mp3 */
+            filename: string;
+            /** @example song.mp3 */
+            original_filename: string;
+            /**
+             * @example music
+             * @enum {string}
+             */
+            category: "movies" | "tv" | "music" | "audiobooks";
+            /**
+             * Format: int64
+             * @example 4194304
+             */
+            size: number;
+            /** @example audio/mpeg */
+            content_type: string;
+            /** @example /data/media/music/song.mp3 */
+            path: string;
+            /**
+             * @example promoted
+             * @enum {string}
+             */
+            status: "promoted" | "failed" | "rejected";
+            /** Format: date-time */
+            uploaded_at: string;
+        };
+        DropHistoryResponse: {
+            items: components["schemas"]["DropHistoryItem"][];
         };
     };
     responses: never;
@@ -1678,6 +1801,162 @@ export interface operations {
                 };
             };
             /** @description Internal supervisor error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    refreshService: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Library refresh triggered successfully. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @example ok */
+                        status?: string;
+                        /** @example jellyfin */
+                        service?: string;
+                        /** @example true */
+                        refreshed?: boolean;
+                    };
+                };
+            };
+            /** @description Service does not support library refresh. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Service not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Internal supervisor error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Service inactive. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    uploadDropMedia: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": {
+                    /**
+                     * @description Target media library category
+                     * @enum {string}
+                     */
+                    category: "movies" | "tv" | "music" | "audiobooks";
+                    /**
+                     * Format: binary
+                     * @description Media file payload to ingest
+                     */
+                    file: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Media file verified and promoted to media library. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DropUploadResponse"];
+                };
+            };
+            /** @description Missing or invalid category or file field. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Non-media or invalid magic bytes payload rejected. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Internal supervisor error processing upload. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    getDropHistory: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Ingestion history items. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DropHistoryResponse"];
+                };
+            };
+            /** @description Internal supervisor error retrieving dropzone history. */
             500: {
                 headers: {
                     [name: string]: unknown;

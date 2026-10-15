@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -2340,3 +2341,245 @@ func TestServer_AudioBundle_ActivationAndRefresh(t *testing.T) {
 		t.Errorf("expected title 'Image Pull Failed', got: %s", prob.Title)
 	}
 }
+
+func createMultipartUpload(category, filename string, content []byte) (*bytes.Buffer, string, error) {
+	body := &bytes.Buffer{}
+	writer := multipart.NewWriter(body)
+
+	if category != "" {
+		if err := writer.WriteField("category", category); err != nil {
+			return nil, "", err
+		}
+	}
+
+	if filename != "" || content != nil {
+		part, err := writer.CreateFormFile("file", filename)
+		if err != nil {
+			return nil, "", err
+		}
+		if len(content) > 0 {
+			if _, err := part.Write(content); err != nil {
+				return nil, "", err
+			}
+		}
+	}
+
+	if err := writer.Close(); err != nil {
+		return nil, "", err
+	}
+
+	return body, writer.FormDataContentType(), nil
+}
+
+func TestServer_Dropzone_UploadValidMedia_PromotesAndRefreshes(t *testing.T) {
+	srv, dataDir := setupTestServer(t)
+	defer srv.Close()
+
+	// MP4 payload with valid ftyp box
+	mp4Payload := []byte("\x00\x00\x00\x20ftypisom\x00\x00\x02\x00isomiso2mp41" + strings.Repeat("A", 100))
+	body, contentType, err := createMultipartUpload("movies", "sample.mp4", mp4Payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/drop/upload", body)
+	req.Header.Set("Content-Type", contentType)
+	w := httptest.NewRecorder()
+
+	srv.Handler().ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var res storage.DropHistoryItem
+	if err := json.Unmarshal(w.Body.Bytes(), &res); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	if res.Filename != "sample.mp4" {
+		t.Errorf("expected sample.mp4, got %s", res.Filename)
+	}
+	if res.Category != "movies" {
+		t.Errorf("expected movies, got %s", res.Category)
+	}
+	if res.Status != "promoted" {
+		t.Errorf("expected promoted, got %s", res.Status)
+	}
+
+	// Verify file promoted to /data/media/movies/sample.mp4
+	targetPath := filepath.Join(dataDir, "media", "movies", "sample.mp4")
+	if _, err := os.Stat(targetPath); err != nil {
+		t.Fatalf("file not found in target media directory: %v", err)
+	}
+
+	// Verify staging directory is clean
+	stagingDir := filepath.Join(dataDir, "drop", "incoming", "movies")
+	entries, _ := os.ReadDir(stagingDir)
+	for _, entry := range entries {
+		t.Errorf("unexpected staging file: %s", entry.Name())
+	}
+
+	// Verify history endpoint returns the uploaded file
+	reqHist := httptest.NewRequest(http.MethodGet, "/api/v1/drop/history", nil)
+	wHist := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(wHist, reqHist)
+
+	if wHist.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK for history, got %d", wHist.Code)
+	}
+
+	var histRes struct {
+		Items []storage.DropHistoryItem `json:"items"`
+	}
+	if err := json.Unmarshal(wHist.Body.Bytes(), &histRes); err != nil {
+		t.Fatal(err)
+	}
+	if len(histRes.Items) != 1 || histRes.Items[0].Filename != "sample.mp4" {
+		t.Errorf("unexpected history response: %+v", histRes)
+	}
+}
+
+func TestServer_Dropzone_UploadNonMedia_Rejects422AndCleans(t *testing.T) {
+	srv, dataDir := setupTestServer(t)
+	defer srv.Close()
+
+	// Text payload without magic bytes
+	txtPayload := []byte("This is plain text and definitely not media.")
+	body, contentType, err := createMultipartUpload("tv", "notes.txt", txtPayload)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/drop/upload", body)
+	req.Header.Set("Content-Type", contentType)
+	w := httptest.NewRecorder()
+
+	srv.Handler().ServeHTTP(w, req)
+
+	if w.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("expected 422 Unprocessable Entity, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var prob ProblemDetails
+	if err := json.Unmarshal(w.Body.Bytes(), &prob); err != nil {
+		t.Fatal(err)
+	}
+	if prob.Title != "Invalid Media Format" {
+		t.Errorf("expected title 'Invalid Media Format', got %q", prob.Title)
+	}
+	if !strings.Contains(prob.Detail, "Only media files are accepted") {
+		t.Errorf("expected detail to contain reassurance microcopy, got %q", prob.Detail)
+	}
+
+	// Verify file was NOT promoted to /data/media/tv
+	targetPath := filepath.Join(dataDir, "media", "tv", "notes.txt")
+	if _, err := os.Stat(targetPath); !os.IsNotExist(err) {
+		t.Fatalf("rejected file should not exist at %s", targetPath)
+	}
+
+	// Verify staging directory is clean
+	stagingDir := filepath.Join(dataDir, "drop", "incoming", "tv")
+	entries, _ := os.ReadDir(stagingDir)
+	for _, entry := range entries {
+		t.Errorf("staging file not cleaned up: %s", entry.Name())
+	}
+}
+
+func TestServer_Dropzone_UploadValidationErrors(t *testing.T) {
+	srv, _ := setupTestServer(t)
+	defer srv.Close()
+
+	// 1. Missing category
+	body1, ct1, _ := createMultipartUpload("", "song.mp3", []byte("ID3\x04\x00\x00\x00\x00\x02\x00"))
+	req1 := httptest.NewRequest(http.MethodPost, "/api/v1/drop/upload", body1)
+	req1.Header.Set("Content-Type", ct1)
+	w1 := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(w1, req1)
+	if w1.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 Bad Request on missing category, got %d", w1.Code)
+	}
+
+	// 2. Invalid category
+	body2, ct2, _ := createMultipartUpload("games", "song.mp3", []byte("ID3\x04\x00\x00\x00\x00\x02\x00"))
+	req2 := httptest.NewRequest(http.MethodPost, "/api/v1/drop/upload", body2)
+	req2.Header.Set("Content-Type", ct2)
+	w2 := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(w2, req2)
+	if w2.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 Bad Request on invalid category, got %d", w2.Code)
+	}
+
+	// 3. Missing file
+	body3 := &bytes.Buffer{}
+	writer3 := multipart.NewWriter(body3)
+	_ = writer3.WriteField("category", "music")
+	_ = writer3.Close()
+	req3 := httptest.NewRequest(http.MethodPost, "/api/v1/drop/upload", body3)
+	req3.Header.Set("Content-Type", writer3.FormDataContentType())
+	w3 := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(w3, req3)
+	if w3.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 Bad Request on missing file, got %d", w3.Code)
+	}
+
+	// 4. Empty file
+	body4, ct4, _ := createMultipartUpload("music", "empty.mp3", []byte{})
+	req4 := httptest.NewRequest(http.MethodPost, "/api/v1/drop/upload", body4)
+	req4.Header.Set("Content-Type", ct4)
+	w4 := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(w4, req4)
+	if w4.Code != http.StatusUnprocessableEntity {
+		t.Errorf("expected 422 Unprocessable Entity on empty file, got %d", w4.Code)
+	}
+}
+
+func TestServer_Dropzone_CollisionHandling(t *testing.T) {
+	srv, dataDir := setupTestServer(t)
+	defer srv.Close()
+
+	wavPayload := []byte("RIFF\x24\x00\x00\x00WAVEfmt \x10\x00\x00\x00" + strings.Repeat("\x00", 50))
+
+	// First upload
+	b1, ct1, _ := createMultipartUpload("music", "track.wav", wavPayload)
+	req1 := httptest.NewRequest(http.MethodPost, "/api/v1/drop/upload", b1)
+	req1.Header.Set("Content-Type", ct1)
+	w1 := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(w1, req1)
+	if w1.Code != http.StatusOK {
+		t.Fatalf("first upload failed: %d", w1.Code)
+	}
+
+	var res1 storage.DropHistoryItem
+	_ = json.Unmarshal(w1.Body.Bytes(), &res1)
+	if res1.Filename != "track.wav" {
+		t.Errorf("expected track.wav, got %s", res1.Filename)
+	}
+
+	// Second upload with same name
+	b2, ct2, _ := createMultipartUpload("music", "track.wav", wavPayload)
+	req2 := httptest.NewRequest(http.MethodPost, "/api/v1/drop/upload", b2)
+	req2.Header.Set("Content-Type", ct2)
+	w2 := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(w2, req2)
+	if w2.Code != http.StatusOK {
+		t.Fatalf("second upload failed: %d", w2.Code)
+	}
+
+	var res2 storage.DropHistoryItem
+	_ = json.Unmarshal(w2.Body.Bytes(), &res2)
+	if res2.Filename != "track (1).wav" {
+		t.Errorf("expected track (1).wav, got %s", res2.Filename)
+	}
+
+	// Both files exist on disk
+	f1 := filepath.Join(dataDir, "media", "music", "track.wav")
+	f2 := filepath.Join(dataDir, "media", "music", "track (1).wav")
+	if _, err := os.Stat(f1); err != nil {
+		t.Errorf("track.wav missing: %v", err)
+	}
+	if _, err := os.Stat(f2); err != nil {
+		t.Errorf("track (1).wav missing: %v", err)
+	}
+}
+

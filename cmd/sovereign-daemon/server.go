@@ -92,6 +92,7 @@ type Config struct {
 	HardwareCollector hardware.Collector
 	TelemetryInterval time.Duration
 	ServiceMgr        *supervisor.ServiceManager
+	DropzoneEngine    *storage.DropzoneEngine
 }
 
 type sseEvent struct {
@@ -113,6 +114,7 @@ type Server struct {
 	ingressMgr        ingress.IngressManager
 	mdnsService       *ingress.MDNSService
 	serviceMgr        *supervisor.ServiceManager
+	dropzoneEngine    *storage.DropzoneEngine
 	stopChan          chan struct{}
 	closeOnce         sync.Once
 	mu                sync.RWMutex
@@ -244,6 +246,22 @@ func NewServer(cfg Config) (*Server, error) {
 		s.serviceMgr.SetEventBroadcaster(s.BroadcastEvent)
 	}
 
+	if cfg.DropzoneEngine == nil {
+		var err error
+		cfg.DropzoneEngine, err = storage.NewDropzoneEngine(storage.DropzoneConfig{
+			DataDir:   cfg.DataDir,
+			Logger:    cfg.Logger,
+			Refresher: s.serviceMgr,
+		})
+		if err != nil {
+			cfg.Logger.Error("dropzone engine initialization failed", "error", err)
+			return nil, fmt.Errorf("dropzone engine initialization failed: %w", err)
+		}
+	} else if s.serviceMgr != nil {
+		cfg.DropzoneEngine.SetRefresher(s.serviceMgr)
+	}
+	s.dropzoneEngine = cfg.DropzoneEngine
+
 	s.routes()
 	return s, nil
 }
@@ -327,6 +345,11 @@ func (s *Server) StartBackgroundServices(ctx context.Context) {
 	if s.serviceMgr != nil {
 		s.serviceMgr.StartWatchdog(ctx)
 	}
+
+	// 7. Start dropzone background folder scanner
+	if s.dropzoneEngine != nil {
+		s.dropzoneEngine.Start(ctx)
+	}
 }
 
 // BootManager returns the active BootManager instance.
@@ -364,6 +387,13 @@ func (s *Server) ServiceManager() *supervisor.ServiceManager {
 	return s.serviceMgr
 }
 
+// DropzoneEngine returns the active DropzoneEngine instance.
+func (s *Server) DropzoneEngine() *storage.DropzoneEngine {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.dropzoneEngine
+}
+
 // BroadcastEvent emits an SSE event to all actively connected SSE clients.
 func (s *Server) BroadcastEvent(event string, data any) {
 	s.eventsMu.RLock()
@@ -389,6 +419,10 @@ func (s *Server) Close() error {
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	if s.dropzoneEngine != nil {
+		_ = s.dropzoneEngine.Close()
+	}
 
 	if s.serviceMgr != nil {
 		_ = s.serviceMgr.Close()
@@ -462,6 +496,10 @@ func (s *Server) routes() {
 	s.router.HandleFunc("POST /api/v1/services/{id}/deactivate", s.handleDeactivateService)
 	s.router.HandleFunc("POST /api/v1/services/{id}/restart", s.requireSetupOrAdmin(s.handleRestartService))
 	s.router.HandleFunc("POST /api/v1/services/{id}/refresh", s.handleRefreshService)
+
+	// Media Dropzone ingestion endpoints
+	s.router.HandleFunc("POST /api/v1/drop/upload", s.handleDropUpload)
+	s.router.HandleFunc("GET /api/v1/drop/history", s.handleDropHistory)
 }
 
 
@@ -1322,6 +1360,90 @@ func (s *Server) handleRefreshService(w http.ResponseWriter, r *http.Request) {
 		"status":    "ok",
 		"service":   id,
 		"refreshed": true,
+	})
+}
+
+// handleDropUpload handles multipart file uploads to /api/v1/drop/upload.
+// Streams file into atomic staging path, validates magic bytes, moves to /data/media/:category,
+// triggers library refresh within 5s, and returns 200 with metadata.
+func (s *Server) handleDropUpload(w http.ResponseWriter, r *http.Request) {
+	s.mu.RLock()
+	engine := s.dropzoneEngine
+	s.mu.RUnlock()
+
+	if engine == nil {
+		s.writeProblem(w, http.StatusInternalServerError, "Internal Server Error", "Dropzone engine is not initialized", r.URL.Path)
+		return
+	}
+
+	// 32MB max in-memory buffer, spills to disk temp for large video files
+	if err := r.ParseMultipartForm(32 << 20); err != nil {
+		s.writeProblem(w, http.StatusBadRequest, "Invalid Request", "Failed to parse multipart/form-data upload: "+err.Error(), r.URL.Path)
+		return
+	}
+	defer func() {
+		if r.MultipartForm != nil {
+			_ = r.MultipartForm.RemoveAll()
+		}
+	}()
+
+	category := strings.ToLower(strings.TrimSpace(r.FormValue("category")))
+	if category == "" || !storage.IsValidCategory(category) {
+		s.writeProblem(w, http.StatusBadRequest, "Invalid Category", "Category must be one of: movies, tv, music, audiobooks", r.URL.Path)
+		return
+	}
+
+	file, header, err := r.FormFile("file")
+	if err != nil || file == nil {
+		s.writeProblem(w, http.StatusBadRequest, "Missing File", "Multipart field 'file' is required", r.URL.Path)
+		return
+	}
+	defer file.Close()
+
+	item, err := engine.HandleUploadStream(r.Context(), category, header.Filename, file)
+	if err != nil {
+		if errors.Is(err, storage.ErrInvalidCategory) {
+			s.writeProblem(w, http.StatusBadRequest, "Invalid Category", "Category must be one of: movies, tv, music, audiobooks", r.URL.Path)
+			return
+		}
+		if errors.Is(err, storage.ErrInvalidMedia) {
+			s.writeProblem(w, http.StatusUnprocessableEntity, "Invalid Media Format", "Only media files are accepted. Please upload video or audio files.", r.URL.Path)
+			return
+		}
+		if errors.Is(err, storage.ErrEmptyFile) {
+			s.writeProblem(w, http.StatusUnprocessableEntity, "Empty File", "The uploaded file is empty.", r.URL.Path)
+			return
+		}
+		if errors.Is(err, context.Canceled) || errors.Is(err, storage.ErrStagingAborted) {
+			s.writeProblem(w, 499, "Upload Aborted", "Client closed connection during upload stream", r.URL.Path)
+			return
+		}
+		s.logger.Error("dropzone upload processing failed", "category", category, "filename", header.Filename, "error", err)
+		s.writeProblem(w, http.StatusInternalServerError, "Upload Failed", "An error occurred while processing the media upload.", r.URL.Path)
+		return
+	}
+
+	s.writeJSON(w, http.StatusOK, item)
+}
+
+// handleDropHistory returns recent ingestion and promotion history.
+func (s *Server) handleDropHistory(w http.ResponseWriter, r *http.Request) {
+	s.mu.RLock()
+	engine := s.dropzoneEngine
+	s.mu.RUnlock()
+
+	if engine == nil {
+		s.writeJSON(w, http.StatusOK, map[string]any{"items": []any{}})
+		return
+	}
+
+	items := engine.GetHistory()
+	if items == nil {
+		items = []storage.DropHistoryItem{}
+	}
+
+	s.writeJSON(w, http.StatusOK, map[string]any{
+		"items": items,
 	})
 }
 

@@ -30,6 +30,9 @@ export type ServicesListResponse = components["schemas"]["ServicesListResponse"]
 export type ServicePullProgressEvent = components["schemas"]["ServicePullProgressEvent"];
 export type ServiceHealthChangedEvent = components["schemas"]["ServiceHealthChangedEvent"];
 export type ServiceErrorEvent = components["schemas"]["ServiceErrorEvent"];
+export type DropUploadResponse = components["schemas"]["DropUploadResponse"];
+export type DropHistoryItem = components["schemas"]["DropHistoryItem"];
+export type DropHistoryResponse = components["schemas"]["DropHistoryResponse"];
 
 /**
  * ProblemDetailsError represents an RFC 7807 problem details error thrown by the daemon API.
@@ -301,6 +304,32 @@ export class SovereignApiClient {
     return this.request<ServiceStatus>(`/api/v1/services/${encodeURIComponent(id)}/restart`, {
       method: "POST",
     });
+  }
+
+  /**
+   * Upload media file to staged dropzone pipeline.
+   */
+  async uploadDropMedia(category: string, file: File | Blob, filename?: string): Promise<DropUploadResponse> {
+    const formData = new FormData();
+    formData.append("category", category);
+    if (filename) {
+      formData.append("file", file, filename);
+    } else {
+      formData.append("file", file);
+    }
+
+    return this.request<DropUploadResponse>("/api/v1/drop/upload", {
+      method: "POST",
+      body: formData,
+    });
+  }
+
+  /**
+   * Retrieve recent dropzone upload and ingestion history.
+   */
+  async getDropHistory(): Promise<DropHistoryItem[]> {
+    const res = await this.request<DropHistoryResponse>("/api/v1/drop/history");
+    return res.items ?? [];
   }
 
   /**

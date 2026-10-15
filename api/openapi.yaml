@@ -652,6 +652,77 @@ paths:
               schema:
                 $ref: '#/components/schemas/ProblemDetails'
 
+  /api/v1/drop/upload:
+    post:
+      summary: Upload media file to dropzone
+      description: |
+        Streams incoming media upload to atomic staging file, validates magic bytes
+        (MP4, MKV, WebM, AVI, MPEG-TS, MP3, FLAC, WAV, OGG, Opus, M4A, M4B, AAC),
+        atomically moves verified file to /data/media/:category, and triggers library refresh.
+      operationId: uploadDropMedia
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+                - category
+                - file
+              properties:
+                category:
+                  type: string
+                  enum: [movies, tv, music, audiobooks]
+                  description: Target media library category
+                file:
+                  type: string
+                  format: binary
+                  description: Media file payload to ingest
+      responses:
+        '200':
+          description: Media file verified and promoted to media library.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DropUploadResponse'
+        '400':
+          description: Missing or invalid category or file field.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '422':
+          description: Non-media or invalid magic bytes payload rejected.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '500':
+          description: Internal supervisor error processing upload.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/v1/drop/history:
+    get:
+      summary: Retrieve dropzone upload history
+      description: Returns recent list of ingested media files and promotion status.
+      operationId: getDropHistory
+      responses:
+        '200':
+          description: Ingestion history items.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DropHistoryResponse'
+        '500':
+          description: Internal supervisor error retrieving dropzone history.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
 components:
   schemas:
     HealthResponse:
@@ -1360,3 +1431,102 @@ components:
         timestamp:
           type: string
           format: date-time
+
+    DropUploadResponse:
+      type: object
+      required:
+        - id
+        - filename
+        - original_filename
+        - category
+        - size
+        - content_type
+        - path
+        - status
+        - uploaded_at
+      properties:
+        id:
+          type: string
+          example: 0192e2fb-3d85-789a-b47e-46cb5d544081
+        filename:
+          type: string
+          example: song.mp3
+        original_filename:
+          type: string
+          example: song.mp3
+        category:
+          type: string
+          enum: [movies, tv, music, audiobooks]
+          example: music
+        size:
+          type: integer
+          format: int64
+          example: 4194304
+        content_type:
+          type: string
+          example: audio/mpeg
+        path:
+          type: string
+          example: /data/media/music/song.mp3
+        status:
+          type: string
+          enum: [promoted, failed, rejected]
+          example: promoted
+        uploaded_at:
+          type: string
+          format: date-time
+
+    DropHistoryItem:
+      type: object
+      required:
+        - id
+        - filename
+        - original_filename
+        - category
+        - size
+        - content_type
+        - path
+        - status
+        - uploaded_at
+      properties:
+        id:
+          type: string
+          example: 0192e2fb-3d85-789a-b47e-46cb5d544081
+        filename:
+          type: string
+          example: song.mp3
+        original_filename:
+          type: string
+          example: song.mp3
+        category:
+          type: string
+          enum: [movies, tv, music, audiobooks]
+          example: music
+        size:
+          type: integer
+          format: int64
+          example: 4194304
+        content_type:
+          type: string
+          example: audio/mpeg
+        path:
+          type: string
+          example: /data/media/music/song.mp3
+        status:
+          type: string
+          enum: [promoted, failed, rejected]
+          example: promoted
+        uploaded_at:
+          type: string
+          format: date-time
+
+    DropHistoryResponse:
+      type: object
+      required:
+        - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/DropHistoryItem'
+
