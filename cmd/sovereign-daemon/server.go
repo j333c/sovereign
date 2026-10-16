@@ -536,7 +536,10 @@ func NewServer(cfg Config) (*Server, error) {
 	s.deadlineStore = cfg.DeadlineStore
 
 	if cfg.ObligationScanner == nil && s.deadlineStore != nil {
-		llmBaseURL := cfg.CaddyURL
+		llmBaseURL := os.Getenv("SOVEREIGN_AI_GATEWAY_URL")
+		if llmBaseURL == "" {
+			llmBaseURL = os.Getenv("SOVEREIGN_LLM_URL")
+		}
 		if llmBaseURL == "" {
 			llmBaseURL = "http://127.0.0.1:8080"
 		}
@@ -2735,7 +2738,10 @@ func (s *Server) handleGetDeadlines(w http.ResponseWriter, r *http.Request) {
 		status = store.DeadlineStatusPending
 	}
 
-	withinDays := 14
+	withinDays := 0
+	if status == store.DeadlineStatusPending {
+		withinDays = 14
+	}
 	if q := r.URL.Query().Get("within_days"); q != "" {
 		if parsed, err := strconv.Atoi(q); err == nil {
 			withinDays = parsed
@@ -2805,10 +2811,13 @@ func (s *Server) handleScanDeadlines(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req ScanDeadlinesRequest
-	if r.Body != nil && r.ContentLength > 0 {
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err != io.EOF {
-			s.writeProblem(w, http.StatusBadRequest, "Invalid Request", fmt.Sprintf("Failed to decode scan request: %v", err), r.URL.Path)
-			return
+	if r.Body != nil {
+		bodyBytes, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+		if err == nil && len(strings.TrimSpace(string(bodyBytes))) > 0 {
+			if err := json.Unmarshal(bodyBytes, &req); err != nil {
+				s.writeProblem(w, http.StatusBadRequest, "Invalid Request", fmt.Sprintf("Failed to decode scan request: %v", err), r.URL.Path)
+				return
+			}
 		}
 	}
 

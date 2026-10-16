@@ -5053,6 +5053,32 @@ func TestServer_Deadlines_QueryAndDismiss(t *testing.T) {
 		t.Errorf("expected deadline ID %q, got %q", d1.ID, results[0].ID)
 	}
 
+	// 1b. Query unparameterized (no query string): defaults to pending within 14 days
+	unparamReq := httptest.NewRequest("GET", "/api/v1/documents/deadlines", nil)
+	unparamW := httptest.NewRecorder()
+	srv.router.ServeHTTP(unparamW, unparamReq)
+	if unparamW.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK on unparameterized query, got %d: %s", unparamW.Code, unparamW.Body.String())
+	}
+	var unparamResults []*store.DocumentDeadline
+	_ = json.Unmarshal(unparamW.Body.Bytes(), &unparamResults)
+	if len(unparamResults) != 1 || unparamResults[0].ID != d1.ID {
+		t.Errorf("expected default query to return d1, got %+v", unparamResults)
+	}
+
+	// 1c. Query future deadlines without within_days: unconstrained search returns d2
+	futureReq := httptest.NewRequest("GET", "/api/v1/documents/deadlines?status=future", nil)
+	futureW := httptest.NewRecorder()
+	srv.router.ServeHTTP(futureW, futureReq)
+	if futureW.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK on future query, got %d: %s", futureW.Code, futureW.Body.String())
+	}
+	var futureResults []*store.DocumentDeadline
+	_ = json.Unmarshal(futureW.Body.Bytes(), &futureResults)
+	if len(futureResults) != 1 || futureResults[0].ID != d2.ID {
+		t.Errorf("expected status=future unconstrained query to return d2, got %+v", futureResults)
+	}
+
 	// 2. Dismiss d1
 	dismissReq := httptest.NewRequest("POST", "/api/v1/documents/deadlines/"+d1.ID+"/dismiss", nil)
 	w = httptest.NewRecorder()
@@ -5129,6 +5155,21 @@ func TestServer_Deadlines_ManualScanEndpoint(t *testing.T) {
 	}
 	if resp.Deadlines[0].Amount == nil || *resp.Deadlines[0].Amount != 150.00 {
 		t.Errorf("expected amount 150.00, got %v", resp.Deadlines[0].Amount)
+	}
+
+	// 2. Empty body manual scan: should execute batch pass without error
+	emptyReq := httptest.NewRequest("POST", "/api/v1/documents/deadlines/scan", nil)
+	emptyW := httptest.NewRecorder()
+	srv.router.ServeHTTP(emptyW, emptyReq)
+	if emptyW.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK for empty body scan, got %d: %s", emptyW.Code, emptyW.Body.String())
+	}
+	var emptyResp ScanDeadlinesResponse
+	if err := json.Unmarshal(emptyW.Body.Bytes(), &emptyResp); err != nil {
+		t.Fatalf("failed to decode empty scan response: %v", err)
+	}
+	if emptyResp.Status != "completed" {
+		t.Errorf("expected status 'completed', got %q", emptyResp.Status)
 	}
 }
 

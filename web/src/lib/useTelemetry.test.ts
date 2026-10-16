@@ -175,4 +175,30 @@ describe("useTelemetry Hook & SSE streaming contract", () => {
     mockES.emit("dms.document_ingested", docEvt);
     assert.deepEqual(receivedDocIngested, docEvt);
   });
+
+  it("dispatches dms.deadline_detected events via MockEventSource", () => {
+    const mockES = new MockEventSource("http://localhost:8080/api/v1/system/events");
+
+    let receivedDeadline: any = null;
+
+    attachTelemetryListeners(mockES, {
+      onDMSDeadlineDetected: (evt) => {
+        receivedDeadline = evt;
+      },
+    });
+
+    const deadlineEvt = {
+      id: "dl-123",
+      document_id: "doc-456",
+      title: "Invoice #482",
+      due_date: "2026-10-28",
+      amount: 150.0,
+      currency: "USD",
+      snippet: "Total Due: $150.00 by 2026-10-28",
+      status: "pending",
+      days_remaining: 12,
+    };
+    mockES.emit("dms.deadline_detected", deadlineEvt);
+    assert.deepEqual(receivedDeadline, deadlineEvt);
+  });
 });

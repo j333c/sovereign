@@ -443,3 +443,150 @@ func TestObligationScanner_ThresholdFilteringAndDeduplication(t *testing.T) {
 		t.Errorf("expected past deadline older than 30 days to be skipped, got %d", len(dPast))
 	}
 }
+
+func TestRegexParser_NonDueDateOnlyReturnsNil(t *testing.T) {
+	parser := NewRegexParser()
+	text := "Rechnungsdatum: 12.03.2026. Kundennummer: 98765. Vielen Dank für Ihren Einkauf."
+
+	obligations := parser.ParseObligations(text, "Rechnung")
+	if len(obligations) != 0 {
+		t.Fatalf("expected 0 obligations when only non-due dates (e.g. invoice date) exist, got %d", len(obligations))
+	}
+}
+
+func TestRegexParser_TotalAmountSelectionAndThousandsComma(t *testing.T) {
+	parser := NewRegexParser()
+	text := "Item A: $10.00\nItem B: $25.00\nTotal Due: $1,250 by 2026-11-15"
+
+	obligations := parser.ParseObligations(text, "Invoice #101")
+	if len(obligations) != 1 {
+		t.Fatalf("expected 1 obligation, got %d", len(obligations))
+	}
+	obl := obligations[0]
+	if obl.Amount == nil || *obl.Amount != 1250.00 {
+		t.Errorf("expected parsed total amount 1250.00, got %v", obl.Amount)
+	}
+	if obl.Currency != "USD" {
+		t.Errorf("expected currency 'USD', got %q", obl.Currency)
+	}
+	if obl.DueDate != "2026-11-15" {
+		t.Errorf("expected due date '2026-11-15', got %q", obl.DueDate)
+	}
+}
+
+func TestRegexParser_GermanMayAndMarch(t *testing.T) {
+	parser := NewRegexParser()
+
+	// Mai
+	textMai := "Zahlbar bis 20. Mai 2026. Gesamtbetrag: 45,00 €"
+	oblsMai := parser.ParseObligations(textMai, "Rechnung Nr. 50")
+	if len(oblsMai) != 1 {
+		t.Fatalf("expected 1 obligation for Mai, got %d", len(oblsMai))
+	}
+	if oblsMai[0].DueDate != "2026-05-20" {
+		t.Errorf("expected due date '2026-05-20', got %q", oblsMai[0].DueDate)
+	}
+	if oblsMai[0].Amount == nil || *oblsMai[0].Amount != 45.00 {
+		t.Errorf("expected amount 45.00, got %v", oblsMai[0].Amount)
+	}
+
+	// Mrz
+	textMrz := "Fällig zum 10. Mrz 2026. Gesamtbetrag: 30,00 €"
+	oblsMrz := parser.ParseObligations(textMrz, "Rechnung Nr. 51")
+	if len(oblsMrz) != 1 {
+		t.Fatalf("expected 1 obligation for Mrz, got %d", len(oblsMrz))
+	}
+	if oblsMrz[0].DueDate != "2026-03-10" {
+		t.Errorf("expected due date '2026-03-10', got %q", oblsMrz[0].DueDate)
+	}
+}
+
+func TestObligationScanner_NightlyPromotionToPending(t *testing.T) {
+	tempDir := t.TempDir()
+	db, err := store.Open(filepath.Join(tempDir, "promotion_test.db"))
+	if err != nil {
+		t.Fatalf("Open store failed: %v", err)
+	}
+	defer db.Close()
+
+	dStore, err := store.NewDeadlineStore(db)
+	if err != nil {
+		t.Fatalf("NewDeadlineStore failed: %v", err)
+	}
+
+	broadcasterEvents := 0
+	broadcaster := func(event string, data any) {
+		if event == EventDeadlineDetected {
+			broadcasterEvents++
+		}
+	}
+
+	scanner := NewObligationScanner(dStore, nil, broadcaster, nil)
+
+	// Ingest deadline at day 0: 25 days in future -> status 'future'
+	t0 := time.Date(2026, 10, 1, 10, 0, 0, 0, time.UTC)
+	scanner.SetNowFunc(func() time.Time { return t0 })
+
+	doc := "Insurance policy renewal due by 2026-10-26. Total: $200.00"
+	deadlines, err := scanner.ScanDocumentText(context.Background(), "doc-ins", "Insurance", doc, false)
+	if err != nil {
+		t.Fatalf("ScanDocumentText failed: %v", err)
+	}
+	if len(deadlines) != 1 || deadlines[0].Status != store.DeadlineStatusFuture {
+		t.Fatalf("expected 1 future deadline, got %+v", deadlines)
+	}
+	if broadcasterEvents != 0 {
+		t.Errorf("expected 0 SSE events for initial future deadline, got %d", broadcasterEvents)
+	}
+
+	// Advance time by 15 days: now 10 days remaining (<= 14)
+	t1 := t0.AddDate(0, 0, 15)
+	scanner.SetNowFunc(func() time.Time { return t1 })
+
+	processed, err := scanner.ProcessNightlyBatch(context.Background())
+	if err != nil {
+		t.Fatalf("ProcessNightlyBatch failed: %v", err)
+	}
+	if processed != 1 {
+		t.Errorf("expected 1 promoted deadline, got %d", processed)
+	}
+	if broadcasterEvents != 1 {
+		t.Errorf("expected 1 SSE event upon promotion to pending, got %d", broadcasterEvents)
+	}
+
+	// Verify status in store is now pending
+	saved, err := dStore.Get(context.Background(), deadlines[0].ID)
+	if err != nil {
+		t.Fatalf("Get deadline failed: %v", err)
+	}
+	if saved.Status != store.DeadlineStatusPending {
+		t.Errorf("expected status 'pending' after promotion, got %q", saved.Status)
+	}
+}
+
+func TestObligationScanner_LLMFallbackToRegexOn503(t *testing.T) {
+	// Mock AI gateway returning 503
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "AI Service Unavailable", http.StatusServiceUnavailable)
+	}))
+	defer gateway.Close()
+
+	llm := NewGatewayLLMExtractor(gateway.URL, nil)
+	scanner := NewObligationScanner(nil, llm, nil, nil)
+
+	doc := "Invoice #777. Payment due: 2026-11-20. Total Due: $500.00"
+	// Force LLM extraction, which will fail with 503 and fall back to Tier 1 regex baseline
+	results, err := scanner.ScanDocumentText(context.Background(), "doc-777", "Invoice #777", doc, true)
+	if err != nil {
+		t.Fatalf("ScanDocumentText should not fail on LLM 503 fallback, got error: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 fallback regex obligation, got %d", len(results))
+	}
+	if results[0].DueDate != "2026-11-20" {
+		t.Errorf("expected due date '2026-11-20', got %q", results[0].DueDate)
+	}
+	if results[0].Amount == nil || *results[0].Amount != 500.00 {
+		t.Errorf("expected amount 500.00, got %v", results[0].Amount)
+	}
+}

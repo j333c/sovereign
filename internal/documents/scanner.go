@@ -130,12 +130,10 @@ func (s *ObligationScanner) ScanDocumentText(ctx context.Context, docID, title, 
 	// 3. Process, deduplicate, and persist detected obligations in SQLite
 	var persisted []*store.DocumentDeadline
 	for _, obl := range obligations {
-		dueDate, err := time.Parse("2006-01-02", obl.DueDate)
+		diffDays, err := calendarDaysDiff(obl.DueDate, now)
 		if err != nil {
 			continue
 		}
-
-		diffDays := int(math.Floor(dueDate.Sub(truncDate(now)).Hours() / 24))
 
 		// Ignore past dates older than 30 days
 		if diffDays < -30 {
@@ -146,6 +144,11 @@ func (s *ObligationScanner) ScanDocumentText(ctx context.Context, docID, title, 
 		status := store.DeadlineStatusPending
 		if diffDays > s.alertThreshold {
 			status = store.DeadlineStatusFuture
+		}
+
+		var prior *store.DocumentDeadline
+		if s.store != nil {
+			prior, _ = s.store.GetByDocAndDueDate(ctx, docID, obl.DueDate)
 		}
 
 		rec := &store.DocumentDeadline{
@@ -165,8 +168,9 @@ func (s *ObligationScanner) ScanDocumentText(ctx context.Context, docID, title, 
 			}
 		}
 
-		// Broadcast SSE event for impending deadlines
-		if rec.Status == store.DeadlineStatusPending && s.broadcaster != nil {
+		// Broadcast SSE event for newly impending deadlines (new record or promoted from future)
+		isNewOrPromoted := (prior == nil) || (prior.Status == store.DeadlineStatusFuture && rec.Status == store.DeadlineStatusPending)
+		if rec.Status == store.DeadlineStatusPending && isNewOrPromoted && s.broadcaster != nil {
 			s.broadcaster(EventDeadlineDetected, map[string]any{
 				"id":             rec.ID,
 				"document_id":    rec.DocumentID,
@@ -244,11 +248,10 @@ func (s *ObligationScanner) ProcessNightlyBatch(ctx context.Context) (int, error
 		futureDeadlines, err := s.store.List(ctx, store.DeadlineStatusFuture, 0, now)
 		if err == nil {
 			for _, d := range futureDeadlines {
-				dueDate, parseErr := time.Parse("2006-01-02", d.DueDate)
+				diffDays, parseErr := calendarDaysDiff(d.DueDate, now)
 				if parseErr != nil {
 					continue
 				}
-				diffDays := int(math.Floor(dueDate.Sub(truncDate(now)).Hours() / 24))
 				if diffDays <= s.alertThreshold && diffDays >= -30 {
 					d.Status = store.DeadlineStatusPending
 					_ = s.store.Save(ctx, d)
@@ -348,6 +351,8 @@ func (s *ObligationScanner) mergeObligations(regexResults, llmResults []Extracte
 			}
 			if l.Amount != nil {
 				existing.Amount = l.Amount
+			}
+			if l.Currency != "" {
 				existing.Currency = l.Currency
 			}
 			if l.Snippet != "" {
@@ -367,8 +372,15 @@ func (s *ObligationScanner) mergeObligations(regexResults, llmResults []Extracte
 	return results
 }
 
-func truncDate(t time.Time) time.Time {
-	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, t.Location())
+// calendarDaysDiff calculates the calendar day difference between a YYYY-MM-DD due date and now,
+// normalizing both to midnight UTC to prevent off-by-one errors from local timezone offsets or DST transitions.
+func calendarDaysDiff(dueDateStr string, now time.Time) (int, error) {
+	dueDate, err := time.Parse("2006-01-02", dueDateStr)
+	if err != nil {
+		return 0, err
+	}
+	nowDate := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+	return int(math.Round(dueDate.Sub(nowDate).Hours() / 24.0)), nil
 }
 
 // extractTextFromBytes extracts text from plain text or basic PDF text streams.

@@ -2,10 +2,10 @@
 title: 'Story 4.3: Deadline Extraction Parser & Obligation Scanner'
 type: 'feature'
 created: '2026-10-16'
-status: 'review'
+status: 'done'
 route: 'dispatch'
-baseline_commit: '3f231f67fba30ee8e61e0bbfeeebe56b02578508'
-review_loop_iteration: 0
+baseline_commit: '3f231f61ec72c5a4867d33973cb75468192bfc24'
+review_loop_iteration: 1
 context:
   - '_bmad-output/planning-artifacts/architecture/architecture-sovereign-2026-10-15/ARCHITECTURE-SPINE.md'
   - '_bmad-output/planning-artifacts/ux-designs/ux-sovereign-2026-10-15/DESIGN.md'
@@ -99,4 +99,18 @@ context:
 
 ## Review Triage Log
 
-*(Populated during review)*
+### Review Loop 1 (3-Layer Parallel Review: Blind Hunter, Edge Case Hunter, Verification Gap)
+- Unified Diff under review: `/tmp/spec_4_3_diff.patch` (112 KB against baseline commit `3f231f61ec72c5a4867d33973cb75468192bfc24`)
+- **Triaged Findings & Remediations**:
+  1. *Blind Hunter Finding - German Month Names & Non-Due Date Fallback*: Added missing German months ("mai", "mrz") and abbreviations in `regex_parser.go`. Prevented fallback to all date matches when candidate dates were exclusively marked as non-due dates (`isNonDue`, e.g. invoice issue date "Rechnungsdatum: 12.03.2026"), avoiding false deadline extractions.
+  2. *Blind Hunter Finding - Amount Selection & Thousands Separator*: Refactored `findAmountInString` in `regex_parser.go` to collect candidate amounts across all patterns, prioritize total indicators ("Gesamt", "Total", "Zahlbetrag", etc.), and select the largest amount on the document rather than breaking on the first line item. Updated `parseNumericAmount` and amount regexes with word boundary anchors `\b` to accurately parse thousands commas (e.g. `$1,250`) without mistaking them for decimal amounts (`$1.25`).
+  3. *Edge Case Hunter Finding - Timezone Normalization in Day Offset Calculation*: Replaced `math.Floor(dueDate.Sub(truncDate(now)).Hours() / 24)` with `calendarDaysDiff(dueDateStr, now)` in `scanner.go`, normalizing both `now` and `dueDate` to midnight UTC to prevent off-by-one errors from local timezone offsets or DST shifts.
+  4. *Edge Case Hunter Finding - SSE Event Deduplication*: In `ScanDocumentText`, added inspection of `prior` record to only broadcast `dms.deadline_detected` for newly created pending obligations or promotions from `future` to `pending`, avoiding duplicate SSE spam when re-scanning indexed documents.
+  5. *Edge Case Hunter Finding - LLM Gateway URL Configuration*: Updated daemon initialization in `server.go` to inspect `SOVEREIGN_AI_GATEWAY_URL` and `SOVEREIGN_LLM_URL` with fallback to `http://127.0.0.1:8080`, replacing the erroneous `cfg.CaddyURL` (port 2019).
+  6. *Edge Case Hunter Finding - Default Query Window on Status=Future*: In `handleGetDeadlines`, set `withinDays = 0` (unconstrained) when querying future deadlines and `within_days` is omitted, rather than defaulting to 14 days which would filter out all future deadlines.
+  7. *Verification Gap Finding - Web SSE Listener Integration*: Updated `web/src/lib/useTelemetry.ts` to export `onDMSDeadlineDetected` and listen for `dms.deadline_detected` SSE events, adding test coverage in `useTelemetry.test.ts`.
+  8. *Verification Gap Finding - Unit & Integration Test Coverage*: Added test cases in `deadlines_test.go` and `server_test.go` covering nightly batch promotion, LLM 503 fallback to regex baseline, unparameterized deadline queries, empty body manual scans, and thousands comma formatting.
+- **Verification Status**:
+  - `go test ./...`: 100% PASS across all packages.
+  - `npm --prefix web test`: 100% PASS across all 91 test cases.
+

@@ -30,28 +30,19 @@ func NewRegexParser() *RegexParser {
 // Month maps for multilingual parsing (English and German).
 var (
 	monthNames = map[string]int{
-		// English full and abbreviated
-		"january": 1, "jan": 1,
-		"february": 2, "feb": 2,
-		"march": 3, "mar": 3,
+		// English & German month names
+		"january": 1, "jan": 1, "januar": 1,
+		"february": 2, "feb": 2, "februar": 2,
+		"march": 3, "mar": 3, "märz": 3, "maerz": 3, "mär": 3, "mae": 3, "mrz": 3,
 		"april": 4, "apr": 4,
-		"may": 5,
-		"june": 6, "jun": 6,
-		"july": 7, "jul": 7,
+		"may": 5, "mai": 5,
+		"june": 6, "jun": 6, "juni": 6,
+		"july": 7, "jul": 7, "juli": 7,
 		"august": 8, "aug": 8,
 		"september": 9, "sep": 9, "sept": 9,
-		"october": 10, "oct": 10,
+		"october": 10, "oct": 10, "oktober": 10, "okt": 10,
 		"november": 11, "nov": 11,
-		"december": 12, "dec": 12,
-
-		// German full and abbreviated
-		"januar": 1,
-		"februar": 2,
-		"märz": 3, "maerz": 3, "mär": 3, "mae": 3,
-		"juni": 6,
-		"juli": 7,
-		"oktober": 10, "okt": 10,
-		"dezember": 12, "dez": 12,
+		"december": 12, "dec": 12, "dezember": 12, "dez": 12,
 	}
 
 	// Trigger keywords in English and German
@@ -71,18 +62,21 @@ var (
 	reEnDate1     = regexp.MustCompile(`(?i)\b(` + reEnMonthName + `)\.?\s+(0?[1-9]|[12]\d|3[01])(?:st|nd|rd|th)?,?\s+(\d{4})\b`)
 	reEnDate2     = regexp.MustCompile(`(?i)\b(0?[1-9]|[12]\d|3[01])(?:st|nd|rd|th)?\s+(?:of\s+)?(` + reEnMonthName + `)\.?,?\s+(\d{4})\b`)
 
-	// German textual date: 15. November 2026 or 15. Maerz 2026 or 15. März 2026
-	reDeMonthName = `(?:Januar|Februar|März|Maerz|Mär|Mae|April|Mai|Juni|Juli|August|September|Oktober|Okt|November|Nov|Dezember|Dez|Jan|Feb|Apr|Jun|Jul|Aug|Sep)`
+	// German textual date: 15. November 2026 or 15. Maerz 2026 or 15. März 2026 or 15. Mai 2026
+	reDeMonthName = `(?:Januar|Februar|März|Maerz|Mär|Mae|Mrz|April|Mai|Juni|Juli|August|September|Oktober|Okt|November|Nov|Dezember|Dez|Jan|Feb|Apr|Jun|Jul|Aug|Sep)`
 	reDeDate      = regexp.MustCompile(`(?i)\b(0?[1-9]|[12]\d|3[01])\.\s*(` + reDeMonthName + `)\.?,?\s+(\d{4})\b`)
 
 	// Monetary amounts
-	reAmountPrefixSymbol = regexp.MustCompile(`([$€£])\s*([0-9]{1,3}(?:[.,][0-9]{3})*(?:[.,][0-9]{1,2})|[0-9]+)`)
-	reAmountSuffixSymbol = regexp.MustCompile(`([0-9]{1,3}(?:[.,][0-9]{3})*(?:[.,][0-9]{1,2})|[0-9]+)\s*([$€£])`)
-	reAmountSuffixCode   = regexp.MustCompile(`([0-9]{1,3}(?:[.,][0-9]{3})*(?:[.,][0-9]{1,2})|[0-9]+)\s*\b(EUR|USD|GBP|CHF)\b`)
-	reAmountPrefixCode   = regexp.MustCompile(`\b(USD|EUR|GBP|CHF)\s*([0-9]{1,3}(?:[.,][0-9]{3})*(?:[.,][0-9]{1,2})|[0-9]+)\b`)
+	reAmountPrefixSymbol = regexp.MustCompile(`([$€£])\s*([0-9]{1,3}(?:[.,][0-9]{3})*(?:[.,][0-9]{1,2})\b|[0-9]{1,3}(?:[.,][0-9]{3})+\b|[0-9]+\b)`)
+	reAmountSuffixSymbol = regexp.MustCompile(`\b([0-9]{1,3}(?:[.,][0-9]{3})*(?:[.,][0-9]{1,2})\b|[0-9]{1,3}(?:[.,][0-9]{3})+\b|[0-9]+\b)\s*([$€£])`)
+	reAmountSuffixCode   = regexp.MustCompile(`\b([0-9]{1,3}(?:[.,][0-9]{3})*(?:[.,][0-9]{1,2})\b|[0-9]{1,3}(?:[.,][0-9]{3})+\b|[0-9]+\b)\s*\b(EUR|USD|GBP|CHF)\b`)
+	reAmountPrefixCode   = regexp.MustCompile(`\b(USD|EUR|GBP|CHF)\s*([0-9]{1,3}(?:[.,][0-9]{3})*(?:[.,][0-9]{1,2})\b|[0-9]{1,3}(?:[.,][0-9]{3})+\b|[0-9]+\b)`)
+
+	// Total and balance indicators
+	reTotalIndicator = regexp.MustCompile(`(?i)\b(?:gesamt|total|gesamtbetrag|endbetrag|zahlbetrag|summe|balance|amount\s*due|rechnungsbetrag)\b`)
 
 	// Specific title patterns
-	reTitlePattern = regexp.MustCompile(`(?i)\b((?:Invoice|Rechnung|Police|Policy|Contract|Vertrag)\s*#?\s*[A-Za-z0-9-_]+)\b`)
+	reTitlePattern = regexp.MustCompile(`(?i)\b((?:Invoice|Rechnung|Police|Policy|Contract|Vertrag)\s*(?:#|Nr\.?|No\.?)?\s*[A-Za-z0-9-_]+)\b`)
 )
 
 type rawDateMatch struct {
@@ -121,7 +115,7 @@ func (p *RegexParser) ParseObligations(text string, fallbackTitle string) []Extr
 			}
 		}
 		if len(chosenMatches) == 0 {
-			chosenMatches = dateMatches
+			return nil
 		}
 	}
 
@@ -314,61 +308,83 @@ func (p *RegexParser) extractAmount(snippet, fullText string) (*float64, string)
 	return p.findAmountInString(fullText)
 }
 
+type amountCandidate struct {
+	val     float64
+	curr    string
+	isTotal bool
+}
+
 func (p *RegexParser) findAmountInString(s string) (*float64, string) {
-	// 1. Suffix symbol/code: e.g. 120,00 €, 89,50 EUR, 120.00 CHF, 150.00 USD
-	if matches := reAmountSuffixSymbol.FindAllStringSubmatch(s, -1); len(matches) > 0 {
-		last := matches[0]
-		// If multiple, check if any is near "Gesamt" or "Total"
-		for _, m := range matches {
-			if strings.Contains(s, "Gesamt") || strings.Contains(s, "Total") {
-				last = m
-				break
-			}
+	var candidates []amountCandidate
+
+	addCandidate := func(numStr, currStr string, start, end int) {
+		val, err := parseNumericAmount(numStr)
+		if err != nil {
+			return
 		}
-		val, err := parseNumericAmount(last[1])
-		if err == nil {
-			curr := normalizeCurrency(last[2])
-			return &val, curr
+		curr := normalizeCurrency(currStr)
+		ctxStart := start - 60
+		if ctxStart < 0 {
+			ctxStart = 0
 		}
+		ctxEnd := end + 30
+		if ctxEnd > len(s) {
+			ctxEnd = len(s)
+		}
+		isTotal := reTotalIndicator.MatchString(s[ctxStart:ctxEnd])
+		candidates = append(candidates, amountCandidate{
+			val:     val,
+			curr:    curr,
+			isTotal: isTotal,
+		})
+	}
+
+	// 1. Suffix symbol: e.g. 120,00 €, 89,50 €
+	for _, loc := range reAmountSuffixSymbol.FindAllStringSubmatchIndex(s, -1) {
+		addCandidate(s[loc[2]:loc[3]], s[loc[4]:loc[5]], loc[0], loc[1])
 	}
 
 	// 2. Suffix code: e.g. 120.00 CHF, 89.50 EUR, 150.00 USD
-	if matches := reAmountSuffixCode.FindAllStringSubmatch(s, -1); len(matches) > 0 {
-		last := matches[0]
-		for _, m := range matches {
-			if strings.Contains(s, "Gesamt") || strings.Contains(s, "Total") {
-				last = m
-				break
-			}
-		}
-		val, err := parseNumericAmount(last[1])
-		if err == nil {
-			curr := normalizeCurrency(last[2])
-			return &val, curr
+	for _, loc := range reAmountSuffixCode.FindAllStringSubmatchIndex(s, -1) {
+		addCandidate(s[loc[2]:loc[3]], s[loc[4]:loc[5]], loc[0], loc[1])
+	}
+
+	// 3. Prefix symbol: e.g. $150.00, €89.50, £120.00, $1,250
+	for _, loc := range reAmountPrefixSymbol.FindAllStringSubmatchIndex(s, -1) {
+		addCandidate(s[loc[4]:loc[5]], s[loc[2]:loc[3]], loc[0], loc[1])
+	}
+
+	// 4. Prefix code: e.g. USD 150.00, EUR 89.50, CHF 120.00
+	for _, loc := range reAmountPrefixCode.FindAllStringSubmatchIndex(s, -1) {
+		addCandidate(s[loc[4]:loc[5]], s[loc[2]:loc[3]], loc[0], loc[1])
+	}
+
+	if len(candidates) == 0 {
+		return nil, ""
+	}
+
+	// Check if any candidates are flagged as total amounts
+	var totals []amountCandidate
+	for _, c := range candidates {
+		if c.isTotal {
+			totals = append(totals, c)
 		}
 	}
 
-	// 2. Prefix symbol: e.g. $150.00, €89.50, £120.00
-	if matches := reAmountPrefixSymbol.FindAllStringSubmatch(s, -1); len(matches) > 0 {
-		last := matches[0]
-		val, err := parseNumericAmount(last[2])
-		if err == nil {
-			curr := normalizeCurrency(last[1])
-			return &val, curr
+	pool := candidates
+	if len(totals) > 0 {
+		pool = totals
+	}
+
+	// Select candidate with the largest value
+	best := pool[0]
+	for _, c := range pool[1:] {
+		if c.val > best.val {
+			best = c
 		}
 	}
 
-	// 3. Prefix code: e.g. USD 150.00, EUR 89.50, CHF 120.00
-	if matches := reAmountPrefixCode.FindAllStringSubmatch(s, -1); len(matches) > 0 {
-		last := matches[0]
-		val, err := parseNumericAmount(last[2])
-		if err == nil {
-			curr := normalizeCurrency(last[1])
-			return &val, curr
-		}
-	}
-
-	return nil, ""
+	return &best.val, best.curr
 }
 
 func normalizeCurrency(curr string) string {
@@ -405,8 +421,14 @@ func parseNumericAmount(numStr string) (float64, error) {
 			s = strings.ReplaceAll(s, ",", "")
 		}
 	} else if hasComma {
-		// Only comma, e.g. 89,50 or 120,00
-		s = strings.ReplaceAll(s, ",", ".")
+		parts := strings.Split(s, ",")
+		if len(parts) > 2 || (len(parts) == 2 && len(parts[1]) == 3) {
+			// Thousands separator: 1,250 or 1,000,000
+			s = strings.ReplaceAll(s, ",", "")
+		} else {
+			// Decimal comma: 89,50
+			s = strings.ReplaceAll(s, ",", ".")
+		}
 	}
 
 	return strconv.ParseFloat(s, 64)

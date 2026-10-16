@@ -8,6 +8,7 @@ import {
   ServiceErrorEvent,
   DMSMailboxStatusEvent,
   DMSDocumentIngestedEvent,
+  DMSDeadlineDetectedEvent,
 } from "./api";
 
 export interface UseTelemetryOptions {
@@ -19,6 +20,7 @@ export interface UseTelemetryOptions {
   onServiceError?: (event: ServiceErrorEvent) => void;
   onDMSMailboxStatus?: (event: DMSMailboxStatusEvent) => void;
   onDMSDocumentIngested?: (event: DMSDocumentIngestedEvent) => void;
+  onDMSDeadlineDetected?: (event: DMSDeadlineDetectedEvent) => void;
 }
 
 export interface TelemetryListenerCallbacks {
@@ -28,6 +30,7 @@ export interface TelemetryListenerCallbacks {
   onServiceError?: (event: ServiceErrorEvent) => void;
   onDMSMailboxStatus?: (event: DMSMailboxStatusEvent) => void;
   onDMSDocumentIngested?: (event: DMSDocumentIngestedEvent) => void;
+  onDMSDeadlineDetected?: (event: DMSDeadlineDetectedEvent) => void;
 }
 
 export function attachTelemetryListeners(
@@ -87,6 +90,15 @@ export function attachTelemetryListeners(
       // Ignore malformed payloads
     }
   });
+
+  es.addEventListener("dms.deadline_detected", (event: { data: string }) => {
+    try {
+      const data = JSON.parse(event.data) as DMSDeadlineDetectedEvent;
+      callbacks.onDMSDeadlineDetected?.(data);
+    } catch {
+      // Ignore malformed payloads
+    }
+  });
 }
 
 export function useTelemetry({
@@ -98,6 +110,7 @@ export function useTelemetry({
   onServiceError,
   onDMSMailboxStatus,
   onDMSDocumentIngested,
+  onDMSDeadlineDetected,
 }: UseTelemetryOptions) {
   const [telemetry, setTelemetry] = useState<TelemetryUpdate | null>(initialTelemetry);
   const [isConnected, setIsConnected] = useState(false);
@@ -117,6 +130,9 @@ export function useTelemetry({
 
   const onDMSDocumentIngestedRef = useRef(onDMSDocumentIngested);
   onDMSDocumentIngestedRef.current = onDMSDocumentIngested;
+
+  const onDMSDeadlineDetectedRef = useRef(onDMSDeadlineDetected);
+  onDMSDeadlineDetectedRef.current = onDMSDeadlineDetected;
 
   useEffect(() => {
     let isMounted = true;
@@ -165,6 +181,10 @@ export function useTelemetry({
           onDMSDocumentIngested: (data) => {
             if (!isMounted) return;
             onDMSDocumentIngestedRef.current?.(data);
+          },
+          onDMSDeadlineDetected: (data) => {
+            if (!isMounted) return;
+            onDMSDeadlineDetectedRef.current?.(data);
           },
         });
 
