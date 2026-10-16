@@ -64,6 +64,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/system/revisions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List declarative compose revisions
+         * @description Returns chronological list of declarative compose revisions and snapshots.
+         */
+        get: operations["getRevisions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/system/revisions/active": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get active declarative compose revision
+         * @description Returns the active declarative compose revision metadata.
+         */
+        get: operations["getActiveRevision"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/system/events": {
         parameters: {
             query?: never;
@@ -445,6 +485,26 @@ export interface paths {
          * @description Triggers immediate library refresh webhook in the specified media service (e.g. Jellyfin, Navidrome, Audiobookshelf). Non-media services such as Paperless (`paperless`, `dms`, `documents`) and Llama (`llama`, `ai`, `llm`) do not support library refresh and return 400 Bad Request.
          */
         post: operations["refreshService"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/services/{id}/upgrade": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Upgrade managed service container
+         * @description Generates pre-upgrade SQLite snapshot, volume backup, and declarative revision before upgrading container image.
+         */
+        post: operations["upgradeService"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1750,6 +1810,73 @@ export interface components {
             /** Format: date-time */
             updated_at?: string;
         };
+        ComposeRevision: {
+            /**
+             * @description Sequential monotonic revision identifier
+             * @example 1
+             */
+            revision: number;
+            /**
+             * @description Canonical identifier of the service upgraded
+             * @example jellyfin
+             */
+            service_id: string;
+            /**
+             * @description Previous container image tag
+             * @example jellyfin/jellyfin:12.2.0
+             */
+            old_image: string;
+            /**
+             * @description Upgraded container image tag
+             * @example jellyfin/jellyfin:12.3.0
+             */
+            new_image: string;
+            /**
+             * @description Absolute path to the declarative Compose revision file
+             * @example /data/state/compose/rev-1.yaml
+             */
+            compose_file_path: string;
+            /**
+             * @description Absolute path to the atomic SQLite pre-upgrade snapshot
+             * @example /data/state/backups/pre-upgrade-1.db
+             */
+            sqlite_snapshot_path: string;
+            /**
+             * @description Absolute path to the configuration volume backup directory
+             * @example /data/state/backups/volumes-rev-1/jellyfin
+             */
+            volume_backup_path: string;
+            /**
+             * @description Revision lifecycle status
+             * @example active
+             * @enum {string}
+             */
+            status: "active" | "rolled_back" | "superseded";
+            /**
+             * @description ISO 8601 UTC timestamp of revision creation
+             * @example 2026-10-16T23:00:00Z
+             */
+            created_at: string;
+        };
+        ComposeRevisionsResponse: {
+            revisions: components["schemas"]["ComposeRevision"][];
+            /** @example 1 */
+            total: number;
+            /** @example 1 */
+            active_revision?: number | null;
+        };
+        ServiceUpgradeRequest: {
+            /**
+             * @description Optional new image tag or full image reference to upgrade to
+             * @example 12.3.0
+             */
+            image_tag?: string;
+            /**
+             * @description Optional full image reference alias
+             * @example jellyfin/jellyfin:12.3.0
+             */
+            image?: string;
+        };
         ServicesListResponse: {
             services: components["schemas"]["ServiceStatus"][];
         };
@@ -2807,6 +2934,73 @@ export interface operations {
             };
         };
     };
+    getRevisions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description List of declarative compose revisions. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ComposeRevisionsResponse"];
+                };
+            };
+            /** @description Internal server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    getActiveRevision: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Active compose revision metadata. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ComposeRevision"];
+                };
+            };
+            /** @description No active revision found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Internal server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
     getSystemEvents: {
         parameters: {
             query?: never;
@@ -3574,6 +3768,69 @@ export interface operations {
             };
             /** @description Service inactive. */
             503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    upgradeService: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Unique service identifier (e.g. jellyfin, navidrome, audiobookshelf, paperless). */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["ServiceUpgradeRequest"];
+            };
+        };
+        responses: {
+            /** @description Service upgraded and revision recorded. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ComposeRevision"];
+                };
+            };
+            /** @description Invalid request parameters. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Administrative authentication required. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Service not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Internal supervisor error during upgrade. */
+            500: {
                 headers: {
                     [name: string]: unknown;
                 };

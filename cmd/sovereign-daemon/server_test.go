@@ -6372,6 +6372,172 @@ func TestServer_AI_IdleTimeout_RestoredOnBoot(t *testing.T) {
 	}
 }
 
+func TestServer_Revisions_Empty(t *testing.T) {
+	srv, _ := setupTestServer(t)
+	defer srv.Close()
+
+	// 1. GET /api/v1/system/revisions
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/system/revisions", nil)
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	var resp ComposeRevisionsResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if resp.Total != 0 || len(resp.Revisions) != 0 {
+		t.Fatalf("expected 0 revisions, got total=%d, len=%d", resp.Total, len(resp.Revisions))
+	}
+
+	// 2. GET /api/v1/system/revisions/active -> 404
+	reqActive := httptest.NewRequest(http.MethodGet, "/api/v1/system/revisions/active", nil)
+	rrActive := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rrActive, reqActive)
+
+	if rrActive.Code != http.StatusNotFound {
+		t.Fatalf("expected status 404 for no active revision, got %d", rrActive.Code)
+	}
+	var prob map[string]any
+	if err := json.Unmarshal(rrActive.Body.Bytes(), &prob); err != nil {
+		t.Fatalf("failed to decode problem response: %v", err)
+	}
+	if prob["title"] != "Not Found" {
+		t.Errorf("expected title 'Not Found', got %v", prob["title"])
+	}
+}
+
+func TestServer_ServiceUpgrade_Success(t *testing.T) {
+	srv, dataDir := setupTestServer(t)
+	defer srv.Close()
+
+	// 1. Seed dummy configuration in /data/state/services/jellyfin
+	jellyfinCfgDir := filepath.Join(dataDir, "state", "services", "jellyfin", "config")
+	_ = os.MkdirAll(jellyfinCfgDir, 0755)
+	_ = os.WriteFile(filepath.Join(jellyfinCfgDir, "config.json"), []byte(`{"theme": "dark"}`), 0644)
+
+	// 2. POST /api/v1/services/jellyfin/upgrade with new image_tag
+	body := bytes.NewBufferString(`{"image_tag": "12.3.0"}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/services/jellyfin/upgrade", body)
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	var rev store.ComposeRevision
+	if err := json.Unmarshal(rr.Body.Bytes(), &rev); err != nil {
+		t.Fatalf("failed to parse revision response: %v", err)
+	}
+
+	if rev.Revision != 1 {
+		t.Errorf("expected revision 1, got %d", rev.Revision)
+	}
+	if rev.ServiceID != "jellyfin" {
+		t.Errorf("expected service jellyfin, got %q", rev.ServiceID)
+	}
+	if rev.NewImage != "jellyfin/jellyfin:12.3.0" {
+		t.Errorf("expected new image jellyfin/jellyfin:12.3.0, got %q", rev.NewImage)
+	}
+	if rev.Status != "active" {
+		t.Errorf("expected status active, got %q", rev.Status)
+	}
+
+	// Verify filesystem artifacts
+	if _, err := os.Stat(rev.ComposeFilePath); err != nil {
+		t.Fatalf("compose file not found at %s: %v", rev.ComposeFilePath, err)
+	}
+	if _, err := os.Stat(rev.SQLiteSnapshotPath); err != nil {
+		t.Fatalf("sqlite snapshot file not found at %s: %v", rev.SQLiteSnapshotPath, err)
+	}
+	if _, err := os.Stat(rev.VolumeBackupPath); err != nil {
+		t.Fatalf("volume backup path not found at %s: %v", rev.VolumeBackupPath, err)
+	}
+
+	// 3. GET /api/v1/system/revisions/active
+	reqActive := httptest.NewRequest(http.MethodGet, "/api/v1/system/revisions/active", nil)
+	rrActive := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rrActive, reqActive)
+
+	if rrActive.Code != http.StatusOK {
+		t.Fatalf("expected status 200 for active revision, got %d: %s", rrActive.Code, rrActive.Body.String())
+	}
+	var activeRev store.ComposeRevision
+	if err := json.Unmarshal(rrActive.Body.Bytes(), &activeRev); err != nil {
+		t.Fatalf("failed to decode active revision: %v", err)
+	}
+	if activeRev.Revision != 1 || activeRev.ServiceID != "jellyfin" {
+		t.Fatalf("unexpected active revision: %+v", activeRev)
+	}
+
+	// 4. GET /api/v1/system/revisions
+	reqList := httptest.NewRequest(http.MethodGet, "/api/v1/system/revisions", nil)
+	rrList := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rrList, reqList)
+
+	if rrList.Code != http.StatusOK {
+		t.Fatalf("expected status 200 for list revisions, got %d: %s", rrList.Code, rrList.Body.String())
+	}
+	var listResp ComposeRevisionsResponse
+	if err := json.Unmarshal(rrList.Body.Bytes(), &listResp); err != nil {
+		t.Fatalf("failed to decode list response: %v", err)
+	}
+	if listResp.Total != 1 || len(listResp.Revisions) != 1 {
+		t.Fatalf("expected 1 revision in list, got %+v", listResp)
+	}
+	if listResp.ActiveRevision == nil || *listResp.ActiveRevision != 1 {
+		t.Fatalf("expected active_revision 1, got %v", listResp.ActiveRevision)
+	}
+}
+
+func TestServer_ServiceUpgrade_NotFound(t *testing.T) {
+	srv, _ := setupTestServer(t)
+	defer srv.Close()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/services/unknown-spoke/upgrade", bytes.NewBufferString(`{}`))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("expected status 404 for unknown service upgrade, got %d: %s", rr.Code, rr.Body.String())
+	}
+	var prob map[string]any
+	if err := json.Unmarshal(rr.Body.Bytes(), &prob); err != nil {
+		t.Fatalf("failed to decode problem response: %v", err)
+	}
+	if prob["title"] != "Service Not Found" {
+		t.Errorf("expected title 'Service Not Found', got %v", prob["title"])
+	}
+}
+
+func TestServer_ServiceUpgrade_EmptyBody(t *testing.T) {
+	srv, _ := setupTestServer(t)
+	defer srv.Close()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/services/jellyfin/upgrade", nil)
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected status 200 for empty body upgrade, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	var rev store.ComposeRevision
+	if err := json.Unmarshal(rr.Body.Bytes(), &rev); err != nil {
+		t.Fatalf("failed to decode revision: %v", err)
+	}
+	if rev.Revision != 1 || rev.ServiceID != "jellyfin" {
+		t.Fatalf("unexpected revision: %+v", rev)
+	}
+}
+
+
 
 
 

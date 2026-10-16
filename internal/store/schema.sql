@@ -94,3 +94,18 @@ CREATE TABLE IF NOT EXISTS document_deadlines (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_document_deadlines_doc_due ON document_deadlines(document_id, due_date);
 CREATE INDEX IF NOT EXISTS idx_document_deadlines_status_due ON document_deadlines(status, due_date);
 
+CREATE TABLE IF NOT EXISTS compose_revisions (
+    revision INTEGER PRIMARY KEY AUTOINCREMENT,
+    service_id TEXT NOT NULL,
+    old_image TEXT NOT NULL,
+    new_image TEXT NOT NULL,
+    compose_file_path TEXT NOT NULL,
+    sqlite_snapshot_path TEXT NOT NULL,
+    volume_backup_path TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'active',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_compose_revisions_service ON compose_revisions(service_id, revision);
+CREATE INDEX IF NOT EXISTS idx_compose_revisions_status ON compose_revisions(status);
+

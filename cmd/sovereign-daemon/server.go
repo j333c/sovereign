@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/tls"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -396,10 +397,14 @@ func NewServer(cfg Config) (*Server, error) {
 			Logger:           cfg.Logger,
 			EventBroadcaster: s.BroadcastEvent,
 			LlamaProvisioner: s.llamaProvisioner,
+			RevisionStore:    s.db,
 		})
 	} else {
 		s.serviceMgr = cfg.ServiceMgr
 		s.serviceMgr.SetEventBroadcaster(s.BroadcastEvent)
+		if s.serviceMgr.RevisionStore() == nil && s.db != nil {
+			s.serviceMgr.SetRevisionStore(s.db)
+		}
 	}
 
 	s.llamaURL = cfg.LlamaURL
@@ -1041,6 +1046,8 @@ func (s *Server) routes() {
 	s.router.HandleFunc("GET /api/v1/health", s.handleHealth)
 	s.router.HandleFunc("GET /api/v1/system/boot-status", s.handleBootStatus)
 	s.router.HandleFunc("GET /api/v1/system/ingress", s.handleIngressStatus)
+	s.router.HandleFunc("GET /api/v1/system/revisions", s.handleListRevisions)
+	s.router.HandleFunc("GET /api/v1/system/revisions/active", s.handleGetActiveRevision)
 	s.router.HandleFunc("GET /api/v1/system/events", s.handleEvents)
 	s.router.HandleFunc("GET /api/events", s.handleEvents)
 	s.router.HandleFunc("GET /api/v1/storage/disks", s.handleStorageDisks)
@@ -1066,6 +1073,7 @@ func (s *Server) routes() {
 	s.router.HandleFunc("POST /api/v1/services/{id}/activate", s.handleActivateService)
 	s.router.HandleFunc("POST /api/v1/services/{id}/deactivate", s.handleDeactivateService)
 	s.router.HandleFunc("POST /api/v1/services/{id}/restart", s.requireSetupOrAdmin(s.handleRestartService))
+	s.router.HandleFunc("POST /api/v1/services/{id}/upgrade", s.requireSetupOrAdmin(s.handleUpgradeService))
 	s.router.HandleFunc("POST /api/v1/services/{id}/refresh", s.handleRefreshService)
 
 	// Media Dropzone ingestion endpoints
@@ -2670,6 +2678,106 @@ func (s *Server) handleRefreshService(w http.ResponseWriter, r *http.Request) {
 		"service":   id,
 		"refreshed": true,
 	})
+}
+
+// ServiceUpgradeRequest matches the OpenAPI 3.1 contract.
+type ServiceUpgradeRequest struct {
+	ImageTag string `json:"image_tag,omitempty"`
+	Image    string `json:"image,omitempty"`
+}
+
+// ComposeRevisionsResponse matches the OpenAPI 3.1 contract.
+type ComposeRevisionsResponse struct {
+	Revisions      []store.ComposeRevision `json:"revisions"`
+	Total          int                     `json:"total"`
+	ActiveRevision *int                    `json:"active_revision,omitempty"`
+}
+
+func (s *Server) handleUpgradeService(w http.ResponseWriter, r *http.Request) {
+	s.mu.RLock()
+	mgr := s.serviceMgr
+	s.mu.RUnlock()
+
+	if mgr == nil {
+		s.writeProblem(w, http.StatusInternalServerError, "Internal Server Error", "Service manager is not initialized", r.URL.Path)
+		return
+	}
+
+	id := extractServiceID(r, "upgrade")
+	if id == "" {
+		s.writeProblem(w, http.StatusBadRequest, "Invalid Request", "Service ID missing in request path", r.URL.Path)
+		return
+	}
+
+	var req ServiceUpgradeRequest
+	if r.Body != nil {
+		_ = json.NewDecoder(r.Body).Decode(&req)
+	}
+
+	imageTag := req.ImageTag
+	if imageTag == "" {
+		imageTag = req.Image
+	}
+
+	rev, err := mgr.UpgradeService(r.Context(), id, imageTag)
+	if err != nil {
+		if errors.Is(err, supervisor.ErrServiceNotFound) {
+			s.writeProblem(w, http.StatusNotFound, "Service Not Found", fmt.Sprintf("Service '%s' is not defined", id), r.URL.Path)
+			return
+		}
+		s.logger.Error("failed to upgrade service", "service", id, "error", err)
+		s.writeProblem(w, http.StatusInternalServerError, "Internal Server Error", fmt.Sprintf("Failed to upgrade service '%s': %v", id, err), r.URL.Path)
+		return
+	}
+
+	s.syncIngressRoutes(r.Context())
+
+	s.writeJSON(w, http.StatusOK, rev)
+}
+
+func (s *Server) handleListRevisions(w http.ResponseWriter, r *http.Request) {
+	if s.db == nil {
+		s.writeProblem(w, http.StatusInternalServerError, "Internal Server Error", "Database store is not initialized", r.URL.Path)
+		return
+	}
+
+	revs, err := s.db.ListRevisions(r.Context())
+	if err != nil {
+		s.logger.Error("failed to list compose revisions", "error", err)
+		s.writeProblem(w, http.StatusInternalServerError, "Internal Server Error", "Failed to retrieve compose revisions", r.URL.Path)
+		return
+	}
+
+	activeRevNum, _ := s.db.GetActiveRevisionNumber(r.Context())
+	resp := ComposeRevisionsResponse{
+		Revisions: revs,
+		Total:     len(revs),
+	}
+	if activeRevNum > 0 {
+		resp.ActiveRevision = &activeRevNum
+	}
+
+	s.writeJSON(w, http.StatusOK, resp)
+}
+
+func (s *Server) handleGetActiveRevision(w http.ResponseWriter, r *http.Request) {
+	if s.db == nil {
+		s.writeProblem(w, http.StatusInternalServerError, "Internal Server Error", "Database store is not initialized", r.URL.Path)
+		return
+	}
+
+	rev, err := s.db.GetActiveRevision(r.Context())
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			s.writeProblem(w, http.StatusNotFound, "Not Found", "No active compose revision found", r.URL.Path)
+			return
+		}
+		s.logger.Error("failed to get active compose revision", "error", err)
+		s.writeProblem(w, http.StatusInternalServerError, "Internal Server Error", "Failed to retrieve active compose revision", r.URL.Path)
+		return
+	}
+
+	s.writeJSON(w, http.StatusOK, rev)
 }
 
 // handleDropUpload handles multipart file uploads to /api/v1/drop/upload.

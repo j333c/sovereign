@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"sovereign/internal/store"
 )
 
 // Canonical service identifiers
@@ -235,6 +237,19 @@ func (w *WatchdogDebouncer) GetState(serviceID string) ServiceWatchdogState {
 	return ServiceWatchdogState{CurrentHealth: HealthUnknown}
 }
 
+// RevisionStore defines the interface needed by ServiceManager for revisioning and pre-upgrade snapshots.
+type RevisionStore interface {
+	CreateSnapshot(ctx context.Context, destPath string) error
+	RecordRevision(ctx context.Context, rev *store.ComposeRevision) error
+	GetRevision(ctx context.Context, revision int) (*store.ComposeRevision, error)
+	GetActiveRevision(ctx context.Context) (*store.ComposeRevision, error)
+	ListRevisions(ctx context.Context) ([]store.ComposeRevision, error)
+	UpdateRevisionStatus(ctx context.Context, revision int, status string) error
+	GetNextRevisionNumber(ctx context.Context) (int, error)
+	SetActiveRevisionNumber(ctx context.Context, revision int) error
+	GetActiveRevisionNumber(ctx context.Context) (int, error)
+}
+
 // ServiceManagerConfig holds options for initializing the ServiceManager.
 type ServiceManagerConfig struct {
 	DataDir              string
@@ -248,6 +263,8 @@ type ServiceManagerConfig struct {
 	PaperlessProvisioner *PaperlessProvisioner
 	LlamaProvisioner     *LlamaProvisioner
 	OpenWebUIProvisioner *OpenWebUIProvisioner
+	RevisionStore        RevisionStore
+	Store                RevisionStore
 }
 
 // ServiceManager orchestrates on-demand container lifecycles, health probing, and volume preservation.
@@ -269,6 +286,7 @@ type ServiceManager struct {
 	paperlessProvisioner *PaperlessProvisioner
 	llamaProvisioner     *LlamaProvisioner
 	openwebuiProvisioner *OpenWebUIProvisioner
+	revisionStore        RevisionStore
 }
 
 // NewServiceManager constructs and initializes the appliance service lifecycle manager.
@@ -431,6 +449,11 @@ func NewServiceManager(cfg ServiceManagerConfig) *ServiceManager {
 		}
 	}
 
+	rs := cfg.RevisionStore
+	if rs == nil {
+		rs = cfg.Store
+	}
+
 	return &ServiceManager{
 		dataDir:              cfg.DataDir,
 		engine:               cfg.Engine,
@@ -446,7 +469,22 @@ func NewServiceManager(cfg ServiceManagerConfig) *ServiceManager {
 		paperlessProvisioner: pp,
 		llamaProvisioner:     lp,
 		openwebuiProvisioner: owp,
+		revisionStore:        rs,
 	}
+}
+
+// RevisionStore returns the registered RevisionStore.
+func (m *ServiceManager) RevisionStore() RevisionStore {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.revisionStore
+}
+
+// SetRevisionStore updates the registered RevisionStore.
+func (m *ServiceManager) SetRevisionStore(rs RevisionStore) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.revisionStore = rs
 }
 
 // SetEventBroadcaster registers or updates the SSE event broadcast callback.

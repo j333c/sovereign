@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { SovereignApiClient, ProblemDetailsError } from "./client";
+import { SovereignApiClient, ProblemDetailsError, ComposeRevision, ComposeRevisionsResponse } from "./client";
 
 describe("SovereignApiClient", () => {
   it("successfully fetches getHealth with typed response", async () => {
@@ -1794,7 +1794,101 @@ describe("SovereignApiClient", () => {
     assert.equal(logsRes.logs.length, 1);
     assert.equal(logsRes.logs[0].level, "INFO");
   });
+
+  it("successfully calls upgradeService, getRevisions, and getActiveRevision", async () => {
+    const mockRevision: ComposeRevision = {
+      revision: 1,
+      service_id: "jellyfin",
+      old_image: "jellyfin/jellyfin:12.2.0",
+      new_image: "jellyfin/jellyfin:12.3.0",
+      compose_file_path: "/data/state/compose/rev-1.yaml",
+      sqlite_snapshot_path: "/data/state/backups/pre-upgrade-1.db",
+      volume_backup_path: "/data/state/backups/volumes-rev-1/jellyfin",
+      status: "active",
+      created_at: "2026-10-16T23:00:00Z",
+    };
+
+    const mockRevisionsResponse: ComposeRevisionsResponse = {
+      revisions: [mockRevision],
+      total: 1,
+      active_revision: 1,
+    };
+
+    const mockFetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      const url = String(input);
+
+      if (url === "http://localhost:8080/api/v1/services/jellyfin/upgrade" && init?.method === "POST") {
+        const body = init.body ? JSON.parse(String(init.body)) : {};
+        if (body.image_tag === "12.3.0") {
+          return new Response(JSON.stringify(mockRevision), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+      }
+
+      if (url === "http://localhost:8080/api/v1/system/revisions" && (!init?.method || init.method === "GET")) {
+        return new Response(JSON.stringify(mockRevisionsResponse), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+
+      if (url === "http://localhost:8080/api/v1/system/revisions/active" && (!init?.method || init.method === "GET")) {
+        return new Response(JSON.stringify(mockRevision), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+
+      if (url === "http://localhost:8080/api/v1/services/unknown/upgrade" && init?.method === "POST") {
+        return new Response(
+          JSON.stringify({
+            type: "https://sovereign.local/problems/not-found",
+            title: "Service Not Found",
+            status: 404,
+            detail: "Service 'unknown' is not defined",
+            instance: "/api/v1/services/unknown/upgrade",
+          }),
+          { status: 404, headers: { "Content-Type": "application/problem+json" } }
+        );
+      }
+
+      return new Response("Not found", { status: 404 });
+    };
+
+    const client = new SovereignApiClient({
+      baseUrl: "http://localhost:8080",
+      fetchFn: mockFetch,
+    });
+
+    const upgraded = await client.upgradeService("jellyfin", { image_tag: "12.3.0" });
+    assert.equal(upgraded.revision, 1);
+    assert.equal(upgraded.service_id, "jellyfin");
+    assert.equal(upgraded.new_image, "jellyfin/jellyfin:12.3.0");
+    assert.equal(upgraded.status, "active");
+
+    const revisions = await client.getRevisions();
+    assert.equal(revisions.total, 1);
+    assert.equal(revisions.revisions.length, 1);
+    assert.equal(revisions.active_revision, 1);
+
+    const active = await client.getActiveRevision();
+    assert.equal(active.revision, 1);
+    assert.equal(active.service_id, "jellyfin");
+
+    await assert.rejects(
+      async () => client.upgradeService("unknown"),
+      (err: unknown) => {
+        assert.ok(err instanceof ProblemDetailsError);
+        assert.equal(err.status, 404);
+        assert.equal(err.title, "Service Not Found");
+        return true;
+      }
+    );
+  });
 });
+
 
 
 

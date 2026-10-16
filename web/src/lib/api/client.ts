@@ -73,6 +73,9 @@ export type AISettingsResponse = components["schemas"]["AISettingsResponse"];
 export type AISettingsUpdateRequest = components["schemas"]["AISettingsUpdateRequest"];
 export type AIInferenceLogEntry = components["schemas"]["AIInferenceLogEntry"];
 export type AIInferenceLogsResponse = components["schemas"]["AIInferenceLogsResponse"];
+export type ComposeRevision = components["schemas"]["ComposeRevision"];
+export type ComposeRevisionsResponse = components["schemas"]["ComposeRevisionsResponse"];
+export type ServiceUpgradeRequest = components["schemas"]["ServiceUpgradeRequest"];
 
 
 /**
@@ -344,6 +347,34 @@ export class SovereignApiClient {
   async restartService(id: string): Promise<ServiceStatus> {
     return this.request<ServiceStatus>(`/api/v1/services/${encodeURIComponent(id)}/restart`, {
       method: "POST",
+    });
+  }
+
+  /**
+   * Upgrade a service container image with pre-upgrade snapshots and declarative revision tracking.
+   */
+  async upgradeService(id: string, req?: ServiceUpgradeRequest): Promise<ComposeRevision> {
+    return this.request<ComposeRevision>(`/api/v1/services/${encodeURIComponent(id)}/upgrade`, {
+      method: "POST",
+      body: req ? JSON.stringify(req) : undefined,
+    });
+  }
+
+  /**
+   * List declarative Compose revisions and snapshots.
+   */
+  async getRevisions(): Promise<ComposeRevisionsResponse> {
+    return this.request<ComposeRevisionsResponse>("/api/v1/system/revisions", {
+      method: "GET",
+    });
+  }
+
+  /**
+   * Get the active Compose revision metadata.
+   */
+  async getActiveRevision(): Promise<ComposeRevision> {
+    return this.request<ComposeRevision>("/api/v1/system/revisions/active", {
+      method: "GET",
     });
   }
 
