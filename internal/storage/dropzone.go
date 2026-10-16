@@ -26,6 +26,7 @@ const (
 	CategoryTV         = "tv"
 	CategoryMusic      = "music"
 	CategoryAudiobooks = "audiobooks"
+	CategoryDocuments  = "documents"
 )
 
 // ValidCategories defines the recognized media destination categories.
@@ -34,6 +35,7 @@ var ValidCategories = []string{
 	CategoryTV,
 	CategoryMusic,
 	CategoryAudiobooks,
+	CategoryDocuments,
 }
 
 // Sentinel dropzone errors.
@@ -48,7 +50,7 @@ var (
 // IsValidCategory checks whether a string is one of the valid media categories.
 func IsValidCategory(cat string) bool {
 	switch strings.ToLower(strings.TrimSpace(cat)) {
-	case CategoryMovies, CategoryTV, CategoryMusic, CategoryAudiobooks:
+	case CategoryMovies, CategoryTV, CategoryMusic, CategoryAudiobooks, CategoryDocuments:
 		return true
 	default:
 		return false
@@ -63,6 +65,8 @@ func IsCategoryCompatible(category, contentType string) bool {
 		return strings.HasPrefix(contentType, "video/")
 	case CategoryMusic, CategoryAudiobooks:
 		return strings.HasPrefix(contentType, "audio/")
+	case CategoryDocuments:
+		return contentType == "application/pdf" || strings.HasPrefix(contentType, "image/")
 	default:
 		return false
 	}
@@ -77,6 +81,8 @@ func ServiceForCategory(cat string) string {
 		return supervisor.ServiceNavidrome
 	case CategoryAudiobooks:
 		return supervisor.ServiceAudiobookshelf
+	case CategoryDocuments:
+		return supervisor.ServicePaperless
 	default:
 		return ""
 	}
@@ -118,9 +124,14 @@ func EnsureDropzoneDirectories(dataDir string) error {
 		if err := os.MkdirAll(incomingDir, 0755); err != nil {
 			return fmt.Errorf("failed to create incoming staging directory %q: %w", incomingDir, err)
 		}
-		mediaDir := filepath.Join(dataDir, "media", cat)
-		if err := os.MkdirAll(mediaDir, 0755); err != nil {
-			return fmt.Errorf("failed to create media directory %q: %w", mediaDir, err)
+		var targetDir string
+		if cat == CategoryDocuments {
+			targetDir = filepath.Join(dataDir, "documents", "consume")
+		} else {
+			targetDir = filepath.Join(dataDir, "media", cat)
+		}
+		if err := os.MkdirAll(targetDir, 0755); err != nil {
+			return fmt.Errorf("failed to create destination directory %q: %w", targetDir, err)
 		}
 	}
 
@@ -244,6 +255,29 @@ func DetectMedia(data []byte) (contentType string, format string, ok bool) {
 	}
 
 	return "", "", false
+}
+
+// DetectDocument inspects buffer bytes for document signatures (PDF, PNG, JPEG, TIFF).
+func DetectDocument(data []byte) (contentType string, ok bool) {
+	if len(data) < 4 {
+		return "", false
+	}
+	if bytes.HasPrefix(data, []byte("%PDF")) {
+		return "application/pdf", true
+	}
+	if len(data) >= 8 && bytes.Equal(data[:8], []byte{0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A}) {
+		return "image/png", true
+	}
+	if len(data) >= 3 && data[0] == 0xFF && data[1] == 0xD8 && data[2] == 0xFF {
+		return "image/jpeg", true
+	}
+	if len(data) >= 4 {
+		if (data[0] == 0x49 && data[1] == 0x49 && data[2] == 0x2A && data[3] == 0x00) ||
+			(data[0] == 0x4D && data[1] == 0x4D && data[2] == 0x00 && data[3] == 0x2A) {
+			return "image/tiff", true
+		}
+	}
+	return "", false
 }
 
 func isAllPrintableASCII(b []byte) bool {
@@ -508,35 +542,53 @@ func (e *DropzoneEngine) HandleUploadStream(ctx context.Context, category, filen
 		return nil, fmt.Errorf("failed to inspect staging file header: %w", readErr)
 	}
 
-	contentType, format, isMedia := DetectMedia(headerBytes)
-	if !isMedia {
-		e.logger.Warn("rejected non-media file upload", "category", category, "filename", cleanFilename, "staging_path", stagingPath)
-		return nil, ErrInvalidMedia
-	}
-
-	// Validate category compatibility
-	if !IsCategoryCompatible(category, contentType) {
-		e.logger.Warn("rejected category mismatch upload", "category", category, "contentType", contentType, "filename", cleanFilename)
-		return nil, ErrCategoryMismatch
+	var contentType, format string
+	if category == CategoryDocuments {
+		docType, isDoc := DetectDocument(headerBytes)
+		if !isDoc {
+			e.logger.Warn("rejected non-document file upload", "category", category, "filename", cleanFilename, "staging_path", stagingPath)
+			return nil, ErrInvalidMedia
+		}
+		contentType = docType
+		format = strings.TrimPrefix(filepath.Ext(cleanFilename), ".")
+	} else {
+		ct, fmtSlug, isMedia := DetectMedia(headerBytes)
+		if !isMedia {
+			e.logger.Warn("rejected non-media file upload", "category", category, "filename", cleanFilename, "staging_path", stagingPath)
+			return nil, ErrInvalidMedia
+		}
+		if !IsCategoryCompatible(category, ct) {
+			e.logger.Warn("rejected category mismatch upload", "category", category, "contentType", ct, "filename", cleanFilename)
+			return nil, ErrCategoryMismatch
+		}
+		contentType = ct
+		format = fmtSlug
 	}
 
 	// Resolve destination file path with mutex protection against concurrent collisions
-	mediaDir := filepath.Join(e.dataDir, "media", category)
-	if err := os.MkdirAll(mediaDir, 0755); err != nil {
-		return nil, fmt.Errorf("failed to ensure media directory: %w", err)
+	var destDir string
+	if category == CategoryDocuments {
+		destDir = filepath.Join(e.dataDir, "documents", "consume")
+	} else {
+		destDir = filepath.Join(e.dataDir, "media", category)
+	}
+	if err := os.MkdirAll(destDir, 0755); err != nil {
+		return nil, fmt.Errorf("failed to ensure destination directory: %w", err)
 	}
 
 	e.promotionMu.Lock()
-	finalFilename := ResolveTargetFilename(mediaDir, cleanFilename)
-	destPath := filepath.Join(mediaDir, finalFilename)
+	finalFilename := ResolveTargetFilename(destDir, cleanFilename)
+	destPath := filepath.Join(destDir, finalFilename)
 
 	// Atomically move (or fallback copy) verified media file into destination
 	renameErr := atomicMoveOrCopy(stagingPath, destPath)
 	e.promotionMu.Unlock()
 
 	if renameErr != nil {
-		return nil, fmt.Errorf("failed to promote staging file to media library: %w", renameErr)
+		return nil, fmt.Errorf("failed to promote staging file to destination: %w", renameErr)
 	}
+
+	_ = os.Chmod(destPath, 0644)
 
 	// Successfully promoted; staging file moved so no cleanup needed
 	cleanupNeeded = false
@@ -648,8 +700,13 @@ func (e *DropzoneEngine) ScanOnce(ctx context.Context) ([]DropHistoryItem, error
 			continue
 		}
 
-		mediaDir := filepath.Join(e.dataDir, "media", category)
-		_ = os.MkdirAll(mediaDir, 0755)
+		var targetDir string
+		if category == CategoryDocuments {
+			targetDir = filepath.Join(e.dataDir, "documents", "consume")
+		} else {
+			targetDir = filepath.Join(e.dataDir, "media", category)
+		}
+		_ = os.MkdirAll(targetDir, 0755)
 
 		for _, entry := range entries {
 			if ctx.Err() != nil {
@@ -738,43 +795,73 @@ func (e *DropzoneEngine) ScanOnce(ctx context.Context) ([]DropHistoryItem, error
 				continue
 			}
 
-			contentType, format, isMedia := DetectMedia(headerBytes)
-			if !isMedia || !IsCategoryCompatible(category, contentType) {
-				reason := "non-media file"
-				if isMedia && !IsCategoryCompatible(category, contentType) {
-					reason = "category mismatch"
-				}
-				e.logger.Warn("rejected file in drop folder; unlinking to keep folder clean", "path", filePath, "category", category, "reason", reason)
-				_ = os.Remove(filePath)
-				delete(e.stabilityTracker, filePath)
+			var contentType, format string
+			if category == CategoryDocuments {
+				docType, isDoc := DetectDocument(headerBytes)
+				if !isDoc {
+					e.logger.Warn("rejected non-document in drop folder; unlinking to keep folder clean", "path", filePath, "category", category)
+					_ = os.Remove(filePath)
+					delete(e.stabilityTracker, filePath)
 
-				rejectedItem := DropHistoryItem{
-					ID:               generateUUID(),
-					Filename:         name,
-					OriginalFilename: name,
-					Category:         category,
-					Size:             size,
-					ContentType:      contentType,
-					Path:             filePath,
-					Status:           "rejected",
-					UploadedAt:       time.Now().UTC().Format(time.RFC3339),
+					rejectedItem := DropHistoryItem{
+						ID:               generateUUID(),
+						Filename:         name,
+						OriginalFilename: name,
+						Category:         category,
+						Size:             size,
+						ContentType:      "application/octet-stream",
+						Path:             filePath,
+						Status:           "rejected",
+						UploadedAt:       time.Now().UTC().Format(time.RFC3339),
+					}
+					e.addHistory(rejectedItem)
+					continue
 				}
-				e.addHistory(rejectedItem)
-				continue
+				contentType = docType
+				format = strings.TrimPrefix(filepath.Ext(name), ".")
+			} else {
+				ct, fmtSlug, isMedia := DetectMedia(headerBytes)
+				if !isMedia || !IsCategoryCompatible(category, ct) {
+					reason := "non-media file"
+					if isMedia && !IsCategoryCompatible(category, ct) {
+						reason = "category mismatch"
+					}
+					e.logger.Warn("rejected file in drop folder; unlinking to keep folder clean", "path", filePath, "category", category, "reason", reason)
+					_ = os.Remove(filePath)
+					delete(e.stabilityTracker, filePath)
+
+					rejectedItem := DropHistoryItem{
+						ID:               generateUUID(),
+						Filename:         name,
+						OriginalFilename: name,
+						Category:         category,
+						Size:             size,
+						ContentType:      ct,
+						Path:             filePath,
+						Status:           "rejected",
+						UploadedAt:       time.Now().UTC().Format(time.RFC3339),
+					}
+					e.addHistory(rejectedItem)
+					continue
+				}
+				contentType = ct
+				format = fmtSlug
 			}
 
 			// Valid media: promote atomically with collision resolution & mutex
 			e.promotionMu.Lock()
-			finalFilename := ResolveTargetFilename(mediaDir, name)
-			destPath := filepath.Join(mediaDir, finalFilename)
+			finalFilename := ResolveTargetFilename(targetDir, name)
+			destPath := filepath.Join(targetDir, finalFilename)
 
 			renameErr := atomicMoveOrCopy(filePath, destPath)
 			e.promotionMu.Unlock()
 
 			if renameErr != nil {
-				e.logger.Error("failed to move dropped file to media directory", "from", filePath, "to", destPath, "error", renameErr)
+				e.logger.Error("failed to move dropped file to destination directory", "from", filePath, "to", destPath, "error", renameErr)
 				continue
 			}
+
+			_ = os.Chmod(destPath, 0644)
 
 			delete(e.stabilityTracker, filePath)
 

@@ -6,6 +6,8 @@ import {
   TelemetryUpdate,
   ServiceHealthChangedEvent,
   ServiceErrorEvent,
+  DMSMailboxStatusEvent,
+  DMSDocumentIngestedEvent,
 } from "./api";
 
 export interface UseTelemetryOptions {
@@ -15,6 +17,8 @@ export interface UseTelemetryOptions {
   onServiceHealthChanged?: (event: ServiceHealthChangedEvent) => void;
   onServiceStatusChanged?: (event: ServiceHealthChangedEvent | any) => void;
   onServiceError?: (event: ServiceErrorEvent) => void;
+  onDMSMailboxStatus?: (event: DMSMailboxStatusEvent) => void;
+  onDMSDocumentIngested?: (event: DMSDocumentIngestedEvent) => void;
 }
 
 export interface TelemetryListenerCallbacks {
@@ -22,6 +26,8 @@ export interface TelemetryListenerCallbacks {
   onServiceHealthChanged?: (event: ServiceHealthChangedEvent) => void;
   onServiceStatusChanged?: (event: ServiceHealthChangedEvent) => void;
   onServiceError?: (event: ServiceErrorEvent) => void;
+  onDMSMailboxStatus?: (event: DMSMailboxStatusEvent) => void;
+  onDMSDocumentIngested?: (event: DMSDocumentIngestedEvent) => void;
 }
 
 export function attachTelemetryListeners(
@@ -63,6 +69,24 @@ export function attachTelemetryListeners(
       // Ignore malformed payloads
     }
   });
+
+  es.addEventListener("dms.mailbox_status", (event: { data: string }) => {
+    try {
+      const data = JSON.parse(event.data) as DMSMailboxStatusEvent;
+      callbacks.onDMSMailboxStatus?.(data);
+    } catch {
+      // Ignore malformed payloads
+    }
+  });
+
+  es.addEventListener("dms.document_ingested", (event: { data: string }) => {
+    try {
+      const data = JSON.parse(event.data) as DMSDocumentIngestedEvent;
+      callbacks.onDMSDocumentIngested?.(data);
+    } catch {
+      // Ignore malformed payloads
+    }
+  });
 }
 
 export function useTelemetry({
@@ -72,6 +96,8 @@ export function useTelemetry({
   onServiceHealthChanged,
   onServiceStatusChanged,
   onServiceError,
+  onDMSMailboxStatus,
+  onDMSDocumentIngested,
 }: UseTelemetryOptions) {
   const [telemetry, setTelemetry] = useState<TelemetryUpdate | null>(initialTelemetry);
   const [isConnected, setIsConnected] = useState(false);
@@ -85,6 +111,12 @@ export function useTelemetry({
 
   const onErrorRef = useRef(onServiceError);
   onErrorRef.current = onServiceError;
+
+  const onDMSMailboxStatusRef = useRef(onDMSMailboxStatus);
+  onDMSMailboxStatusRef.current = onDMSMailboxStatus;
+
+  const onDMSDocumentIngestedRef = useRef(onDMSDocumentIngested);
+  onDMSDocumentIngestedRef.current = onDMSDocumentIngested;
 
   useEffect(() => {
     let isMounted = true;
@@ -125,6 +157,14 @@ export function useTelemetry({
           onServiceError: (data) => {
             if (!isMounted) return;
             onErrorRef.current?.(data);
+          },
+          onDMSMailboxStatus: (data) => {
+            if (!isMounted) return;
+            onDMSMailboxStatusRef.current?.(data);
+          },
+          onDMSDocumentIngested: (data) => {
+            if (!isMounted) return;
+            onDMSDocumentIngestedRef.current?.(data);
           },
         });
 

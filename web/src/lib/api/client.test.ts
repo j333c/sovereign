@@ -914,6 +914,121 @@ describe("SovereignApiClient", () => {
     assert.equal(historyItems.length, 1);
     assert.equal(historyItems[0].filename, "sample.mp4");
   });
+
+  it("successfully calls uploadDocument with multipart payload", async () => {
+    let uploadCalled = false;
+
+    const mockFetch: typeof fetch = async (input, init) => {
+      assert.equal(String(input), "http://localhost:8080/api/v1/documents/upload");
+      assert.equal(init?.method, "POST");
+      assert.ok(init?.body instanceof FormData);
+      uploadCalled = true;
+
+      return new Response(
+        JSON.stringify({
+          id: "018f27ab-4318-7b9c-8517-8e67f70bca11",
+          filename: "electric_bill.pdf",
+          format: "pdf",
+          size_bytes: 1048576,
+          consume_path: "/data/documents/consume/electric_bill.pdf",
+          ingested_at: "2026-10-16T10:00:00Z",
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } }
+      );
+    };
+
+    const client = new SovereignApiClient({
+      baseUrl: "http://localhost:8080",
+      fetchFn: mockFetch,
+    });
+
+    const file = new Blob(["%PDF-1.7 mock content"], { type: "application/pdf" });
+    const res = await client.uploadDocument(file, "electric_bill.pdf");
+    assert.equal(uploadCalled, true);
+    assert.equal(res.filename, "electric_bill.pdf");
+    assert.equal(res.format, "pdf");
+  });
+
+  it("successfully calls getIMAPConfig, saveIMAPConfig, and testIMAPConnection", async () => {
+    const mockFetch: typeof fetch = async (input, init) => {
+      const url = String(input);
+      if (url === "http://localhost:8080/api/v1/documents/imap" && init?.method === undefined) {
+        return new Response(
+          JSON.stringify({
+            id: "imap-1",
+            host: "imap.mail.me.com",
+            port: 993,
+            username: "alex@family.net",
+            password: "********",
+            folder: "INBOX",
+            ssl_enabled: true,
+            enabled: true,
+            connected: true,
+            last_polled_at: "2026-10-16T10:00:00Z",
+            last_error: "",
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+
+      if (url === "http://localhost:8080/api/v1/documents/imap" && init?.method === "POST") {
+        const body = JSON.parse(init.body as string);
+        assert.equal(body.host, "imap.mail.me.com");
+        return new Response(
+          JSON.stringify({
+            id: "imap-1",
+            host: body.host,
+            port: 993,
+            username: body.username,
+            password: "********",
+            folder: "INBOX",
+            ssl_enabled: true,
+            enabled: true,
+            connected: true,
+            last_error: "",
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+
+      if (url === "http://localhost:8080/api/v1/documents/imap/test" && init?.method === "POST") {
+        return new Response(
+          JSON.stringify({
+            success: true,
+            message: "Mailbox connection successful",
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+
+      return new Response("Not found", { status: 404 });
+    };
+
+    const client = new SovereignApiClient({
+      baseUrl: "http://localhost:8080",
+      fetchFn: mockFetch,
+    });
+
+    const config = await client.getIMAPConfig();
+    assert.equal(config.host, "imap.mail.me.com");
+    assert.equal(config.password, "********");
+
+    const saved = await client.saveIMAPConfig({
+      host: "imap.mail.me.com",
+      port: 993,
+      username: "alex@family.net",
+      password: "secretpassword",
+    });
+    assert.equal(saved.host, "imap.mail.me.com");
+
+    const testRes = await client.testIMAPConnection({
+      host: "imap.mail.me.com",
+      port: 993,
+      username: "alex@family.net",
+      password: "secretpassword",
+    });
+    assert.equal(testRes.success, true);
+  });
 });
 
 

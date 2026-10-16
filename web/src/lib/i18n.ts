@@ -48,6 +48,8 @@ export interface DashboardTranslations {
   dmsSubtitle: string;
   dmsMetric: string;
   dmsDesc: string;
+  dmsDescDisconnected: string;
+  dmsMailboxDisconnectedReassurance: string;
   dmsAction: string;
   aiTitle: string;
   aiSubtitle: string;
@@ -138,6 +140,8 @@ export const translations: Record<Language, DashboardTranslations> = {
     dmsSubtitle: "Paperless-ngx",
     dmsMetric: "Automatic Text Search Active",
     dmsDesc: "Mailbox Connected",
+    dmsDescDisconnected: "Mailbox Disconnected",
+    dmsMailboxDisconnectedReassurance: "Mailbox disconnected: We couldn't connect to your email account. Please check your email password in Settings.",
     dmsAction: "Open Documents UI",
     aiTitle: "Local AI Assistant",
     aiSubtitle: "Open WebUI / llama.cpp",
@@ -226,6 +230,8 @@ export const translations: Record<Language, DashboardTranslations> = {
     dmsSubtitle: "Paperless-ngx",
     dmsMetric: "Automatische Textsuche aktiv",
     dmsDesc: "Postfach verbunden",
+    dmsDescDisconnected: "Postfach getrennt",
+    dmsMailboxDisconnectedReassurance: "Postfach getrennt: Verbindung zum E-Mail-Konto fehlgeschlagen. Bitte überprüfen Sie Ihr Passwort in den Einstellungen.",
     dmsAction: "Dokumenten-UI öffnen",
     aiTitle: "Lokaler KI-Assistent",
     aiSubtitle: "Open WebUI / llama.cpp",
@@ -314,6 +320,8 @@ export const translations: Record<Language, DashboardTranslations> = {
     dmsSubtitle: "Paperless-ngx",
     dmsMetric: "Búsqueda automática de texto",
     dmsDesc: "Buzón conectado",
+    dmsDescDisconnected: "Buzón desconectado",
+    dmsMailboxDisconnectedReassurance: "Buzón desconectado: No se pudo conectar a su cuenta de correo. Verifique su contraseña en Configuración.",
     dmsAction: "Abrir interfaz de documentos",
     aiTitle: "Asistente de IA local",
     aiSubtitle: "Open WebUI / llama.cpp",
@@ -402,6 +410,8 @@ export const translations: Record<Language, DashboardTranslations> = {
     dmsSubtitle: "Paperless-ngx",
     dmsMetric: "Recherche de texte automatique",
     dmsDesc: "Boîte mail connectée",
+    dmsDescDisconnected: "Boîte mail déconnectée",
+    dmsMailboxDisconnectedReassurance: "Boîte mail déconnectée : Impossible de se connecter à votre compte e-mail. Veuillez vérifier votre mot de passe dans les Paramètres.",
     dmsAction: "Ouvrir l'interface documents",
     aiTitle: "Assistant IA local",
     aiSubtitle: "Open WebUI / llama.cpp",

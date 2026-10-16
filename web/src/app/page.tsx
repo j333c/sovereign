@@ -9,6 +9,7 @@ import {
   ProblemDetailsError,
   ServiceHealthChangedEvent,
   ServiceErrorEvent,
+  DMSMailboxStatusEvent,
 } from "@/lib/api";
 import { Language, translations } from "@/lib/i18n";
 import { useTelemetry } from "@/lib/useTelemetry";
@@ -213,6 +214,35 @@ function HomeScreenContent({
     }));
   }, []);
 
+  const handleDMSMailboxStatus = useCallback(
+    (evt: DMSMailboxStatusEvent) => {
+      if (!evt) return;
+      if (!evt.connected) {
+        setServiceStates((prev) => ({
+          ...prev,
+          dms: {
+            ...prev.dms,
+            status: "degraded",
+            reassuranceMessage:
+              evt.last_error && evt.last_error.includes("check your email password")
+                ? evt.last_error
+                : t.dmsMailboxDisconnectedReassurance,
+          },
+        }));
+      } else {
+        setServiceStates((prev) => ({
+          ...prev,
+          dms: {
+            ...prev.dms,
+            status: prev.dms?.status === "degraded" ? "healthy" : prev.dms?.status,
+            reassuranceMessage: undefined,
+          },
+        }));
+      }
+    },
+    [t.dmsMailboxDisconnectedReassurance]
+  );
+
   // Subscribe to real-time SSE telemetry & service lifecycle streams
   const { telemetry } = useTelemetry({
     client,
@@ -221,6 +251,7 @@ function HomeScreenContent({
     onServiceHealthChanged: handleServiceHealthChanged,
     onServiceStatusChanged: handleServiceHealthChanged,
     onServiceError: handleServiceError,
+    onDMSMailboxStatus: handleDMSMailboxStatus,
   });
 
   // Verify boot status and setup state on initial mount
@@ -468,11 +499,18 @@ function HomeScreenContent({
       icon: "📑",
       status: (serviceStates.dms?.status ?? "healthy") as StatusLevel,
       metric: t.dmsMetric,
-      secondaryDescriptor: t.dmsDesc,
+      secondaryDescriptor:
+        serviceStates.dms?.status === "degraded"
+          ? t.dmsDescDisconnected
+          : t.dmsDesc,
       actionUrl: "/docs",
       actionLabel: t.dmsAction,
       isRestarting: Boolean(serviceStates.dms?.isRestarting),
-      reassuranceMessage: serviceStates.dms?.reassuranceMessage,
+      reassuranceMessage:
+        serviceStates.dms?.reassuranceMessage ||
+        (serviceStates.dms?.status === "degraded"
+          ? t.dmsMailboxDisconnectedReassurance
+          : undefined),
     },
     {
       id: "ai",

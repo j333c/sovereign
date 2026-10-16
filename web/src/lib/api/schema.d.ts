@@ -73,8 +73,9 @@ export interface paths {
         };
         /**
          * Real-time SSE telemetry event stream
-         * @description Streams real-time hardware telemetry updates (CPU, RAM, storage, NAS, optical, GPU)
-         *     and service lifecycle events (service.pull_progress, service.health_changed, service.error)
+         * @description Streams real-time hardware telemetry updates (CPU, RAM, storage, NAS, optical, GPU),
+         *     service lifecycle events (service.pull_progress, service.health_changed, service.error),
+         *     and document ingestion events (dms.document_ingested, dms.mailbox_status)
          *     via Server-Sent Events.
          */
         get: operations["getSystemEvents"];
@@ -95,7 +96,7 @@ export interface paths {
         };
         /**
          * Real-time SSE telemetry stream alias
-         * @description Convenience root alias for /api/v1/system/events emitting telemetry and service lifecycle events.
+         * @description Convenience root alias for /api/v1/system/events emitting telemetry, service lifecycle, and dms events.
          */
         get: operations["getEvents"];
         put?: never;
@@ -441,7 +442,7 @@ export interface paths {
         put?: never;
         /**
          * Refresh media service library
-         * @description Triggers immediate library refresh webhook in the specified media service (e.g. Jellyfin, Navidrome, Audiobookshelf).
+         * @description Triggers immediate library refresh webhook in the specified media service (e.g. Jellyfin, Navidrome, Audiobookshelf). Non-media services such as Paperless (`paperless`, `dms`, `documents`) do not support library refresh and return 400 Bad Request.
          */
         post: operations["refreshService"];
         delete?: never;
@@ -460,10 +461,12 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Upload media file to dropzone
-         * @description Streams incoming media upload to atomic staging file, validates magic bytes
-         *     (MP4, MKV, WebM, AVI, MPEG-TS, MP3, FLAC, WAV, OGG, Opus, M4A, M4B, AAC),
-         *     atomically moves verified file to /data/media/:category, and triggers library refresh.
+         * Upload media or document file to dropzone
+         * @description Streams incoming upload to atomic staging file, validates magic bytes
+         *     (Media: MP4, MKV, WebM, AVI, MPEG-TS, MP3, FLAC, WAV, OGG, Opus, M4A, M4B, AAC;
+         *     Documents: PDF, PNG, JPG, JPEG, TIFF, TIF).
+         *     Atomically moves verified media to /data/media/:category (triggering library refresh)
+         *     or verified documents to /data/documents/consume/ (0644 permissions, emitting dms.document_ingested).
          */
         post: operations["uploadDropMedia"];
         delete?: never;
@@ -486,6 +489,267 @@ export interface paths {
         get: operations["getDropHistory"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/documents/upload": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Upload document to Paperless consume directory
+         * @description Direct ingestion endpoint for mobile companion scanner uploads and UI document drops.
+         *     Validates magic bytes for PDF, PNG, JPG, JPEG, TIFF, and TIF formats, atomically moves
+         *     payload to /data/documents/consume/ with 0644 file permissions, and emits dms.document_ingested.
+         */
+        post: operations["uploadDocument"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/documents/imap": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Retrieve configured IMAP mailbox settings
+         * @description Returns active IMAP connection settings with passwords masked as asterisks.
+         */
+        get: operations["getIMAPConfig"];
+        put?: never;
+        /**
+         * Save or update IMAP mailbox configuration
+         * @description Configures automated IMAP polling for scanned documents and invoices.
+         *     Encrypts credentials using AES-256-GCM before persisting to SQLite with WAL durability.
+         *     Triggers an immediate background poll if enabled.
+         */
+        post: operations["saveIMAPConfig"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/documents/imap/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Test IMAP connection and credentials
+         * @description Performs an RFC 3501 IMAP/SSL connection and authentication handshake.
+         *     If authentication or connectivity fails, sets the Paperless service health
+         *     to degraded (amber) with reassuring microcopy without terminating the container.
+         */
+        post: operations["testIMAPConnection"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/optical/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Optical drive and disc ripping engine status
+         * @description Returns real-time optical drive hardware status, disc media detection, ripping progress, and encryption key state.
+         */
+        get: operations["getOpticalStatus"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/optical/eject": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Eject optical drive tray
+         * @description Manually triggers the optical drive tray ejection and resets ripping status to idle.
+         */
+        post: operations["ejectOpticalDrive"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/optical/keys": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Upload AACS KEYDB.cfg decryption keys
+         * @description Atomically uploads and validates KEYDB.cfg decryption keys for commercial Blu-ray ripping.
+         */
+        post: operations["uploadOpticalKeys"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/enrichment/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Media metadata and artwork enrichment engine status
+         * @description Returns real-time status of the media enrichment engine, active jobs, scan timestamps, and processed count.
+         */
+        get: operations["getEnrichmentStatus"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/enrichment/scan": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Trigger manual enrichment scan
+         * @description Initiates an immediate scan of staged optical discs, enriches metadata and artwork, promotes media, and dispatches library refreshes.
+         */
+        post: operations["triggerEnrichmentScan"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/transcode/queue": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List transcoding queue
+         * @description Returns the list of video transcoding jobs, their progress, and current active encode status.
+         */
+        get: operations["getTranscodeQueue"];
+        put?: never;
+        /**
+         * Enqueue media file for background transcoding
+         * @description Enqueues a raw video rip or imported media file for universal direct-play pre-encoding.
+         */
+        post: operations["enqueueTranscode"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/transcode/mobile": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Enqueue media file for mobile offline profile generation
+         * @description Generates an optimized, space-efficient 720p or 1080p mobile direct-play profile
+         *     alongside the master media file following Jellyfin multi-version naming conventions
+         *     (e.g., `<Title> - 720p.mp4` / `<Title> - 1080p.mp4`). If the pre-encoded mobile profile
+         *     already exists on disk, skips redundant re-encoding and returns existing completed status.
+         */
+        post: operations["enqueueMobileTranscode"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/transcode/schedule": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get off-peak transcoding schedule
+         * @description Returns the configured off-peak transcoding window and active state.
+         */
+        get: operations["getTranscodeSchedule"];
+        put?: never;
+        /**
+         * Update off-peak transcoding schedule
+         * @description Updates the daily off-peak window hours for batch video encoding.
+         */
+        post: operations["updateTranscodeSchedule"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/transcode/override": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Override daytime transcoding restriction
+         * @description Manually enables or disables daytime batch transcoding, bypassing GPU arbitration.
+         */
+        post: operations["setTranscodeOverride"];
         delete?: never;
         options?: never;
         head?: never;
@@ -860,11 +1124,20 @@ export interface components {
             timestamp: string;
         };
         ServiceStatus: {
-            /** @example jellyfin */
+            /**
+             * @description Unique service identifier (e.g. jellyfin, navidrome, audiobookshelf, paperless).
+             * @example paperless
+             */
             id: string;
-            /** @example Jellyfin */
+            /**
+             * @description Human-readable service name (e.g. Jellyfin, Navidrome, Audiobookshelf, Paperless-ngx).
+             * @example Paperless-ngx
+             */
             name: string;
-            /** @example Video Streaming */
+            /**
+             * @description Service description or role (e.g. Video Streaming, Music Streaming, Audiobook Streaming, Document Management).
+             * @example Document Management
+             */
             description?: string;
             /**
              * @example inactive
@@ -876,28 +1149,31 @@ export interface components {
              * @enum {string}
              */
             health?: "healthy" | "degraded" | "unhealthy" | "unknown";
-            /** @example jellyfin/jellyfin:12.2.0 */
+            /** @example paperlessngx/paperless-ngx:3.3.1 */
             image: string;
             /** @example false */
             image_downloaded: boolean;
             /**
              * Format: int64
-             * @example 2147483648
+             * @example 1073741824
              */
             mem_limit_bytes: number;
             /**
              * Format: int64
-             * @example 1073741824
+             * @example 536870912
              */
             mem_reservation_bytes: number;
-            /** @example /media */
+            /** @example /docs */
             subpath?: string;
-            /** @example 8096 */
+            /** @example 8000 */
             port?: number;
             /**
              * @example [
-             *       "/data/media/movies:/data/media/movies",
-             *       "/data/state/services/jellyfin:/config"
+             *       "/data/documents/data:/usr/src/paperless/data",
+             *       "/data/documents/media:/usr/src/paperless/media",
+             *       "/data/documents/consume:/usr/src/paperless/consume",
+             *       "/data/documents/export:/usr/src/paperless/export",
+             *       "/data/state/services/paperless:/usr/src/paperless/state"
              *     ]
              */
             volumes?: string[];
@@ -998,6 +1274,299 @@ export interface components {
         };
         DropHistoryResponse: {
             items: components["schemas"]["DropHistoryItem"][];
+        };
+        OpticalStatusResponse: {
+            /**
+             * @example idle
+             * @enum {string}
+             */
+            state: "idle" | "detected" | "ripping" | "ejecting" | "paused" | "error";
+            /** @example Idle · Ready for disc */
+            status_text: string;
+            /** @example true */
+            drive_ready: boolean;
+            /** @example false */
+            disc_present: boolean;
+            /**
+             * @example none
+             * @enum {string}
+             */
+            disc_type?: "none" | "cd" | "dvd" | "bluray" | "unknown";
+            /** @example HOME_MOVIES_2024 */
+            disc_label?: string;
+            /** @example home_movies_2024 */
+            disc_id?: string;
+            /**
+             * Format: double
+             * @example 0
+             */
+            progress: number;
+            error?: string;
+            notice?: string;
+            staging_path?: string;
+            /** @example false */
+            keys_active: boolean;
+        };
+        OpticalEjectResponse: {
+            /** @example ejected */
+            status: string;
+            /** @example Disc ejected successfully */
+            message: string;
+        };
+        OpticalKeysUploadResponse: {
+            /** @example active */
+            status: string;
+            /** @example 42 */
+            keys_count: number;
+            /** @example KEYDB.cfg uploaded successfully */
+            message: string;
+        };
+        EnrichmentStatusResponse: {
+            /**
+             * @example idle
+             * @enum {string}
+             */
+            state: "idle" | "enriching" | "paused" | "error";
+            /** @example Idle */
+            status_text: string;
+            /** @example THE_MATRIX_1999 */
+            current_disc?: string;
+            /**
+             * Format: double
+             * @example 0
+             */
+            progress: number;
+            /** Format: date-time */
+            last_scanned_at?: string;
+            /** @example 5 */
+            items_processed: number;
+            last_error?: string;
+        };
+        EnrichmentScanResponse: {
+            /** @example ok */
+            status: string;
+            /** @example Enrichment scan completed successfully: 1 items processed */
+            message: string;
+            /** @example 1 */
+            items_processed: number;
+        };
+        TranscodeJobResponse: {
+            /** @example job-0277ea13-a847-4258-bc4d-a8e57adb2589 */
+            id: string;
+            /** @example /data/media/staging/movie_raw.mkv */
+            source_path: string;
+            /** @example /data/media/movies/Test Movie (2024)/movie.mp4 */
+            target_path: string;
+            /** @example universal */
+            profile: string;
+            /**
+             * @example queued
+             * @enum {string}
+             */
+            status: "queued" | "processing" | "paused" | "completed" | "failed";
+            /**
+             * Format: double
+             * @example 0
+             */
+            progress: number;
+            /** @example qsv */
+            encoder_used?: string;
+            /** @example  */
+            error_message?: string;
+            /**
+             * Format: date-time
+             * @example 2026-10-16T08:00:00Z
+             */
+            created_at: string;
+            /** Format: date-time */
+            started_at?: string;
+            /** Format: date-time */
+            completed_at?: string;
+        };
+        TranscodeQueueResponse: {
+            jobs: components["schemas"]["TranscodeJobResponse"][];
+            /** @example 1 */
+            total: number;
+            /** @example job-0277ea13-a847-4258-bc4d-a8e57adb2589 */
+            active_job_id?: string;
+        };
+        EnqueueTranscodeRequest: {
+            /** @example /data/media/staging/movie_raw.mkv */
+            source_path: string;
+            /** @example /data/media/movies/Test Movie (2024)/movie.mp4 */
+            target_path?: string;
+            /**
+             * @example universal
+             * @enum {string}
+             */
+            profile?: "universal" | "h264" | "h265";
+        };
+        EnqueueMobileRequest: {
+            /**
+             * @description Absolute path to the master video file in media storage.
+             * @example /data/media/movies/Inception (2010)/Inception (2010).mkv
+             */
+            source_path: string;
+            /**
+             * @description Target standardized mobile direct-play profile.
+             * @example mobile-720p
+             * @enum {string}
+             */
+            target_profile: "mobile-720p" | "mobile-1080p";
+        };
+        TranscodeScheduleResponse: {
+            /** @example 1 */
+            start_hour: number;
+            /** @example 0 */
+            start_minute: number;
+            /** @example 7 */
+            end_hour: number;
+            /** @example 0 */
+            end_minute: number;
+            /** @example false */
+            is_off_peak: boolean;
+            /** @example false */
+            manual_override: boolean;
+            /** @example Daytime (AI Priority) */
+            status: string;
+        };
+        UpdateTranscodeScheduleRequest: {
+            /** @example 2 */
+            start_hour: number;
+            /** @example 0 */
+            start_minute?: number;
+            /** @example 8 */
+            end_hour: number;
+            /** @example 0 */
+            end_minute?: number;
+        };
+        TranscodeOverrideRequest: {
+            /** @example true */
+            force: boolean;
+        };
+        TranscodeOverrideResponse: {
+            /** @example active */
+            status: string;
+            /** @example true */
+            manual_override: boolean;
+            /** @example Manual override enabled; daytime batch transcoding active */
+            message: string;
+        };
+        DocumentUploadResponse: {
+            /**
+             * Format: uuid
+             * @example 018f27ab-4318-7b9c-8517-8e67f70bca11
+             */
+            id: string;
+            /** @example electric_bill.pdf */
+            filename: string;
+            /** @example pdf */
+            format: string;
+            /** @example 1048576 */
+            size_bytes: number;
+            /** @example /data/documents/consume/electric_bill.pdf */
+            consume_path: string;
+            /**
+             * Format: date-time
+             * @example 2026-10-16T10:00:00Z
+             */
+            ingested_at: string;
+        };
+        IMAPConfigRequest: {
+            /** @example 018f27ab-4318-7b9c-8517-8e67f70bca11 */
+            id?: string;
+            /** @example imap.mail.me.com */
+            host: string;
+            /** @example 993 */
+            port: number;
+            /** @example family@icloud.com */
+            username: string;
+            /** @example app-specific-password */
+            password?: string;
+            /** @example INBOX */
+            folder?: string;
+            /** @example true */
+            ssl_enabled?: boolean;
+            /** @example true */
+            enabled?: boolean;
+        };
+        IMAPConfigResponse: {
+            /** @example 018f27ab-4318-7b9c-8517-8e67f70bca11 */
+            id: string;
+            /** @example imap.mail.me.com */
+            host: string;
+            /** @example 993 */
+            port: number;
+            /** @example family@icloud.com */
+            username: string;
+            /**
+             * @description Always masked as asterisks
+             * @example ********
+             */
+            password: string;
+            /** @example INBOX */
+            folder: string;
+            /** @example true */
+            ssl_enabled: boolean;
+            /** @example true */
+            enabled: boolean;
+            /** @example true */
+            connected: boolean;
+            /** @example 2026-10-16T10:00:00Z */
+            last_polled_at?: string;
+            /** @example  */
+            last_error?: string;
+        };
+        IMAPTestRequest: {
+            /** @example imap.mail.me.com */
+            host: string;
+            /** @example 993 */
+            port?: number;
+            /** @example family@icloud.com */
+            username: string;
+            /** @example app-specific-password */
+            password?: string;
+            /** @example INBOX */
+            folder?: string;
+            /** @example true */
+            ssl_enabled?: boolean;
+        };
+        IMAPTestResponse: {
+            /** @example true */
+            success: boolean;
+            /** @example Mailbox connection successful */
+            message: string;
+        };
+        DMSDocumentIngestedEvent: {
+            /**
+             * Format: uuid
+             * @example 018f27ab-4318-7b9c-8517-8e67f70bca11
+             */
+            id: string;
+            /** @example electric_bill.pdf */
+            filename: string;
+            /** @example pdf */
+            format: string;
+            /** @example 1048576 */
+            size_bytes: number;
+            /**
+             * @example imap
+             * @enum {string}
+             */
+            source: "upload" | "dropzone" | "imap";
+            /**
+             * Format: date-time
+             * @example 2026-10-16T10:00:00Z
+             */
+            ingested_at: string;
+        };
+        DMSMailboxStatusEvent: {
+            /** @example false */
+            connected: boolean;
+            /** @example imap authentication failed: NO [AUTHENTICATIONFAILED] Authentication failed */
+            last_error?: string;
+            /** @example 2026-10-16T10:00:00Z */
+            last_polled_at?: string;
         };
     };
     responses: never;
@@ -1629,6 +2198,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
+                /** @description Unique service identifier or alias (e.g. jellyfin, navidrome, audiobookshelf, paperless, dms, documents, audio, video). */
                 id: string;
             };
             cookie?: never;
@@ -1669,6 +2239,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
+                /** @description Unique service identifier or alias (e.g. jellyfin, navidrome, audiobookshelf, paperless, dms, documents, audio). */
                 id: string;
             };
             cookie?: never;
@@ -1727,6 +2298,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
+                /** @description Unique service identifier or alias (e.g. jellyfin, navidrome, audiobookshelf, paperless, dms, documents, audio). */
                 id: string;
             };
             cookie?: never;
@@ -1767,6 +2339,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
+                /** @description Unique service identifier or alias (e.g. jellyfin, navidrome, audiobookshelf, paperless, dms, documents, audio). */
                 id: string;
             };
             cookie?: never;
@@ -1838,7 +2411,7 @@ export interface operations {
                     };
                 };
             };
-            /** @description Service does not support library refresh. */
+            /** @description Service does not support library refresh (e.g. Paperless). */
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -1887,10 +2460,10 @@ export interface operations {
             content: {
                 "multipart/form-data": {
                     /**
-                     * @description Target media library category
+                     * @description Target library category
                      * @enum {string}
                      */
-                    category: "movies" | "tv" | "music" | "audiobooks";
+                    category: "movies" | "tv" | "music" | "audiobooks" | "documents";
                     /**
                      * Format: binary
                      * @description Media file payload to ingest
@@ -1957,6 +2530,664 @@ export interface operations {
                 };
             };
             /** @description Internal supervisor error retrieving dropzone history. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    uploadDocument: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": {
+                    /**
+                     * Format: binary
+                     * @description Scanned document or image file
+                     */
+                    file: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Document verified and moved to Paperless consume folder. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DocumentUploadResponse"];
+                };
+            };
+            /** @description Missing file or unreadable multipart form. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Unsupported file format or magic byte mismatch. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Internal supervisor error processing document upload. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    getIMAPConfig: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current IMAP mailbox configuration. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IMAPConfigResponse"];
+                };
+            };
+            /** @description Internal supervisor error retrieving IMAP settings. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    saveIMAPConfig: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["IMAPConfigRequest"];
+            };
+        };
+        responses: {
+            /** @description IMAP configuration saved successfully. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IMAPConfigResponse"];
+                };
+            };
+            /** @description Invalid request payload or missing required fields. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Failed to persist IMAP configuration. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    testIMAPConnection: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["IMAPTestRequest"];
+            };
+        };
+        responses: {
+            /** @description Mailbox connection and login handshake succeeded. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IMAPTestResponse"];
+                };
+            };
+            /** @description Missing required connection parameters. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Mailbox connection or authentication failed. */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    getOpticalStatus: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Optical drive and ripping engine status details. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OpticalStatusResponse"];
+                };
+            };
+            /** @description Internal supervisor error retrieving optical status. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    ejectOpticalDrive: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Drive tray ejected successfully. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OpticalEjectResponse"];
+                };
+            };
+            /** @description Failed to eject optical drive. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    uploadOpticalKeys: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": {
+                    /** Format: binary */
+                    file?: string;
+                };
+                "text/plain": string;
+                "application/octet-stream": string;
+            };
+        };
+        responses: {
+            /** @description Decryption keys uploaded and activated. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OpticalKeysUploadResponse"];
+                };
+            };
+            /** @description Empty or invalid KEYDB.cfg file. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Unauthorized session. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Forbidden - administrator session required. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Key file payload exceeds size limit (10MB). */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Internal error storing key file. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    getEnrichmentStatus: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Real-time enrichment engine status. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EnrichmentStatusResponse"];
+                };
+            };
+            /** @description Internal supervisor error retrieving enrichment status. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    triggerEnrichmentScan: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Enrichment scan completed. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EnrichmentScanResponse"];
+                };
+            };
+            /** @description Internal error executing enrichment scan. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    getTranscodeQueue: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Transcoding queue list retrieved successfully. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TranscodeQueueResponse"];
+                };
+            };
+            /** @description Internal supervisor error querying transcode queue. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    enqueueTranscode: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EnqueueTranscodeRequest"];
+            };
+        };
+        responses: {
+            /** @description Media file enqueued successfully. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TranscodeJobResponse"];
+                };
+            };
+            /** @description Missing or invalid source file path. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Failed to enqueue media file. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    enqueueMobileTranscode: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EnqueueMobileRequest"];
+            };
+        };
+        responses: {
+            /** @description Pre-existing mobile profile found on disk; re-encoding skipped. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TranscodeJobResponse"];
+                };
+            };
+            /** @description Mobile profile transcode job enqueued successfully. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TranscodeJobResponse"];
+                };
+            };
+            /** @description Missing or invalid source file path or unsupported target profile. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Unauthorized - session authentication required post-setup. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Forbidden - admin privileges required. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Failed to enqueue mobile transcode job. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Transcode engine unavailable. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    getTranscodeSchedule: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Schedule retrieved successfully. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TranscodeScheduleResponse"];
+                };
+            };
+            /** @description Failed to retrieve schedule. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    updateTranscodeSchedule: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateTranscodeScheduleRequest"];
+            };
+        };
+        responses: {
+            /** @description Schedule updated successfully. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TranscodeScheduleResponse"];
+                };
+            };
+            /** @description Invalid schedule configuration. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Administrative authentication required. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Forbidden - admin privileges required. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Failed to update schedule. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    setTranscodeOverride: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TranscodeOverrideRequest"];
+            };
+        };
+        responses: {
+            /** @description Manual override state updated. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TranscodeOverrideResponse"];
+                };
+            };
+            /** @description Invalid override request. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Administrative authentication required. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Forbidden - admin privileges required. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Failed to set manual override. */
             500: {
                 headers: {
                     [name: string]: unknown;

@@ -1142,4 +1142,78 @@ describe("Central Admin Dashboard Integration & i18n", () => {
       `Expected restart to be called for jellyfin, but was: ${restartCalledWith}`
     );
   });
+
+  it("degrades Document Archive ServiceCard to Amber with Mailbox Disconnected and reassurance copy (Story 4.2)", () => {
+    const htmlEn = renderToStaticMarkup(
+      <HomeScreen
+        initialReady={true}
+        initialLanguage="en"
+        routerOverride={{ replace: () => {} }}
+        initialTelemetry={{
+          cpu_percent: 10,
+          memory_used_bytes: 1000,
+          memory_total_bytes: 2000,
+          storage_used_bytes: 500,
+          storage_total_bytes: 1000,
+          storage_percent: 50,
+          nas_status: "connected",
+          nas_message: "Mounted",
+          overall_status: "operational",
+          optical_status: "Idle",
+          gpu_status: "Daytime",
+          timestamp: "2026-10-16T10:00:00Z",
+        }}
+        initialServices={{
+          dms: { status: "degraded" },
+        }}
+      />
+    );
+
+    assert.ok(htmlEn.includes("data-testid=\"service-card-dms\""));
+    assert.ok(htmlEn.includes("Automatic Text Search Active"));
+    assert.ok(htmlEn.includes("Mailbox Disconnected"));
+    assert.ok(
+      htmlEn.includes(
+        "Mailbox disconnected: We couldn&#x27;t connect to your email account. Please check your email password in Settings."
+      ) ||
+      htmlEn.includes(
+        "Mailbox disconnected: We couldn't connect to your email account. Please check your email password in Settings."
+      )
+    );
+
+    // Test in German as well
+    const htmlDe = renderToStaticMarkup(
+      <HomeScreen
+        initialReady={true}
+        initialLanguage="de"
+        routerOverride={{ replace: () => {} }}
+        initialTelemetry={{
+          cpu_percent: 10,
+          memory_used_bytes: 1000,
+          memory_total_bytes: 2000,
+          storage_used_bytes: 500,
+          storage_total_bytes: 1000,
+          storage_percent: 50,
+          nas_status: "connected",
+          nas_message: "Mounted",
+          overall_status: "operational",
+          optical_status: "Idle",
+          gpu_status: "Daytime",
+          timestamp: "2026-10-16T10:00:00Z",
+        }}
+        initialServices={{
+          dms: { status: "degraded" },
+        }}
+      />
+    );
+
+    assert.ok(htmlDe.includes("data-testid=\"service-card-dms\""));
+    assert.ok(htmlDe.includes("Automatische Textsuche aktiv"));
+    assert.ok(htmlDe.includes("Postfach getrennt"));
+    assert.ok(
+      htmlDe.includes(
+        "Postfach getrennt: Verbindung zum E-Mail-Konto fehlgeschlagen. Bitte überprüfen Sie Ihr Passwort in den Einstellungen."
+      )
+    );
+  });
 });

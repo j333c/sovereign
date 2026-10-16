@@ -61,3 +61,20 @@ CREATE INDEX IF NOT EXISTS idx_transcode_queue_status ON transcode_queue(status,
 INSERT OR IGNORE INTO boot_status (id, mode, clean_shutdown, diagnostics_completed, message)
 VALUES (1, 'operational', 1, 1, 'All systems operational');
 
+CREATE TABLE IF NOT EXISTS imap_configs (
+    id TEXT PRIMARY KEY,
+    host TEXT NOT NULL,
+    port INTEGER NOT NULL DEFAULT 993,
+    username TEXT NOT NULL,
+    password_encrypted BLOB NOT NULL,
+    folder TEXT NOT NULL DEFAULT 'INBOX',
+    ssl_enabled BOOLEAN NOT NULL DEFAULT 1,
+    enabled BOOLEAN NOT NULL DEFAULT 1,
+    last_polled_at TIMESTAMP NULL,
+    last_error TEXT DEFAULT '',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_imap_configs_enabled ON imap_configs(enabled, updated_at);
+

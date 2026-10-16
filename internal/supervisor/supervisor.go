@@ -1000,6 +1000,34 @@ func (m *ServiceManager) SetServiceStatusForTest(id, status string) {
 	}
 }
 
+// SetServiceHealth updates a service's status and health, emitting service.health_changed if modified.
+func (m *ServiceManager) SetServiceHealth(id, status, health, detail string) {
+	id = m.resolveID(id)
+	m.mu.Lock()
+	st, exists := m.statuses[id]
+	if !exists {
+		m.mu.Unlock()
+		return
+	}
+	if status != "" {
+		st.Status = status
+	}
+	st.Health = health
+	st.UpdatedAt = m.timeNow().UTC().Format(time.RFC3339)
+	currentStatus := st.Status
+	m.mu.Unlock()
+
+	if m.broadcaster != nil {
+		m.broadcaster("service.health_changed", ServiceHealthChanged{
+			ServiceID: id,
+			Status:    currentStatus,
+			Health:    health,
+			Detail:    detail,
+			Timestamp: m.timeNow().UTC().Format(time.RFC3339),
+		})
+	}
+}
+
 // Close stops background routines.
 func (m *ServiceManager) Close() error {
 	m.stopOnce.Do(func() {

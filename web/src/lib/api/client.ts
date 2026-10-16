@@ -33,6 +33,13 @@ export type ServiceErrorEvent = components["schemas"]["ServiceErrorEvent"];
 export type DropUploadResponse = components["schemas"]["DropUploadResponse"];
 export type DropHistoryItem = components["schemas"]["DropHistoryItem"];
 export type DropHistoryResponse = components["schemas"]["DropHistoryResponse"];
+export type DocumentUploadResponse = components["schemas"]["DocumentUploadResponse"];
+export type IMAPConfigRequest = components["schemas"]["IMAPConfigRequest"];
+export type IMAPConfigResponse = components["schemas"]["IMAPConfigResponse"];
+export type IMAPTestRequest = components["schemas"]["IMAPTestRequest"];
+export type IMAPTestResponse = components["schemas"]["IMAPTestResponse"];
+export type DMSDocumentIngestedEvent = components["schemas"]["DMSDocumentIngestedEvent"];
+export type DMSMailboxStatusEvent = components["schemas"]["DMSMailboxStatusEvent"];
 
 /**
  * ProblemDetailsError represents an RFC 7807 problem details error thrown by the daemon API.
@@ -395,6 +402,47 @@ export class SovereignApiClient {
   async getDropHistory(): Promise<DropHistoryItem[]> {
     const res = await this.request<DropHistoryResponse>("/api/v1/drop/history");
     return res.items ?? [];
+  }
+
+  /**
+   * Direct document upload to /data/documents/consume/ for Paperless OCR.
+   */
+  async uploadDocument(file: File | Blob, filename?: string): Promise<DocumentUploadResponse> {
+    const formData = new FormData();
+    formData.append("file", file, filename || (file as File).name || "document.pdf");
+    return this.request<DocumentUploadResponse>("/api/v1/documents/upload", {
+      method: "POST",
+      body: formData,
+    });
+  }
+
+  /**
+   * Retrieve active IMAP mailbox configuration with masked credentials.
+   */
+  async getIMAPConfig(): Promise<IMAPConfigResponse> {
+    return this.request<IMAPConfigResponse>("/api/v1/documents/imap");
+  }
+
+  /**
+   * Save or update IMAP mailbox configuration.
+   */
+  async saveIMAPConfig(config: IMAPConfigRequest): Promise<IMAPConfigResponse> {
+    return this.request<IMAPConfigResponse>("/api/v1/documents/imap", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(config),
+    });
+  }
+
+  /**
+   * Test IMAP server connectivity and credentials.
+   */
+  async testIMAPConnection(config: IMAPTestRequest): Promise<IMAPTestResponse> {
+    return this.request<IMAPTestResponse>("/api/v1/documents/imap/test", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(config),
+    });
   }
 
   /**

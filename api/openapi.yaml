@@ -79,8 +79,9 @@ paths:
     get:
       summary: Real-time SSE telemetry event stream
       description: |
-        Streams real-time hardware telemetry updates (CPU, RAM, storage, NAS, optical, GPU)
-        and service lifecycle events (service.pull_progress, service.health_changed, service.error)
+        Streams real-time hardware telemetry updates (CPU, RAM, storage, NAS, optical, GPU),
+        service lifecycle events (service.pull_progress, service.health_changed, service.error),
+        and document ingestion events (dms.document_ingested, dms.mailbox_status)
         via Server-Sent Events.
       operationId: getSystemEvents
       responses:
@@ -90,12 +91,12 @@ paths:
             text/event-stream:
               schema:
                 type: string
-                description: SSE stream emitting telemetry.update and service.* events.
+                description: SSE stream emitting telemetry.update, service.*, and dms.* events.
 
   /api/events:
     get:
       summary: Real-time SSE telemetry stream alias
-      description: Convenience root alias for /api/v1/system/events emitting telemetry and service lifecycle events.
+      description: Convenience root alias for /api/v1/system/events emitting telemetry, service lifecycle, and dms events.
       operationId: getEvents
       responses:
         '200':
@@ -104,7 +105,7 @@ paths:
             text/event-stream:
               schema:
                 type: string
-                description: SSE stream emitting telemetry.update and service.* events.
+                description: SSE stream emitting telemetry.update, service.*, and dms.* events.
 
 
   /api/v1/storage/disks:
@@ -658,11 +659,13 @@ paths:
 
   /api/v1/drop/upload:
     post:
-      summary: Upload media file to dropzone
+      summary: Upload media or document file to dropzone
       description: |
-        Streams incoming media upload to atomic staging file, validates magic bytes
-        (MP4, MKV, WebM, AVI, MPEG-TS, MP3, FLAC, WAV, OGG, Opus, M4A, M4B, AAC),
-        atomically moves verified file to /data/media/:category, and triggers library refresh.
+        Streams incoming upload to atomic staging file, validates magic bytes
+        (Media: MP4, MKV, WebM, AVI, MPEG-TS, MP3, FLAC, WAV, OGG, Opus, M4A, M4B, AAC;
+        Documents: PDF, PNG, JPG, JPEG, TIFF, TIF).
+        Atomically moves verified media to /data/media/:category (triggering library refresh)
+        or verified documents to /data/documents/consume/ (0644 permissions, emitting dms.document_ingested).
       operationId: uploadDropMedia
       requestBody:
         required: true
@@ -676,8 +679,8 @@ paths:
               properties:
                 category:
                   type: string
-                  enum: [movies, tv, music, audiobooks]
-                  description: Target media library category
+                  enum: [movies, tv, music, audiobooks, documents]
+                  description: Target library category
                 file:
                   type: string
                   format: binary
@@ -722,6 +725,138 @@ paths:
                 $ref: '#/components/schemas/DropHistoryResponse'
         '500':
           description: Internal supervisor error retrieving dropzone history.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/v1/documents/upload:
+    post:
+      summary: Upload document to Paperless consume directory
+      description: |
+        Direct ingestion endpoint for mobile companion scanner uploads and UI document drops.
+        Validates magic bytes for PDF, PNG, JPG, JPEG, TIFF, and TIF formats, atomically moves
+        payload to /data/documents/consume/ with 0644 file permissions, and emits dms.document_ingested.
+      operationId: uploadDocument
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+                - file
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: Scanned document or image file
+      responses:
+        '200':
+          description: Document verified and moved to Paperless consume folder.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DocumentUploadResponse'
+        '400':
+          description: Missing file or unreadable multipart form.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '422':
+          description: Unsupported file format or magic byte mismatch.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '500':
+          description: Internal supervisor error processing document upload.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/v1/documents/imap:
+    get:
+      summary: Retrieve configured IMAP mailbox settings
+      description: Returns active IMAP connection settings with passwords masked as asterisks.
+      operationId: getIMAPConfig
+      responses:
+        '200':
+          description: Current IMAP mailbox configuration.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IMAPConfigResponse'
+        '500':
+          description: Internal supervisor error retrieving IMAP settings.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+    post:
+      summary: Save or update IMAP mailbox configuration
+      description: |
+        Configures automated IMAP polling for scanned documents and invoices.
+        Encrypts credentials using AES-256-GCM before persisting to SQLite with WAL durability.
+        Triggers an immediate background poll if enabled.
+      operationId: saveIMAPConfig
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IMAPConfigRequest'
+      responses:
+        '200':
+          description: IMAP configuration saved successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IMAPConfigResponse'
+        '400':
+          description: Invalid request payload or missing required fields.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '500':
+          description: Failed to persist IMAP configuration.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/v1/documents/imap/test:
+    post:
+      summary: Test IMAP connection and credentials
+      description: |
+        Performs an RFC 3501 IMAP/SSL connection and authentication handshake.
+        If authentication or connectivity fails, sets the Paperless service health
+        to degraded (amber) with reassuring microcopy without terminating the container.
+      operationId: testIMAPConnection
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IMAPTestRequest'
+      responses:
+        '200':
+          description: Mailbox connection and login handshake succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IMAPTestResponse'
+        '400':
+          description: Missing required connection parameters.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '502':
+          description: Mailbox connection or authentication failed.
           content:
             application/problem+json:
               schema:
@@ -2201,6 +2336,203 @@ components:
         message:
           type: string
           example: "Manual override enabled; daytime batch transcoding active"
+
+    DocumentUploadResponse:
+      type: object
+      required:
+        - id
+        - filename
+        - format
+        - size_bytes
+        - consume_path
+        - ingested_at
+      properties:
+        id:
+          type: string
+          format: uuid
+          example: "018f27ab-4318-7b9c-8517-8e67f70bca11"
+        filename:
+          type: string
+          example: "electric_bill.pdf"
+        format:
+          type: string
+          example: "pdf"
+        size_bytes:
+          type: integer
+          example: 1048576
+        consume_path:
+          type: string
+          example: "/data/documents/consume/electric_bill.pdf"
+        ingested_at:
+          type: string
+          format: date-time
+          example: "2026-10-16T10:00:00Z"
+
+    IMAPConfigRequest:
+      type: object
+      required:
+        - host
+        - port
+        - username
+      properties:
+        id:
+          type: string
+          example: "018f27ab-4318-7b9c-8517-8e67f70bca11"
+        host:
+          type: string
+          example: "imap.mail.me.com"
+        port:
+          type: integer
+          example: 993
+        username:
+          type: string
+          example: "family@icloud.com"
+        password:
+          type: string
+          example: "app-specific-password"
+        folder:
+          type: string
+          example: "INBOX"
+        ssl_enabled:
+          type: boolean
+          example: true
+        enabled:
+          type: boolean
+          example: true
+
+    IMAPConfigResponse:
+      type: object
+      required:
+        - id
+        - host
+        - port
+        - username
+        - password
+        - folder
+        - ssl_enabled
+        - enabled
+        - connected
+      properties:
+        id:
+          type: string
+          example: "018f27ab-4318-7b9c-8517-8e67f70bca11"
+        host:
+          type: string
+          example: "imap.mail.me.com"
+        port:
+          type: integer
+          example: 993
+        username:
+          type: string
+          example: "family@icloud.com"
+        password:
+          type: string
+          description: Always masked as asterisks
+          example: "********"
+        folder:
+          type: string
+          example: "INBOX"
+        ssl_enabled:
+          type: boolean
+          example: true
+        enabled:
+          type: boolean
+          example: true
+        connected:
+          type: boolean
+          example: true
+        last_polled_at:
+          type: string
+          example: "2026-10-16T10:00:00Z"
+        last_error:
+          type: string
+          example: ""
+
+    IMAPTestRequest:
+      type: object
+      required:
+        - host
+        - username
+      properties:
+        host:
+          type: string
+          example: "imap.mail.me.com"
+        port:
+          type: integer
+          example: 993
+        username:
+          type: string
+          example: "family@icloud.com"
+        password:
+          type: string
+          example: "app-specific-password"
+        folder:
+          type: string
+          example: "INBOX"
+        ssl_enabled:
+          type: boolean
+          example: true
+
+    IMAPTestResponse:
+      type: object
+      required:
+        - success
+        - message
+      properties:
+        success:
+          type: boolean
+          example: true
+        message:
+          type: string
+          example: "Mailbox connection successful"
+
+    DMSDocumentIngestedEvent:
+      type: object
+      required:
+        - id
+        - filename
+        - format
+        - size_bytes
+        - source
+        - ingested_at
+      properties:
+        id:
+          type: string
+          format: uuid
+          example: "018f27ab-4318-7b9c-8517-8e67f70bca11"
+        filename:
+          type: string
+          example: "electric_bill.pdf"
+        format:
+          type: string
+          example: "pdf"
+        size_bytes:
+          type: integer
+          example: 1048576
+        source:
+          type: string
+          enum: [upload, dropzone, imap]
+          example: "imap"
+        ingested_at:
+          type: string
+          format: date-time
+          example: "2026-10-16T10:00:00Z"
+
+    DMSMailboxStatusEvent:
+      type: object
+      required:
+        - connected
+      properties:
+        connected:
+          type: boolean
+          example: false
+        last_error:
+          type: string
+          example: "imap authentication failed: NO [AUTHENTICATIONFAILED] Authentication failed"
+        last_polled_at:
+          type: string
+          example: "2026-10-16T10:00:00Z"
+
 
 
 

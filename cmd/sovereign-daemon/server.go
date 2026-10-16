@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -18,6 +19,7 @@ import (
 	"time"
 
 	"sovereign/internal/auth"
+	"sovereign/internal/documents"
 	"sovereign/internal/enrichment"
 	"sovereign/internal/hardware"
 	"sovereign/internal/ingress"
@@ -193,6 +195,9 @@ type Config struct {
 	Transcoder        transcode.Transcoder
 	TranscodeStore    transcode.Store
 	TranscodeSchedule *transcode.Scheduler
+	IMAPStore         *store.IMAPStore
+	IMAPPoller        *documents.Poller
+	IngestEngine      *documents.IngestEngine
 }
 
 type sseEvent struct {
@@ -218,6 +223,9 @@ type Server struct {
 	opticalRipper     *optical.OpticalRipper
 	enrichmentEngine  *enrichment.EnrichmentEngine
 	transcodeEngine   *transcode.TranscodeEngine
+	imapStore         *store.IMAPStore
+	imapPoller        *documents.Poller
+	ingestEngine      *documents.IngestEngine
 	stopChan          chan struct{}
 	closeOnce         sync.Once
 	mu                sync.RWMutex
@@ -467,6 +475,50 @@ func NewServer(cfg Config) (*Server, error) {
 	}
 	s.transcodeEngine = cfg.TranscodeEngine
 
+	// 11. Initialize IMAP store, poller, and document ingestion
+	if cfg.IMAPStore == nil && db != nil {
+		var err error
+		cfg.IMAPStore, err = store.NewIMAPStore(db, nil)
+		if err != nil {
+			cfg.Logger.Error("failed to initialize imap store", "error", err)
+			return nil, fmt.Errorf("imap store initialization failed: %w", err)
+		}
+	}
+	s.imapStore = cfg.IMAPStore
+
+	consumeDir := filepath.Join(cfg.DataDir, "documents", "consume")
+	if cfg.IngestEngine == nil {
+		var err error
+		cfg.IngestEngine, err = documents.NewIngestEngine(consumeDir, s.BroadcastEvent)
+		if err != nil {
+			cfg.Logger.Error("failed to initialize ingest engine", "error", err)
+			return nil, fmt.Errorf("ingest engine initialization failed: %w", err)
+		}
+	}
+	s.ingestEngine = cfg.IngestEngine
+
+	if cfg.IMAPPoller == nil && s.imapStore != nil {
+		healthSetter := func(serviceID, status, health, detail string) {
+			if s.serviceMgr != nil {
+				s.serviceMgr.SetServiceHealth(serviceID, status, health, detail)
+			}
+		}
+		var err error
+		cfg.IMAPPoller, err = documents.NewPoller(documents.PollerConfig{
+			Store:               s.imapStore,
+			ConsumeDir:          consumeDir,
+			PollInterval:        documents.DefaultPollInterval,
+			Broadcaster:         s.BroadcastEvent,
+			ServiceHealthSetter: healthSetter,
+			Logger:              cfg.Logger,
+		})
+		if err != nil {
+			cfg.Logger.Error("failed to initialize imap poller", "error", err)
+			return nil, fmt.Errorf("imap poller initialization failed: %w", err)
+		}
+	}
+	s.imapPoller = cfg.IMAPPoller
+
 	s.routes()
 	return s, nil
 }
@@ -569,6 +621,11 @@ func (s *Server) StartBackgroundServices(ctx context.Context) {
 	// 10. Start off-peak transcoding queue runner
 	if s.transcodeEngine != nil {
 		s.transcodeEngine.Start(ctx)
+	}
+
+	// 11. Start background IMAP email poller
+	if s.imapPoller != nil {
+		s.imapPoller.Start(ctx)
 	}
 }
 
@@ -676,6 +733,10 @@ func (s *Server) Close() error {
 		_ = s.transcodeEngine.Close()
 	}
 
+	if s.imapPoller != nil {
+		s.imapPoller.Stop()
+	}
+
 	if s.enrichmentEngine != nil {
 		_ = s.enrichmentEngine.Close()
 	}
@@ -781,6 +842,12 @@ func (s *Server) routes() {
 	s.router.HandleFunc("GET /api/v1/transcode/schedule", s.handleGetTranscodeSchedule)
 	s.router.HandleFunc("POST /api/v1/transcode/schedule", s.requireSetupOrAdmin(s.handleUpdateTranscodeSchedule))
 	s.router.HandleFunc("POST /api/v1/transcode/override", s.requireSetupOrAdmin(s.handleTranscodeOverride))
+
+	// Document ingestion and IMAP email polling endpoints
+	s.router.HandleFunc("POST /api/v1/documents/upload", s.requireSetupOrAdmin(s.handleDocumentUpload))
+	s.router.HandleFunc("GET /api/v1/documents/imap", s.requireSetupOrAdmin(s.handleGetIMAPConfig))
+	s.router.HandleFunc("POST /api/v1/documents/imap", s.requireSetupOrAdmin(s.handleSaveIMAPConfig))
+	s.router.HandleFunc("POST /api/v1/documents/imap/test", s.requireSetupOrAdmin(s.handleTestIMAPConnection))
 }
 
 
@@ -1712,7 +1779,7 @@ func (s *Server) handleDropUpload(w http.ResponseWriter, r *http.Request) {
 			filename := part.FileName()
 			if category == "" || !storage.IsValidCategory(category) {
 				_ = part.Close()
-				s.writeProblem(w, http.StatusBadRequest, "Invalid Category", "Category must be one of: movies, tv, music, audiobooks", r.URL.Path)
+				s.writeProblem(w, http.StatusBadRequest, "Invalid Category", "Category must be one of: movies, tv, music, audiobooks, documents", r.URL.Path)
 				return
 			}
 
@@ -1731,7 +1798,11 @@ func (s *Server) handleDropUpload(w http.ResponseWriter, r *http.Request) {
 
 	if uploadErr != nil {
 		if errors.Is(uploadErr, storage.ErrInvalidCategory) {
-			s.writeProblem(w, http.StatusBadRequest, "Invalid Category", "Category must be one of: movies, tv, music, audiobooks", r.URL.Path)
+			s.writeProblem(w, http.StatusBadRequest, "Invalid Category", "Category must be one of: movies, tv, music, audiobooks, documents", r.URL.Path)
+			return
+		}
+		if category == storage.CategoryDocuments && (errors.Is(uploadErr, storage.ErrInvalidMedia) || errors.Is(uploadErr, storage.ErrCategoryMismatch)) {
+			s.writeProblem(w, http.StatusBadRequest, "Invalid Document Format", "Only document files (.pdf, .png, .jpg, .jpeg, .tiff, .tif) are accepted.", r.URL.Path)
 			return
 		}
 		if errors.Is(uploadErr, storage.ErrInvalidMedia) {
@@ -1753,6 +1824,17 @@ func (s *Server) handleDropUpload(w http.ResponseWriter, r *http.Request) {
 		s.logger.Error("dropzone upload processing failed", "category", category, "error", uploadErr)
 		s.writeProblem(w, http.StatusInternalServerError, "Upload Failed", "An error occurred while processing the media upload.", r.URL.Path)
 		return
+	}
+
+	if category == storage.CategoryDocuments && uploadedItem != nil {
+		s.BroadcastEvent("dms.document_ingested", map[string]any{
+			"id":           uploadedItem.ID,
+			"filename":     uploadedItem.Filename,
+			"path":         uploadedItem.Path,
+			"size":         uploadedItem.Size,
+			"content_type": uploadedItem.ContentType,
+			"source":       "dropzone",
+		})
 	}
 
 	s.writeJSON(w, http.StatusOK, uploadedItem)
@@ -2230,5 +2312,338 @@ func (s *Server) handleTranscodeOverride(w http.ResponseWriter, r *http.Request)
 		Message:        msg,
 	})
 }
+
+// IMAPConfigResponse matches the OpenAPI 3.1 contract.
+type IMAPConfigResponse struct {
+	ID           string `json:"id"`
+	Host         string `json:"host"`
+	Port         int    `json:"port"`
+	Username     string `json:"username"`
+	Password     string `json:"password"`
+	Folder       string `json:"folder"`
+	SSLEnabled   bool   `json:"ssl_enabled"`
+	Enabled      bool   `json:"enabled"`
+	Connected    bool   `json:"connected"`
+	LastPolledAt string `json:"last_polled_at,omitempty"`
+	LastError    string `json:"last_error"`
+}
+
+// IMAPConfigSaveRequest matches the OpenAPI 3.1 contract.
+type IMAPConfigSaveRequest struct {
+	ID         string `json:"id,omitempty"`
+	Host       string `json:"host"`
+	Port       int    `json:"port"`
+	Username   string `json:"username"`
+	Password   string `json:"password"`
+	Folder     string `json:"folder"`
+	SSLEnabled *bool  `json:"ssl_enabled,omitempty"`
+	Enabled    *bool  `json:"enabled,omitempty"`
+}
+
+// IMAPTestRequest matches the OpenAPI 3.1 contract.
+type IMAPTestRequest struct {
+	Host       string `json:"host"`
+	Port       int    `json:"port"`
+	Username   string `json:"username"`
+	Password   string `json:"password"`
+	Folder     string `json:"folder"`
+	SSLEnabled *bool  `json:"ssl_enabled,omitempty"`
+}
+
+// IMAPTestResponse matches the OpenAPI 3.1 contract.
+type IMAPTestResponse struct {
+	Success bool   `json:"success"`
+	Message string `json:"message"`
+}
+
+// handleDocumentUpload handles multipart file uploads to /api/v1/documents/upload.
+func (s *Server) handleDocumentUpload(w http.ResponseWriter, r *http.Request) {
+	s.mu.RLock()
+	engine := s.ingestEngine
+	s.mu.RUnlock()
+
+	if engine == nil {
+		s.writeProblem(w, http.StatusInternalServerError, "Internal Server Error", "Document ingest engine is not initialized", r.URL.Path)
+		return
+	}
+
+	engine.IngestHTTPHandler(s.writeProblem, s.writeJSON)(w, r)
+}
+
+// handleGetIMAPConfig returns the active IMAP mailbox configuration with masked password.
+func (s *Server) handleGetIMAPConfig(w http.ResponseWriter, r *http.Request) {
+	s.mu.RLock()
+	imapStore := s.imapStore
+	s.mu.RUnlock()
+
+	if imapStore == nil {
+		s.writeProblem(w, http.StatusInternalServerError, "Internal Server Error", "IMAP store is not initialized", r.URL.Path)
+		return
+	}
+
+	cfg, err := imapStore.GetActive(r.Context())
+	if err != nil {
+		if errors.Is(err, store.ErrIMAPConfigNotFound) {
+			s.writeJSON(w, http.StatusOK, IMAPConfigResponse{
+				ID:         "",
+				Host:       "",
+				Port:       993,
+				Username:   "",
+				Password:   "",
+				Folder:     "INBOX",
+				SSLEnabled: true,
+				Enabled:    false,
+				Connected:  false,
+				LastError:  "",
+			})
+			return
+		}
+		s.logger.Error("failed to get active imap config", "error", err)
+		s.writeProblem(w, http.StatusInternalServerError, "Internal Server Error", "Failed to retrieve IMAP configuration: "+err.Error(), r.URL.Path)
+		return
+	}
+
+	lastPolledStr := ""
+	if cfg.LastPolledAt != nil {
+		lastPolledStr = cfg.LastPolledAt.UTC().Format(time.RFC3339)
+	}
+
+	connected := cfg.LastError == "" && cfg.LastPolledAt != nil
+
+	resp := IMAPConfigResponse{
+		ID:           cfg.ID,
+		Host:         cfg.Host,
+		Port:         cfg.Port,
+		Username:     cfg.Username,
+		Password:     "********",
+		Folder:       cfg.Folder,
+		SSLEnabled:   cfg.SSLEnabled,
+		Enabled:      cfg.Enabled,
+		Connected:    connected,
+		LastPolledAt: lastPolledStr,
+		LastError:    cfg.LastError,
+	}
+
+	s.writeJSON(w, http.StatusOK, resp)
+}
+
+// handleSaveIMAPConfig creates or updates an IMAP mailbox configuration with encrypted credentials.
+func (s *Server) handleSaveIMAPConfig(w http.ResponseWriter, r *http.Request) {
+	s.mu.RLock()
+	imapStore := s.imapStore
+	poller := s.imapPoller
+	s.mu.RUnlock()
+
+	if imapStore == nil {
+		s.writeProblem(w, http.StatusInternalServerError, "Internal Server Error", "IMAP store is not initialized", r.URL.Path)
+		return
+	}
+
+	var req IMAPConfigSaveRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.writeProblem(w, http.StatusBadRequest, "Invalid JSON", "Request body must be valid JSON: "+err.Error(), r.URL.Path)
+		return
+	}
+
+	if strings.TrimSpace(req.Host) == "" {
+		s.writeProblem(w, http.StatusBadRequest, "Invalid Request", "Field 'host' cannot be empty", r.URL.Path)
+		return
+	}
+	if strings.TrimSpace(req.Username) == "" {
+		s.writeProblem(w, http.StatusBadRequest, "Invalid Request", "Field 'username' cannot be empty", r.URL.Path)
+		return
+	}
+	if req.Port <= 0 {
+		req.Port = 993
+	}
+	if strings.TrimSpace(req.Folder) == "" {
+		req.Folder = "INBOX"
+	}
+
+	sslEnabled := true
+	if req.SSLEnabled != nil {
+		sslEnabled = *req.SSLEnabled
+	}
+	enabled := true
+	if req.Enabled != nil {
+		enabled = *req.Enabled
+	}
+
+	// Check if this is an update and password is masked
+	existingPass := ""
+	if req.ID != "" {
+		if existing, err := imapStore.Get(r.Context(), req.ID); err == nil && existing != nil {
+			existingPass = existing.Password
+		}
+	} else {
+		if existing, err := imapStore.GetActive(r.Context()); err == nil && existing != nil {
+			req.ID = existing.ID
+			existingPass = existing.Password
+		}
+	}
+
+	passwordToSave := req.Password
+	if passwordToSave == "********" || passwordToSave == "" {
+		passwordToSave = existingPass
+	}
+
+	if passwordToSave == "" {
+		s.writeProblem(w, http.StatusBadRequest, "Invalid Request", "Field 'password' cannot be empty", r.URL.Path)
+		return
+	}
+
+	configToSave := &store.IMAPConfig{
+		ID:         req.ID,
+		Host:       req.Host,
+		Port:       req.Port,
+		Username:   req.Username,
+		Password:   passwordToSave,
+		Folder:     req.Folder,
+		SSLEnabled: sslEnabled,
+		Enabled:    enabled,
+	}
+
+	if err := imapStore.Save(r.Context(), configToSave); err != nil {
+		s.logger.Error("failed to save imap config", "error", err)
+		s.writeProblem(w, http.StatusInternalServerError, "Internal Server Error", "Failed to save IMAP configuration: "+err.Error(), r.URL.Path)
+		return
+	}
+
+	// Trigger immediate background poll if enabled
+	if poller != nil && enabled {
+		go func() {
+			_ = poller.PollOnce(context.Background())
+		}()
+	}
+
+	resp := IMAPConfigResponse{
+		ID:         configToSave.ID,
+		Host:       configToSave.Host,
+		Port:       configToSave.Port,
+		Username:   configToSave.Username,
+		Password:   "********",
+		Folder:     configToSave.Folder,
+		SSLEnabled: configToSave.SSLEnabled,
+		Enabled:    configToSave.Enabled,
+		Connected:  true,
+		LastError:  "",
+	}
+
+	s.writeJSON(w, http.StatusOK, resp)
+}
+
+// handleTestIMAPConnection tests connectivity and credentials with the specified IMAP server.
+func (s *Server) handleTestIMAPConnection(w http.ResponseWriter, r *http.Request) {
+	s.mu.RLock()
+	imapStore := s.imapStore
+	s.mu.RUnlock()
+
+	var req IMAPTestRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.writeProblem(w, http.StatusBadRequest, "Invalid JSON", "Request body must be valid JSON: "+err.Error(), r.URL.Path)
+		return
+	}
+
+	if strings.TrimSpace(req.Host) == "" {
+		s.writeProblem(w, http.StatusBadRequest, "Invalid Request", "Field 'host' cannot be empty", r.URL.Path)
+		return
+	}
+	if strings.TrimSpace(req.Username) == "" {
+		s.writeProblem(w, http.StatusBadRequest, "Invalid Request", "Field 'username' cannot be empty", r.URL.Path)
+		return
+	}
+	if req.Port <= 0 {
+		req.Port = 993
+	}
+	if strings.TrimSpace(req.Folder) == "" {
+		req.Folder = "INBOX"
+	}
+
+	sslEnabled := true
+	if req.SSLEnabled != nil {
+		sslEnabled = *req.SSLEnabled
+	}
+
+	passwordToTest := req.Password
+	if passwordToTest == "" || passwordToTest == "********" {
+		if imapStore != nil {
+			if active, err := imapStore.GetActive(r.Context()); err == nil && active != nil {
+				passwordToTest = active.Password
+			}
+		}
+	}
+
+	if passwordToTest == "" {
+		s.writeProblem(w, http.StatusBadRequest, "Invalid Request", "Field 'password' cannot be empty", r.URL.Path)
+		return
+	}
+
+	client := documents.NewClient()
+	defer func() {
+		_ = client.Close()
+	}()
+
+	addr := fmt.Sprintf("%s:%d", req.Host, req.Port)
+	tlsConfig := &tls.Config{
+		ServerName: req.Host,
+	}
+
+	testCtx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	if err := client.Connect(testCtx, addr, sslEnabled, tlsConfig); err != nil {
+		s.logger.Warn("imap connection test failed", "host", req.Host, "error", err)
+		if s.serviceMgr != nil {
+			s.serviceMgr.SetServiceHealth(supervisor.ServicePaperless, "running", "degraded", documents.ReassuranceMailboxDisconnected)
+		}
+		s.writeProblem(w, http.StatusBadGateway, "Mailbox Connection Failed", documents.ReassuranceMailboxDisconnected, r.URL.Path)
+		return
+	}
+
+	if err := client.Login(testCtx, req.Username, passwordToTest); err != nil {
+		s.logger.Warn("imap login test failed", "host", req.Host, "username", req.Username, "error", err)
+		if s.serviceMgr != nil {
+			s.serviceMgr.SetServiceHealth(supervisor.ServicePaperless, "running", "degraded", documents.ReassuranceMailboxDisconnected)
+		}
+		s.writeProblem(w, http.StatusBadGateway, "Mailbox Connection Failed", documents.ReassuranceMailboxDisconnected, r.URL.Path)
+		return
+	}
+
+	if _, err := client.Select(testCtx, req.Folder); err != nil {
+		s.logger.Warn("imap folder select test failed", "folder", req.Folder, "error", err)
+		if s.serviceMgr != nil {
+			s.serviceMgr.SetServiceHealth(supervisor.ServicePaperless, "running", "degraded", documents.ReassuranceMailboxDisconnected)
+		}
+		s.writeProblem(w, http.StatusBadGateway, "Mailbox Connection Failed", documents.ReassuranceMailboxDisconnected, r.URL.Path)
+		return
+	}
+
+	s.writeJSON(w, http.StatusOK, IMAPTestResponse{
+		Success: true,
+		Message: "Mailbox connection successful",
+	})
+}
+
+// IMAPStore returns the active IMAP store.
+func (s *Server) IMAPStore() *store.IMAPStore {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.imapStore
+}
+
+// IMAPPoller returns the active IMAP poller.
+func (s *Server) IMAPPoller() *documents.Poller {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.imapPoller
+}
+
+// IngestEngine returns the active document ingestion engine.
+func (s *Server) IngestEngine() *documents.IngestEngine {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.ingestEngine
+}
+
 
 

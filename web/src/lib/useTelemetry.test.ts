@@ -140,4 +140,39 @@ describe("useTelemetry Hook & SSE streaming contract", () => {
     mockES.emit("service.error", errorEvt);
     assert.deepEqual(receivedError, errorEvt);
   });
+
+  it("dispatches dms.mailbox_status and dms.document_ingested events via MockEventSource", () => {
+    const mockES = new MockEventSource("http://localhost:8080/api/v1/system/events");
+
+    let receivedMailboxStatus: any = null;
+    let receivedDocIngested: any = null;
+
+    attachTelemetryListeners(mockES, {
+      onDMSMailboxStatus: (evt) => {
+        receivedMailboxStatus = evt;
+      },
+      onDMSDocumentIngested: (evt) => {
+        receivedDocIngested = evt;
+      },
+    });
+
+    const mailboxEvt = {
+      connected: false,
+      last_error: "imap authentication failed: NO [AUTHENTICATIONFAILED] Authentication failed",
+      last_polled_at: "2026-10-16T10:00:00Z",
+    };
+    mockES.emit("dms.mailbox_status", mailboxEvt);
+    assert.deepEqual(receivedMailboxStatus, mailboxEvt);
+
+    const docEvt = {
+      id: "test-doc-uuid",
+      filename: "invoice.pdf",
+      format: "pdf",
+      size_bytes: 1048576,
+      source: "imap",
+      ingested_at: "2026-10-16T10:00:05Z",
+    };
+    mockES.emit("dms.document_ingested", docEvt);
+    assert.deepEqual(receivedDocIngested, docEvt);
+  });
 });
