@@ -1725,6 +1725,56 @@ paths:
               schema:
                 $ref: '#/components/schemas/PromptsResponse'
 
+  /api/v1/ai/rag/search:
+    post:
+      summary: Search document archive
+      description: Standalone document search endpoint returning ranked document matches, snippets, page numbers, and citation links.
+      operationId: searchRAG
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RAGSearchRequest'
+      responses:
+        '200':
+          description: Ranked document matches with page numbers and citations.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RAGSearchResponse'
+        '500':
+          description: Document search error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/v1/ai/rag/query:
+    post:
+      summary: Query document archive with Single-Source-of-Truth RAG
+      description: Orchestrates document retrieval, context truncation, prompt synthesis with citations, and inference execution via the AI Gateway.
+      operationId: queryRAG
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RAGQueryRequest'
+      responses:
+        '200':
+          description: Synthesized response with exact document citations.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RAGQueryResponse'
+        '503':
+          description: AI Gateway or model unavailable
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
 components:
   schemas:
     HealthResponse:
@@ -3594,6 +3644,120 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/PromptTemplate'
+
+    RAGSearchRequest:
+      type: object
+      required:
+        - query
+      properties:
+        query:
+          type: string
+          example: deductible on car insurance
+        limit:
+          type: integer
+          default: 5
+          example: 5
+        language:
+          type: string
+          enum: [en, de, es, fr]
+          example: en
+
+    RAGSearchResult:
+      type: object
+      required:
+        - document_id
+        - title
+        - page_number
+        - snippet
+        - score
+        - url
+      properties:
+        document_id:
+          type: integer
+          example: 1
+        title:
+          type: string
+          example: Car Insurance Policy
+        page_number:
+          type: integer
+          example: 4
+        snippet:
+          type: string
+          example: "...deductible for storm damage is $500..."
+        score:
+          type: number
+          format: double
+          example: -1.25
+        url:
+          type: string
+          example: /docs/documents/1
+
+    RAGSearchResponse:
+      type: object
+      required:
+        - query
+        - total_matches
+        - results
+      properties:
+        query:
+          type: string
+          example: deductible on car insurance
+        total_matches:
+          type: integer
+          example: 1
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/RAGSearchResult'
+        notice:
+          type: string
+          example: ""
+
+    RAGQueryRequest:
+      type: object
+      required:
+        - query
+      properties:
+        query:
+          type: string
+          example: What is our current deductible for storm damage on our home insurance?
+        language:
+          type: string
+          enum: [en, de, es, fr]
+          example: en
+        model:
+          type: string
+          example: qwen2.5-7b
+        max_tokens:
+          type: integer
+          default: 512
+          example: 512
+        context_tokens:
+          type: integer
+          default: 4096
+          example: 4096
+
+    RAGQueryResponse:
+      type: object
+      required:
+        - answer
+        - citations
+        - truncated
+      properties:
+        answer:
+          type: string
+          example: Your deductible is $500, according to page 4 of Car Insurance Policy.
+        citations:
+          type: array
+          items:
+            $ref: '#/components/schemas/RAGSearchResult'
+        truncated:
+          type: boolean
+          example: false
+        notice:
+          type: string
+          example: ""
+
 
 
 

@@ -60,6 +60,12 @@ export type PersonaListResponse = components["schemas"]["PersonaListResponse"];
 export type SetActivePersonaRequest = components["schemas"]["SetActivePersonaRequest"];
 export type PromptTemplate = components["schemas"]["PromptTemplate"];
 export type PromptsResponse = components["schemas"]["PromptsResponse"];
+export type RAGSearchRequest = components["schemas"]["RAGSearchRequest"];
+export type RAGSearchResult = components["schemas"]["RAGSearchResult"];
+export type RAGSearchResponse = components["schemas"]["RAGSearchResponse"];
+export type RAGQueryRequest = components["schemas"]["RAGQueryRequest"];
+export type RAGQueryResponse = components["schemas"]["RAGQueryResponse"];
+
 
 /**
  * ProblemDetailsError represents an RFC 7807 problem details error thrown by the daemon API.
@@ -614,6 +620,28 @@ export class SovereignApiClient {
   async getAIPrompts(lang?: string): Promise<PromptsResponse> {
     const query = lang ? `?lang=${encodeURIComponent(lang)}` : "";
     return this.request<PromptsResponse>(`/api/v1/ai/prompts${query}`);
+  }
+
+  /**
+   * Search Paperless document archive using FTS5.
+   */
+  async searchRAG(req: RAGSearchRequest): Promise<RAGSearchResponse> {
+    return this.request<RAGSearchResponse>("/api/v1/ai/rag/search", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(req),
+    });
+  }
+
+  /**
+   * Query document archive with Single-Source-of-Truth RAG and context window headroom truncator.
+   */
+  async queryRAG(req: RAGQueryRequest): Promise<RAGQueryResponse> {
+    return this.request<RAGQueryResponse>("/api/v1/ai/rag/query", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(req),
+    });
   }
 
   /**

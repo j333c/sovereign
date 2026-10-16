@@ -1480,7 +1480,92 @@ describe("SovereignApiClient", () => {
     assert.equal(promptsRes.prompts.length, 1);
     assert.equal(promptsRes.prompts[0].persona_id, "legal_advisor");
   });
+
+  it("successfully calls searchRAG and queryRAG with typed request and response", async () => {
+    const mockFetch: typeof fetch = async (input, init) => {
+      const url = String(input);
+      if (url === "http://localhost:8080/api/v1/ai/rag/search") {
+        assert.equal(init?.method, "POST");
+        const body = JSON.parse(String(init?.body));
+        assert.equal(body.query, "deductible on car insurance");
+        assert.equal(body.limit, 5);
+
+        return new Response(
+          JSON.stringify({
+            query: "deductible on car insurance",
+            total_matches: 1,
+            results: [
+              {
+                document_id: 1,
+                title: "Car Insurance Policy",
+                page_number: 4,
+                snippet: "...deductible for storm damage is $500...",
+                score: -1.25,
+                url: "/docs/documents/1",
+              },
+            ],
+            notice: "",
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+
+      if (url === "http://localhost:8080/api/v1/ai/rag/query") {
+        assert.equal(init?.method, "POST");
+        const body = JSON.parse(String(init?.body));
+        assert.equal(body.query, "deductible on car insurance");
+        assert.equal(body.language, "en");
+
+        return new Response(
+          JSON.stringify({
+            answer: "Your deductible is $500, according to page 4 of Car Insurance Policy.",
+            citations: [
+              {
+                document_id: 1,
+                title: "Car Insurance Policy",
+                page_number: 4,
+                snippet: "...deductible for storm damage is $500...",
+                score: -1.25,
+                url: "/docs/documents/1",
+              },
+            ],
+            truncated: false,
+            notice: "",
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+
+      return new Response("Not found", { status: 404 });
+    };
+
+    const client = new SovereignApiClient({
+      baseUrl: "http://localhost:8080",
+      fetchFn: mockFetch,
+    });
+
+    // 1. Search RAG
+    const searchRes = await client.searchRAG({
+      query: "deductible on car insurance",
+      limit: 5,
+    });
+    assert.equal(searchRes.total_matches, 1);
+    assert.equal(searchRes.results[0].title, "Car Insurance Policy");
+    assert.equal(searchRes.results[0].page_number, 4);
+    assert.equal(searchRes.results[0].url, "/docs/documents/1");
+
+    // 2. Query RAG
+    const queryRes = await client.queryRAG({
+      query: "deductible on car insurance",
+      language: "en",
+    });
+    assert.ok(queryRes.answer.includes("$500"));
+    assert.equal(queryRes.citations.length, 1);
+    assert.equal(queryRes.citations[0].page_number, 4);
+    assert.equal(queryRes.truncated, false);
+  });
 });
+
 
 
 

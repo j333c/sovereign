@@ -208,6 +208,7 @@ type Config struct {
 	AIGateway         ai.Gateway
 	LlamaURL          string
 	PersonaStore      *ai.PersonaStore
+	RAGEngine         *ai.RAGEngine
 }
 
 type sseEvent struct {
@@ -243,6 +244,7 @@ type Server struct {
 	aiGateway         ai.Gateway
 	llamaURL          string
 	personaStore      *ai.PersonaStore
+	ragEngine         *ai.RAGEngine
 	stopChan          chan struct{}
 	closeOnce         sync.Once
 	mu                sync.RWMutex
@@ -459,6 +461,20 @@ func NewServer(cfg Config) (*Server, error) {
 		s.personaStore = ai.NewPersonaStore(openwebuiStateDir, cfg.Logger)
 	} else {
 		s.personaStore = cfg.PersonaStore
+	}
+
+	if cfg.RAGEngine == nil {
+		var client ai.InferenceClient
+		if s.aiGateway != nil {
+			client = ai.NewGatewayInferenceClient(s.aiGateway)
+		}
+		s.ragEngine = ai.NewRAGEngine(ai.RAGConfig{
+			DataDir:         cfg.DataDir,
+			Logger:          cfg.Logger,
+			InferenceClient: client,
+		})
+	} else {
+		s.ragEngine = cfg.RAGEngine
 	}
 
 	if cfg.DropzoneEngine == nil {
@@ -939,6 +955,10 @@ func (s *Server) Close() error {
 		s.aiGateway.Close()
 	}
 
+	if s.ragEngine != nil {
+		_ = s.ragEngine.Close()
+	}
+
 	if s.db != nil {
 		return s.db.Close()
 	}
@@ -1048,6 +1068,10 @@ func (s *Server) routes() {
 	s.router.HandleFunc("GET /api/v1/ai/personas/{id}", s.handleGetAIPersona)
 	s.router.HandleFunc("POST /api/v1/ai/personas/active", s.handleSetActiveAIPersona)
 	s.router.HandleFunc("GET /api/v1/ai/prompts", s.handleListAIPrompts)
+
+	// Single-Source-of-Truth RAG Endpoints
+	s.router.HandleFunc("POST /api/v1/ai/rag/search", s.handleRAGSearch)
+	s.router.HandleFunc("POST /api/v1/ai/rag/query", s.handleRAGQuery)
 }
 
 // handleAIGateway mediates /v1 inference requests to the internal llama-server spoke,
@@ -1162,6 +1186,20 @@ func (s *Server) SetPersonaStore(store *ai.PersonaStore) {
 	s.personaStore = store
 }
 
+// RAGEngine returns the active document RAG engine.
+func (s *Server) RAGEngine() *ai.RAGEngine {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.ragEngine
+}
+
+// SetRAGEngine updates the document RAG engine.
+func (s *Server) SetRAGEngine(engine *ai.RAGEngine) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.ragEngine = engine
+}
+
 // handleListAIPersonas returns all localized AI personas with their active status and presets.
 func (s *Server) handleListAIPersonas(w http.ResponseWriter, r *http.Request) {
 	s.mu.RLock()
@@ -1268,6 +1306,109 @@ func (s *Server) handleListAIPrompts(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(ai.PromptsResponse{
 		Prompts: prompts,
 	})
+}
+
+// handleRAGSearch processes standalone document search queries against Paperless-ngx FTS5.
+func (s *Server) handleRAGSearch(w http.ResponseWriter, r *http.Request) {
+	s.mu.RLock()
+	engine := s.ragEngine
+	s.mu.RUnlock()
+
+	if engine == nil {
+		s.writeProblem(w, http.StatusServiceUnavailable, "RAG Engine Unavailable", "Document RAG retrieval engine is not initialized.", r.URL.Path)
+		return
+	}
+
+	var req ai.RAGSearchRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.writeProblem(w, http.StatusBadRequest, "Invalid Request Body", fmt.Sprintf("Failed to decode JSON search request: %v", err), r.URL.Path)
+		return
+	}
+
+	resp, err := engine.Search(r.Context(), req)
+	if err != nil {
+		s.logger.Error("rag search failed", "query", req.Query, "error", err)
+		s.writeProblem(w, http.StatusInternalServerError, "Document Search Failed", fmt.Sprintf("Failed to execute document search: %v", err), r.URL.Path)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(resp)
+}
+
+// handleRAGQuery orchestrates document retrieval, headroom truncation, prompt synthesis, and AI inference.
+func (s *Server) handleRAGQuery(w http.ResponseWriter, r *http.Request) {
+	s.mu.RLock()
+	engine := s.ragEngine
+	gw := s.aiGateway
+	mgr := s.serviceMgr
+	s.mu.RUnlock()
+
+	if engine == nil {
+		s.writeProblem(w, http.StatusServiceUnavailable, "RAG Engine Unavailable", "Document RAG retrieval engine is not initialized.", r.URL.Path)
+		return
+	}
+
+	var req ai.RAGQueryRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.writeProblem(w, http.StatusBadRequest, "Invalid Request Body", fmt.Sprintf("Failed to decode JSON query request: %v", err), r.URL.Path)
+		return
+	}
+
+	if strings.TrimSpace(req.Query) == "" {
+		s.writeProblem(w, http.StatusBadRequest, "Invalid Query", "Search query cannot be empty.", r.URL.Path)
+		return
+	}
+
+	// First, check if database is unprovisioned or empty
+	dbPath := engine.ResolveDBPath()
+	if dbPath == "" {
+		normLang := ai.NormalizeLanguage(req.Language)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(ai.RAGQueryResponse{
+			Answer:    ai.GetNoMatchingDocumentsMessage(normLang),
+			Citations: []ai.RAGSearchResult{},
+			Truncated: false,
+			Notice:    ai.GetUnprovisionedDBNotice(normLang),
+		})
+		return
+	}
+
+	// Verify AI inference spoke liveness and model availability
+	if mgr != nil {
+		st, err := mgr.GetService(r.Context(), supervisor.ServiceLlama)
+		if err == nil && st != nil {
+			if st.Status == supervisor.StatusInactive || st.Status == supervisor.StatusStopped {
+				s.writeProblem(w, http.StatusServiceUnavailable, "AI Service Unavailable", "AI inference spoke is currently stopped or inactive.", r.URL.Path)
+				return
+			}
+		}
+	}
+
+	if gw != nil {
+		avail, err := gw.CheckModelAvailability(r.Context())
+		if err != nil || !avail {
+			s.writeProblem(w, http.StatusServiceUnavailable, "AI Service Unavailable", "No verified GGUF model is provisioned in storage.", r.URL.Path)
+			return
+		}
+	}
+
+	resp, err := engine.Query(r.Context(), req)
+	if err != nil {
+		if errors.Is(err, ai.ErrSafeStub) {
+			s.writeProblem(w, http.StatusServiceUnavailable, "AI Service Unavailable", "No verified GGUF model is provisioned in storage.", r.URL.Path)
+			return
+		}
+		s.logger.Error("rag query execution failed", "query", req.Query, "error", err)
+		s.writeProblem(w, http.StatusInternalServerError, "RAG Query Failed", fmt.Sprintf("RAG query failed: %v", err), r.URL.Path)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(resp)
 }
 
 

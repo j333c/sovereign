@@ -2,7 +2,7 @@
 title: 'Story 5.5: Single-Source-of-Truth RAG & Context Window Headroom Truncator'
 type: 'feature'
 created: '2026-10-16'
-status: 'in-progress'
+status: 'review'
 route: 'dispatch'
 baseline_commit: '421b591b619f7fa5160d8ff04983a45c3614fc2a'
 review_loop_iteration: 0

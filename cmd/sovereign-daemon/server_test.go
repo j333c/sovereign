@@ -5790,6 +5790,283 @@ func TestServer_AIPersonas_Endpoints(t *testing.T) {
 	}
 }
 
+type mockDaemonRAGInferenceClient struct {
+	answer string
+	err    error
+}
+
+func (m *mockDaemonRAGInferenceClient) Complete(ctx context.Context, req ai.ChatCompletionRequest) (*ai.ChatCompletionResponse, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	ans := m.answer
+	if ans == "" {
+		ans = "Your deductible for storm damage is $500, according to page 2 of Car Insurance Policy."
+	}
+	return &ai.ChatCompletionResponse{
+		ID: "chatcmpl-test-daemon-rag",
+		Choices: []ai.ChatCompletionChoice{
+			{
+				Index: 0,
+				Message: ai.ChatCompletionMessage{
+					Role:    "assistant",
+					Content: ans,
+				},
+				FinishReason: "stop",
+			},
+		},
+	}, nil
+}
+
+func setupPaperlessTestDB(t *testing.T, dataDir string) {
+	t.Helper()
+	docsDir := filepath.Join(dataDir, "documents", "data")
+	_ = os.MkdirAll(docsDir, 0755)
+
+	dbPath := filepath.Join(docsDir, "db.sqlite3")
+	dsn := fmt.Sprintf("%s?_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=busy_timeout(5000)", dbPath)
+	db, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		t.Fatalf("failed to open test sqlite db: %v", err)
+	}
+	defer db.Close()
+
+	createSQL := `
+	CREATE TABLE IF NOT EXISTS documents_document (
+		id INTEGER PRIMARY KEY,
+		title VARCHAR(128) NOT NULL,
+		content TEXT NOT NULL,
+		created DATETIME,
+		modified DATETIME
+	);`
+	if _, err := db.Exec(createSQL); err != nil {
+		t.Fatalf("failed to create documents_document: %v", err)
+	}
+
+	doc1 := "Sovereign Insurance Services. Policy number: POL-98231.\n\x0cPage 2: Deductibles and Limits.\nThe deductible for storm damage and hail is $500.\nCollision deductible is $1000."
+	doc2 := "Electricity Bill Q3 2026. Account ACC-44219. Total amount due: 184.50 EUR."
+
+	_, err = db.Exec("INSERT INTO documents_document (id, title, content, created, modified) VALUES (1, 'Car Insurance Policy', ?, datetime('now'), datetime('now')), (2, 'Electricity Bill Q3', ?, datetime('now'), datetime('now'));", doc1, doc2)
+	if err != nil {
+		t.Fatalf("failed to insert test documents: %v", err)
+	}
+}
+
+func TestServer_RAG_SearchAndQueryEndpoints(t *testing.T) {
+	srv, dataDir := setupTestServer(t)
+	defer srv.Close()
+
+	setupPaperlessTestDB(t, dataDir)
+
+	modelsDir := filepath.Join(dataDir, "models")
+	_ = os.MkdirAll(modelsDir, 0755)
+	createMockGGUFFile(t, modelsDir, "qwen2.5.gguf", 3)
+	_, _ = srv.serviceMgr.ActivateService(context.Background(), supervisor.ServiceLlama)
+
+	mockInference := &mockDaemonRAGInferenceClient{
+		answer: "Your deductible is $500, according to page 2 of Car Insurance Policy.",
+	}
+	srv.RAGEngine().SetInferenceClient(mockInference)
+
+	// 1. POST /api/v1/ai/rag/search
+	searchPayload := `{"query": "deductible on car insurance", "limit": 5, "language": "en"}`
+	reqSearch := httptest.NewRequest(http.MethodPost, "/api/v1/ai/rag/search", strings.NewReader(searchPayload))
+	reqSearch.Header.Set("Content-Type", "application/json")
+	wSearch := httptest.NewRecorder()
+	srv.router.ServeHTTP(wSearch, reqSearch)
+
+	if wSearch.Code != http.StatusOK {
+		t.Fatalf("expected HTTP 200 from RAG search, got %d: %s", wSearch.Code, wSearch.Body.String())
+	}
+
+	var searchRes ai.RAGSearchResponse
+	if err := json.Unmarshal(wSearch.Body.Bytes(), &searchRes); err != nil {
+		t.Fatalf("failed to decode search response: %v", err)
+	}
+
+	if searchRes.TotalMatches == 0 {
+		t.Fatalf("expected matches for 'deductible on car insurance', got 0")
+	}
+	if searchRes.Results[0].DocumentID != 1 {
+		t.Errorf("expected doc ID 1, got %d", searchRes.Results[0].DocumentID)
+	}
+	if searchRes.Results[0].PageNumber != 2 {
+		t.Errorf("expected page number 2, got %d", searchRes.Results[0].PageNumber)
+	}
+	if searchRes.Results[0].URL != "/docs/documents/1" {
+		t.Errorf("expected URL '/docs/documents/1', got %s", searchRes.Results[0].URL)
+	}
+
+	// 2. POST /api/v1/ai/rag/query
+	queryPayload := `{"query": "What is our deductible for storm damage on car insurance?", "language": "en"}`
+	reqQuery := httptest.NewRequest(http.MethodPost, "/api/v1/ai/rag/query", strings.NewReader(queryPayload))
+	reqQuery.Header.Set("Content-Type", "application/json")
+	wQuery := httptest.NewRecorder()
+	srv.router.ServeHTTP(wQuery, reqQuery)
+
+	if wQuery.Code != http.StatusOK {
+		t.Fatalf("expected HTTP 200 from RAG query, got %d: %s", wQuery.Code, wQuery.Body.String())
+	}
+
+	var queryRes ai.RAGQueryResponse
+	if err := json.Unmarshal(wQuery.Body.Bytes(), &queryRes); err != nil {
+		t.Fatalf("failed to decode query response: %v", err)
+	}
+
+	if !strings.Contains(queryRes.Answer, "$500") {
+		t.Errorf("expected answer to contain '$500', got: %s", queryRes.Answer)
+	}
+	if len(queryRes.Citations) == 0 {
+		t.Fatalf("expected citations in query response, got 0")
+	}
+	if queryRes.Citations[0].PageNumber != 2 {
+		t.Errorf("expected citation page number 2, got %d", queryRes.Citations[0].PageNumber)
+	}
+	if queryRes.Truncated {
+		t.Errorf("expected query not to be truncated")
+	}
+}
+
+func TestServer_RAG_ContextExceedsHeadroom_GermanNotice(t *testing.T) {
+	srv, dataDir := setupTestServer(t)
+	defer srv.Close()
+
+	docsDir := filepath.Join(dataDir, "documents", "data")
+	_ = os.MkdirAll(docsDir, 0755)
+	dbPath := filepath.Join(docsDir, "db.sqlite3")
+	dsn := fmt.Sprintf("%s?_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=busy_timeout(5000)", dbPath)
+	db, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		t.Fatalf("failed to open test sqlite db: %v", err)
+	}
+	defer db.Close()
+
+	_, _ = db.Exec(`CREATE TABLE IF NOT EXISTS documents_document (
+		id INTEGER PRIMARY KEY,
+		title VARCHAR(128) NOT NULL,
+		content TEXT NOT NULL,
+		created DATETIME,
+		modified DATETIME
+	);`)
+
+	// Insert 25 large documents matching query
+	heavyText := strings.Repeat("Klausel für Versicherungsvertrag und Hausratversicherung mit vielen Details. ", 60)
+	for i := 1; i <= 25; i++ {
+		_, _ = db.Exec("INSERT INTO documents_document (id, title, content, created, modified) VALUES (?, ?, ?, datetime('now'), datetime('now'));",
+			i, fmt.Sprintf("Versicherungspolice Band %d", i), heavyText)
+	}
+
+	modelsDir := filepath.Join(dataDir, "models")
+	_ = os.MkdirAll(modelsDir, 0755)
+	createMockGGUFFile(t, modelsDir, "qwen2.5.gguf", 3)
+	_, _ = srv.serviceMgr.ActivateService(context.Background(), supervisor.ServiceLlama)
+
+	mockInference := &mockDaemonRAGInferenceClient{
+		answer: "Die Selbstbeteiligung beträgt 500 Euro laut Police.",
+	}
+	srv.RAGEngine().SetInferenceClient(mockInference)
+
+	// POST /api/v1/ai/rag/query with context_tokens limited to 1200
+	queryPayload := `{"query": "Versicherungspolice", "language": "de", "context_tokens": 1200}`
+	reqQuery := httptest.NewRequest(http.MethodPost, "/api/v1/ai/rag/query", strings.NewReader(queryPayload))
+	reqQuery.Header.Set("Content-Type", "application/json")
+	wQuery := httptest.NewRecorder()
+	srv.router.ServeHTTP(wQuery, reqQuery)
+
+	if wQuery.Code != http.StatusOK {
+		t.Fatalf("expected HTTP 200 from RAG query exceeding headroom, got %d: %s", wQuery.Code, wQuery.Body.String())
+	}
+
+	var queryRes ai.RAGQueryResponse
+	if err := json.Unmarshal(wQuery.Body.Bytes(), &queryRes); err != nil {
+		t.Fatalf("failed to decode query response: %v", err)
+	}
+
+	if !queryRes.Truncated {
+		t.Errorf("expected truncated=true when excerpts exceed headroom")
+	}
+
+	expectedNoticeDE := "Hinweis: Dokumentenauszüge wurden priorisiert, um in das aktive Kontextfenster zu passen."
+	if queryRes.Notice != expectedNoticeDE {
+		t.Errorf("expected German notice %q, got %q", expectedNoticeDE, queryRes.Notice)
+	}
+
+	if !strings.Contains(queryRes.Answer, expectedNoticeDE) {
+		t.Errorf("expected answer to contain German notice, got: %s", queryRes.Answer)
+	}
+}
+
+func TestServer_RAG_UnprovisionedDatabase(t *testing.T) {
+	srv, _ := setupTestServer(t)
+	defer srv.Close()
+
+	// 1. Search against empty/unprovisioned database
+	searchPayload := `{"query": "insurance", "language": "en"}`
+	reqSearch := httptest.NewRequest(http.MethodPost, "/api/v1/ai/rag/search", strings.NewReader(searchPayload))
+	reqSearch.Header.Set("Content-Type", "application/json")
+	wSearch := httptest.NewRecorder()
+	srv.router.ServeHTTP(wSearch, reqSearch)
+
+	if wSearch.Code != http.StatusOK {
+		t.Fatalf("expected HTTP 200 from unprovisioned search, got %d: %s", wSearch.Code, wSearch.Body.String())
+	}
+
+	var searchRes ai.RAGSearchResponse
+	_ = json.Unmarshal(wSearch.Body.Bytes(), &searchRes)
+	if searchRes.TotalMatches != 0 {
+		t.Errorf("expected 0 matches, got %d", searchRes.TotalMatches)
+	}
+	expectedNotice := "Document archive database is unprovisioned or empty."
+	if searchRes.Notice != expectedNotice {
+		t.Errorf("expected notice %q, got %q", expectedNotice, searchRes.Notice)
+	}
+
+	// 2. Query against empty/unprovisioned database
+	queryPayload := `{"query": "insurance", "language": "en"}`
+	reqQuery := httptest.NewRequest(http.MethodPost, "/api/v1/ai/rag/query", strings.NewReader(queryPayload))
+	reqQuery.Header.Set("Content-Type", "application/json")
+	wQuery := httptest.NewRecorder()
+	srv.router.ServeHTTP(wQuery, reqQuery)
+
+	if wQuery.Code != http.StatusOK {
+		t.Fatalf("expected HTTP 200 from unprovisioned query, got %d: %s", wQuery.Code, wQuery.Body.String())
+	}
+
+	var queryRes ai.RAGQueryResponse
+	_ = json.Unmarshal(wQuery.Body.Bytes(), &queryRes)
+	if len(queryRes.Citations) != 0 {
+		t.Errorf("expected 0 citations, got %d", len(queryRes.Citations))
+	}
+	if queryRes.Notice != expectedNotice {
+		t.Errorf("expected notice %q, got %q", expectedNotice, queryRes.Notice)
+	}
+}
+
+func TestServer_RAG_SafeStub_WhenNoModel(t *testing.T) {
+	srv, dataDir := setupTestServer(t)
+	defer srv.Close()
+
+	setupPaperlessTestDB(t, dataDir)
+
+	// models directory is empty (no model provisioned)
+	queryPayload := `{"query": "deductible on car insurance", "language": "en"}`
+	reqQuery := httptest.NewRequest(http.MethodPost, "/api/v1/ai/rag/query", strings.NewReader(queryPayload))
+	reqQuery.Header.Set("Content-Type", "application/json")
+	wQuery := httptest.NewRecorder()
+	srv.router.ServeHTTP(wQuery, reqQuery)
+
+	if wQuery.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected HTTP 503 Safe Stub when no model provisioned, got %d: %s", wQuery.Code, wQuery.Body.String())
+	}
+
+	var prob ProblemDetails
+	_ = json.Unmarshal(wQuery.Body.Bytes(), &prob)
+	if prob.Status != http.StatusServiceUnavailable {
+		t.Errorf("expected problem status 503, got %d", prob.Status)
+	}
+}
+
+
 
 
 

@@ -66,6 +66,9 @@ export interface DashboardTranslations {
   personaCreativeDesc: string;
   personaTechSupportName: string;
   personaTechSupportDesc: string;
+  ragTruncationNotice: string;
+  ragNoDocumentsFound: string;
+  ragDbUnprovisionedNotice: string;
   connectingTelemetry: string;
   liveTelemetry: string;
   reconnecting: string;
@@ -168,6 +171,9 @@ export const translations: Record<Language, DashboardTranslations> = {
     personaCreativeDesc: "Brainstorming, storytelling, family celebration speeches, imaginative writing.",
     personaTechSupportName: "Technical Support",
     personaTechSupportDesc: "Practical step-by-step troubleshooting for home networking, electronics, and household appliances.",
+    ragTruncationNotice: "Note: Document excerpts were prioritized to fit your active context window.",
+    ragNoDocumentsFound: "No matching documents were found in your household archive to answer this question.",
+    ragDbUnprovisionedNotice: "Document archive database is unprovisioned or empty.",
     connectingTelemetry: "Connecting to telemetry stream...",
     liveTelemetry: "Live telemetry stream active",
     reconnecting: "Reconnecting to telemetry...",
@@ -268,6 +274,9 @@ export const translations: Record<Language, DashboardTranslations> = {
     personaCreativeDesc: "Brainstorming, Storytelling, Festtagsreden, kreative Geschichten und ideenreiche Texte.",
     personaTechSupportName: "Technischer Support",
     personaTechSupportDesc: "Praktische Schritt-für-Schritt-Fehlerbehebung für Heimnetzwerk, Elektronik und Haushaltsgeräte.",
+    ragTruncationNotice: "Hinweis: Dokumentenauszüge wurden priorisiert, um in das aktive Kontextfenster zu passen.",
+    ragNoDocumentsFound: "In Ihrem Dokumentenarchiv wurden keine passenden Dokumente gefunden, um diese Frage zu beantworten.",
+    ragDbUnprovisionedNotice: "Das Dokumentenarchiv ist noch nicht eingerichtet oder leer.",
     connectingTelemetry: "Verbinde mit Telemetriestrom...",
     liveTelemetry: "Live-Telemetriestrom aktiv",
     reconnecting: "Verbindung wird wiederhergestellt...",
@@ -368,6 +377,9 @@ export const translations: Record<Language, DashboardTranslations> = {
     personaCreativeDesc: "Lluvia de ideas, narraciones, discursos para celebraciones familiares y redacción creativa.",
     personaTechSupportName: "Soporte Técnico",
     personaTechSupportDesc: "Resolución de problemas paso a paso para redes domésticas, electrónica y electrodomésticos.",
+    ragTruncationNotice: "Nota: Los extractos de documentos se priorizaron para ajustarse a su ventana de contexto activa.",
+    ragNoDocumentsFound: "No se encontraron documentos coincidentes en su archivo para responder a esta pregunta.",
+    ragDbUnprovisionedNotice: "La base de datos del archivo de documentos no está aprovisionada o está vacía.",
     connectingTelemetry: "Conectando al flujo de telemetría...",
     liveTelemetry: "Flujo de telemetría en vivo activo",
     reconnecting: "Reconectando a telemetría...",
@@ -468,6 +480,9 @@ export const translations: Record<Language, DashboardTranslations> = {
     personaCreativeDesc: "Remue-méninges, narration, discours de fête de famille et écriture imaginative.",
     personaTechSupportName: "Support Technique",
     personaTechSupportDesc: "Dépannage pas à pas pour les réseaux domestiques, appareils connectés et équipements du foyer.",
+    ragTruncationNotice: "Remarque : Les extraits de documents ont été hiérarchisés pour s'adapter à votre fenêtre de contexte active.",
+    ragNoDocumentsFound: "Aucun document correspondant n'a été trouvé dans vos archives pour répondre à cette question.",
+    ragDbUnprovisionedNotice: "La base de données d'archives de documents n'est pas configurée ou est vide.",
     connectingTelemetry: "Connexion au flux de télémétrie...",
     liveTelemetry: "Flux de télémétrie en direct actif",
     reconnecting: "Reconnexion à la télémétrie...",

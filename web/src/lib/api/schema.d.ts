@@ -1102,6 +1102,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/ai/rag/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Search document archive
+         * @description Standalone document search endpoint returning ranked document matches, snippets, page numbers, and citation links.
+         */
+        post: operations["searchRAG"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/ai/rag/query": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Query document archive with Single-Source-of-Truth RAG
+         * @description Orchestrates document retrieval, context truncation, prompt synthesis with citations, and inference execution via the AI Gateway.
+         */
+        post: operations["queryRAG"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -2246,6 +2286,76 @@ export interface components {
         };
         PromptsResponse: {
             prompts: components["schemas"]["PromptTemplate"][];
+        };
+        RAGSearchRequest: {
+            /** @example deductible on car insurance */
+            query: string;
+            /**
+             * @default 5
+             * @example 5
+             */
+            limit: number;
+            /**
+             * @example en
+             * @enum {string}
+             */
+            language?: "en" | "de" | "es" | "fr";
+        };
+        RAGSearchResult: {
+            /** @example 1 */
+            document_id: number;
+            /** @example Car Insurance Policy */
+            title: string;
+            /** @example 4 */
+            page_number: number;
+            /** @example ...deductible for storm damage is $500... */
+            snippet: string;
+            /**
+             * Format: double
+             * @example -1.25
+             */
+            score: number;
+            /** @example /docs/documents/1 */
+            url: string;
+        };
+        RAGSearchResponse: {
+            /** @example deductible on car insurance */
+            query: string;
+            /** @example 1 */
+            total_matches: number;
+            results: components["schemas"]["RAGSearchResult"][];
+            /** @example  */
+            notice?: string;
+        };
+        RAGQueryRequest: {
+            /** @example What is our current deductible for storm damage on our home insurance? */
+            query: string;
+            /**
+             * @example en
+             * @enum {string}
+             */
+            language?: "en" | "de" | "es" | "fr";
+            /** @example qwen2.5-7b */
+            model?: string;
+            /**
+             * @default 512
+             * @example 512
+             */
+            max_tokens: number;
+            /**
+             * @default 4096
+             * @example 4096
+             */
+            context_tokens: number;
+        };
+        RAGQueryResponse: {
+            /** @example Your deductible is $500, according to page 4 of Car Insurance Policy. */
+            answer: string;
+            citations: components["schemas"]["RAGSearchResult"][];
+            /** @example false */
+            truncated: boolean;
+            /** @example  */
+            notice?: string;
         };
     };
     responses: never;
@@ -4496,6 +4606,72 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PromptsResponse"];
+                };
+            };
+        };
+    };
+    searchRAG: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RAGSearchRequest"];
+            };
+        };
+        responses: {
+            /** @description Ranked document matches with page numbers and citations. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RAGSearchResponse"];
+                };
+            };
+            /** @description Document search error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    queryRAG: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RAGQueryRequest"];
+            };
+        };
+        responses: {
+            /** @description Synthesized response with exact document citations. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RAGQueryResponse"];
+                };
+            };
+            /** @description AI Gateway or model unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
                 };
             };
         };
