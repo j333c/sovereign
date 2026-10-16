@@ -1641,8 +1641,14 @@ func (s *Server) handleOpticalKeys(w http.ResponseWriter, r *http.Request) {
 	var content []byte
 	contentType := r.Header.Get("Content-Type")
 
+	const maxKeyUploadSize = 10 << 20 // 10MB
+	if r.ContentLength > maxKeyUploadSize {
+		s.writeProblem(w, http.StatusRequestEntityTooLarge, "Payload Too Large", "Key file payload exceeds 10MB limit", r.URL.Path)
+		return
+	}
+
 	if strings.HasPrefix(contentType, "multipart/form-data") {
-		if err := r.ParseMultipartForm(10 << 20); err != nil {
+		if err := r.ParseMultipartForm(maxKeyUploadSize); err != nil {
 			s.writeProblem(w, http.StatusBadRequest, "Invalid Form", "Failed to parse multipart form: "+err.Error(), r.URL.Path)
 			return
 		}
@@ -1673,9 +1679,13 @@ func (s *Server) handleOpticalKeys(w http.ResponseWriter, r *http.Request) {
 		}
 	} else {
 		var readErr error
-		content, readErr = io.ReadAll(io.LimitReader(r.Body, 10<<20))
+		content, readErr = io.ReadAll(io.LimitReader(r.Body, maxKeyUploadSize+1))
 		if readErr != nil {
 			s.writeProblem(w, http.StatusBadRequest, "Read Error", "Failed to read request body: "+readErr.Error(), r.URL.Path)
+			return
+		}
+		if len(content) > maxKeyUploadSize {
+			s.writeProblem(w, http.StatusRequestEntityTooLarge, "Payload Too Large", "Key file payload exceeds 10MB limit", r.URL.Path)
 			return
 		}
 	}

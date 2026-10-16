@@ -2,7 +2,7 @@
 title: 'Story 3.1: Optical Drive Detection & Automated Disc Ripping Engine'
 type: 'feature'
 created: '2026-10-15'
-status: 'review'
+status: 'done'
 route: 'dispatch'
 baseline_commit: '36cce8a399872d46c7ec42d187cc7fe52e8066a2'
 review_loop_iteration: 0
@@ -113,7 +113,26 @@ context:
 ## Spec Change Log
 
 - Status transitioned from `in-progress` to `review`.
+- Status transitioned from `review` to `done` after 3-layer review triage and verification.
 
 ## Review Triage Log
 
-*(To be populated during code review)*
+- **Layer 1: Blind Hunter**:
+  - Implemented cancellation propagation (`ripCancel context.CancelFunc`) in `OpticalRipper.Eject()` and `Close()` to immediately abort active rip loops without waiting on retries.
+  - Added staging directory cleanup (`os.RemoveAll(stagingTarget)`) upon hard read failures to avoid leaving corrupt staging files on disk.
+  - Added 10MB maximum request size limit on `POST /api/v1/optical/keys` returning RFC 7807 `413 Payload Too Large`. Documented 413, 401, 403 in `api/openapi.yaml`.
+  - Upgraded collision suffix in staging directory generation from truncated high-order timestamp to cryptographic random hex (`crypto/rand`).
+- **Layer 2: Edge Case Hunter**:
+  - Retained multiple processing keys (`PK_%d_%s`, `DK_%d_%s`, `HC_%d_%s`) instead of overwriting a single `"PK"` in `KEYDBManager`.
+  - Added strict hex string validation (`isHexString`) in `KEYDBManager` to reject malformed key entries.
+  - Added deterministic fallback ID generation (`unlabeled_type_size` / `unlabeled_type_timestamp`) when label and UUID are empty, preventing infinite re-ripping loops.
+  - Added sysfs fallback (`/sys/class/block/srX/size`) in `LinuxOpticalDriver` to reliably detect Audio CDs (CD-DA) when `blkid` exits non-zero.
+  - Configured `RipDisc` to produce `track01.cdda` for `DiscTypeCD`.
+  - Added tray reset delay (`ejectResetDelay`) so UI can observe `"Auto-ejecting disc"` status before resetting to idle, with `SetEjectResetDelay(0)` for unit testing.
+  - Preserved `StatePaused` across polling intervals until storage headroom is restored.
+  - Fixed exact consumer microcopy for `NoticeStorageLow`: `"Optical ripping paused: storage capacity is below 10%. Please free up space to continue."`.
+- **Layer 3: Verification Gap Reviewer**:
+  - Fixed polling loop lifecycle management using `sync.WaitGroup` to eliminate deadlocks when `Close()` was called on unstarted rippers.
+  - Created comprehensive `internal/optical/driver_test.go` verifying `parseBlkidOutput`, sysfs Audio CD fallback, mock driver behaviors, and boundary device path regex rejection (`/dev/sda`, shell injections).
+  - Added unit tests for cancellation, staging cleanup on hard failure, background polling loop, existing key loading from disk, and headroom checker in `internal/optical/ripper_test.go`.
+  - Added integration tests for 10MB payload limit (413) and active ripping telemetry stream verification (`"Ripping (42%)"`, `"Auto-ejecting disc"`) in `cmd/sovereign-daemon/server_test.go`.

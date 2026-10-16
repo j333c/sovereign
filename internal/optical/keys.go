@@ -88,17 +88,23 @@ func (m *KEYDBManager) HasKeyForDisc(discID string) bool {
 	if !m.hasKeys {
 		return false
 	}
-	// If the database has global processing keys (PK), it can decrypt general discs
-	if _, ok := m.cachedKeys["PK"]; ok {
-		return true
-	}
-	if discID == "" {
-		return m.hasKeys
+
+	// 1. Check if the specific disc ID matches
+	if discID != "" {
+		normalized := normalizeDiscID(discID)
+		if _, found := m.cachedKeys[normalized]; found {
+			return true
+		}
 	}
 
-	normalized := normalizeDiscID(discID)
-	_, found := m.cachedKeys[normalized]
-	return found
+	// 2. Check if global processing keys (PK) exist to derive VUK
+	for k := range m.cachedKeys {
+		if strings.HasPrefix(k, "PK") {
+			return true
+		}
+	}
+
+	return false
 }
 
 // GetInfo returns the status and metrics of the current KEYDB.cfg.
@@ -241,6 +247,9 @@ func (m *KEYDBManager) reload() error {
 func parseKeyDBContent(content []byte) (map[string]string, error) {
 	keys := make(map[string]string)
 	scanner := bufio.NewScanner(bytes.NewReader(content))
+	pkCount := 0
+	dkCount := 0
+	hcCount := 0
 
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
@@ -259,7 +268,7 @@ func parseKeyDBContent(content []byte) (map[string]string, error) {
 				rawID := strings.TrimSpace(parts[0])
 				meta := strings.TrimSpace(parts[1])
 				normID := normalizeDiscID(rawID)
-				if normID != "" {
+				if normID != "" && isHexString(normID) {
 					keys[normID] = meta
 					continue
 				}
@@ -268,20 +277,35 @@ func parseKeyDBContent(content []byte) (map[string]string, error) {
 
 		// Processing Key: PK 0x...
 		if strings.HasPrefix(line, "PK ") || strings.HasPrefix(line, "PK\t") {
-			keys["PK"] = strings.TrimSpace(line)
-			continue
+			keyVal := strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(line, "PK "), "\t"))
+			keyVal = strings.TrimPrefix(strings.TrimPrefix(keyVal, "0x"), "0X")
+			if isHexString(keyVal) {
+				pkCount++
+				keys[fmt.Sprintf("PK_%d_%s", pkCount, keyVal)] = line
+				continue
+			}
 		}
 
 		// Device Key: DK 0x...
 		if strings.HasPrefix(line, "DK ") || strings.HasPrefix(line, "DK\t") {
-			keys["DK"] = strings.TrimSpace(line)
-			continue
+			keyVal := strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(line, "DK "), "\t"))
+			keyVal = strings.TrimPrefix(strings.TrimPrefix(keyVal, "0x"), "0X")
+			if isHexString(keyVal) {
+				dkCount++
+				keys[fmt.Sprintf("DK_%d_%s", dkCount, keyVal)] = line
+				continue
+			}
 		}
 
 		// Host Certificate: HC 0x...
 		if strings.HasPrefix(line, "HC ") || strings.HasPrefix(line, "HC\t") {
-			keys["HC"] = strings.TrimSpace(line)
-			continue
+			keyVal := strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(line, "HC "), "\t"))
+			keyVal = strings.TrimPrefix(strings.TrimPrefix(keyVal, "0x"), "0X")
+			if isHexString(keyVal) {
+				hcCount++
+				keys[fmt.Sprintf("HC_%d_%s", hcCount, keyVal)] = line
+				continue
+			}
 		}
 	}
 
@@ -298,4 +322,20 @@ func normalizeDiscID(id string) string {
 	id = strings.TrimPrefix(id, "0x")
 	id = strings.TrimPrefix(id, "0X")
 	return strings.ToLower(id)
+}
+
+func isHexString(s string) bool {
+	s = strings.TrimPrefix(s, "0x")
+	s = strings.TrimPrefix(s, "0X")
+	if len(s) == 0 {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F') {
+			continue
+		}
+		return false
+	}
+	return true
 }

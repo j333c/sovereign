@@ -2,6 +2,9 @@ package optical
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -31,7 +34,7 @@ const (
 
 	NoticeMissingKeys = "This Blu-ray disc requires decryption keys to read. Please upload your key file in Settings, or use an unencrypted disc."
 	NoticeReadFailed  = "Disc reading failed after multiple attempts. The disc has been safely ejected."
-	NoticeStorageLow  = "Transcoding paused: storage capacity is below 10%. Please free up space to continue."
+	NoticeStorageLow  = "Optical ripping paused: storage capacity is below 10%. Please free up space to continue."
 )
 
 // OpticalStatus represents the public state of the optical ripper engine.
@@ -81,6 +84,7 @@ type OpticalRipper struct {
 	mu                sync.RWMutex
 	status            OpticalStatus
 	lastProcessedDisc string
+	ripCancel         context.CancelFunc
 	stopChan          chan struct{}
 	wg                sync.WaitGroup
 	closeOnce         sync.Once
@@ -112,6 +116,11 @@ func NewOpticalRipper(cfg RipperConfig) *OpticalRipper {
 	}
 	if cfg.RetryDelay <= 0 {
 		cfg.RetryDelay = 100 * time.Millisecond
+	}
+	if cfg.EjectResetDelay < 0 {
+		cfg.EjectResetDelay = 0
+	} else if cfg.EjectResetDelay == 0 {
+		cfg.EjectResetDelay = 2 * time.Second
 	}
 
 	keysActive := cfg.KeyMgr != nil && cfg.KeyMgr.HasKeys()
@@ -169,6 +178,13 @@ func (r *OpticalRipper) KeyManager() *KEYDBManager {
 	return r.keyMgr
 }
 
+// SetEjectResetDelay updates the post-eject status reset delay (used for testing).
+func (r *OpticalRipper) SetEjectResetDelay(d time.Duration) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.ejectResetDelay = d
+}
+
 // Start launches the continuous background hardware polling loop.
 func (r *OpticalRipper) Start(ctx context.Context) {
 	r.mu.Lock()
@@ -185,6 +201,13 @@ func (r *OpticalRipper) Start(ctx context.Context) {
 
 // Close gracefully terminates the background supervisor loop.
 func (r *OpticalRipper) Close() error {
+	r.mu.Lock()
+	cancel := r.ripCancel
+	r.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+
 	r.closeOnce.Do(func() {
 		close(r.stopChan)
 	})
@@ -195,8 +218,12 @@ func (r *OpticalRipper) Close() error {
 // Eject issues an immediate manual tray ejection and resets state to idle.
 func (r *OpticalRipper) Eject(ctx context.Context) error {
 	r.mu.Lock()
+	cancel := r.ripCancel
 	r.lastProcessedDisc = ""
 	r.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
 
 	err := r.driver.Eject(ctx)
 	r.setStatus(StateIdle, StatusTextIdle, DiscInfo{Inserted: false, DiscType: DiscTypeNone}, 0, "", "")
@@ -268,12 +295,14 @@ func (r *OpticalRipper) PollOnce(ctx context.Context) {
 		r.status.DiscType = DiscTypeNone
 		r.status.DiscLabel = ""
 		r.status.DiscID = ""
-		if r.status.State != StateRipping && r.status.State != StateEjecting {
+		if r.status.State != StateRipping && r.status.State != StateEjecting && r.status.State != StatePaused {
 			r.status.State = StateIdle
 			r.status.StatusText = StatusTextIdle
 			r.status.Progress = 0.0
 		}
-		r.lastProcessedDisc = ""
+		if !driveStatus.TrayOpen && r.status.State != StatePaused {
+			r.lastProcessedDisc = ""
+		}
 		r.mu.Unlock()
 		return
 	}
@@ -282,6 +311,14 @@ func (r *OpticalRipper) PollOnce(ctx context.Context) {
 	discID := disc.ID
 	if discID == "" {
 		discID = disc.Label
+	}
+	if discID == "" {
+		if disc.SizeBytes > 0 {
+			discID = fmt.Sprintf("unlabeled_%s_%d", disc.DiscType, disc.SizeBytes)
+		} else {
+			discID = fmt.Sprintf("unlabeled_%s_%d", disc.DiscType, time.Now().Unix())
+		}
+		disc.ID = discID
 	}
 
 	// Avoid re-triggering an already handled disc while tray remains closed
@@ -307,7 +344,11 @@ func (r *OpticalRipper) handleDiscInsertion(ctx context.Context, disc DiscInfo) 
 		discID = disc.Label
 	}
 	if discID == "" {
-		discID = fmt.Sprintf("disc_%d", time.Now().Unix())
+		if disc.SizeBytes > 0 {
+			discID = fmt.Sprintf("unlabeled_%s_%d", disc.DiscType, disc.SizeBytes)
+		} else {
+			discID = fmt.Sprintf("unlabeled_%s_%d", disc.DiscType, time.Now().Unix())
+		}
 		disc.ID = discID
 	}
 
@@ -329,8 +370,8 @@ func (r *OpticalRipper) handleDiscInsertion(ctx context.Context, disc DiscInfo) 
 		r.logger.Warn("storage headroom below 10% safety floor, pausing optical import", "free_percent", freePct*100)
 		r.setStatus(StatePaused, StatusTextStorageLow, disc, 0.0, "", NoticeStorageLow)
 		r.broadcast("optical.alert", map[string]any{
-			"type":    "storage_low",
-			"notice":  NoticeStorageLow,
+			"type":     "storage_low",
+			"notice":   NoticeStorageLow,
 			"free_pct": freePct,
 		})
 		_ = r.driver.Eject(ctx)
@@ -346,7 +387,7 @@ func (r *OpticalRipper) handleDiscInsertion(ctx context.Context, disc DiscInfo) 
 
 	// Step 3: Commercial encrypted Blu-ray AACS key validation
 	if disc.DiscType == DiscTypeBluray && disc.Encrypted {
-		keysAvailable := r.keyMgr != nil && (r.keyMgr.HasKeyForDisc(discID) || r.keyMgr.HasKeys())
+		keysAvailable := r.keyMgr != nil && r.keyMgr.HasKeyForDisc(discID)
 		if !keysAvailable {
 			r.logger.Info("commercial encrypted Blu-ray inserted without decryption keys, auto-ejecting", "disc_id", discID)
 			r.setStatus(StateEjecting, StatusTextKeysRequired, disc, 0.0, "", NoticeMissingKeys)
@@ -378,8 +419,9 @@ func (r *OpticalRipper) handleDiscInsertion(ctx context.Context, disc DiscInfo) 
 	// Unique hashing: Never overwrite existing ripped staging archives without unique ID hashing
 	stagingTarget := filepath.Join(r.stagingDir, discID)
 	if _, err := os.Stat(stagingTarget); err == nil {
-		uniqueSuffix := fmt.Sprintf("%d", time.Now().UnixNano())
-		stagingTarget = filepath.Join(r.stagingDir, fmt.Sprintf("%s-%s", discID, uniqueSuffix[:8]))
+		randBytes := make([]byte, 4)
+		_, _ = rand.Read(randBytes)
+		stagingTarget = filepath.Join(r.stagingDir, fmt.Sprintf("%s-%s", discID, hex.EncodeToString(randBytes)))
 	}
 
 	if err := os.MkdirAll(stagingTarget, 0755); err != nil {
@@ -388,7 +430,18 @@ func (r *OpticalRipper) handleDiscInsertion(ctx context.Context, disc DiscInfo) 
 		return
 	}
 
-	// Step 5: Execute ripping with maximum 3 retries on read/scratch errors
+	// Step 5: Execute ripping with active context cancellation and maximum 3 retries on read/scratch errors
+	ripCtx, ripCancel := context.WithCancel(ctx)
+	r.mu.Lock()
+	r.ripCancel = ripCancel
+	r.mu.Unlock()
+	defer func() {
+		r.mu.Lock()
+		r.ripCancel = nil
+		r.mu.Unlock()
+		ripCancel()
+	}()
+
 	r.setStatus(StateRipping, "Ripping (0%)", disc, 0.0, "", "")
 	r.broadcast("optical.rip_progress", map[string]any{
 		"disc_id":  discID,
@@ -398,12 +451,13 @@ func (r *OpticalRipper) handleDiscInsertion(ctx context.Context, disc DiscInfo) 
 	var ripErr error
 	for attempt := 1; attempt <= 3; attempt++ {
 		select {
-		case <-ctx.Done():
-			return
+		case <-ripCtx.Done():
+			ripErr = ripCtx.Err()
+			break
 		default:
 		}
 
-		ripErr = r.driver.RipDisc(ctx, disc, stagingTarget, func(pct float64) {
+		ripErr = r.driver.RipDisc(ripCtx, disc, stagingTarget, func(pct float64) {
 			r.mu.Lock()
 			r.status.Progress = pct
 			r.status.StatusText = fmt.Sprintf("Ripping (%.0f%%)", pct)
@@ -418,11 +472,16 @@ func (r *OpticalRipper) handleDiscInsertion(ctx context.Context, disc DiscInfo) 
 			break
 		}
 
+		if errors.Is(ripErr, context.Canceled) || ripCtx.Err() != nil {
+			break
+		}
+
 		r.logger.Warn("read error during disc ripping, retrying", "attempt", attempt, "max", 3, "error", ripErr)
 		if attempt < 3 {
 			select {
-			case <-ctx.Done():
-				return
+			case <-ripCtx.Done():
+				ripErr = ripCtx.Err()
+				break
 			case <-time.After(r.retryDelay):
 			}
 		}
@@ -430,6 +489,14 @@ func (r *OpticalRipper) handleDiscInsertion(ctx context.Context, disc DiscInfo) 
 
 	// Step 6: Handle read failure or rip completion
 	if ripErr != nil {
+		// Clean up partial staging directory on failure
+		_ = os.RemoveAll(stagingTarget)
+
+		if errors.Is(ripErr, context.Canceled) {
+			r.setStatus(StateIdle, StatusTextIdle, DiscInfo{Inserted: false, DiscType: DiscTypeNone}, 0.0, "", "")
+			return
+		}
+
 		r.logger.Error("disc read failed after 3 attempts, auto-ejecting tray", "disc_id", discID, "error", ripErr)
 		r.setStatus(StateError, StatusTextReadError, disc, 0.0, ripErr.Error(), NoticeReadFailed)
 		r.broadcast("optical.read_failed", map[string]any{

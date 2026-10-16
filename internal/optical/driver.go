@@ -110,6 +110,22 @@ func (d *LinuxOpticalDriver) GetDriveStatus(ctx context.Context) (DriveStatus, e
 	cmd := exec.CommandContext(ctx, "blkid", "-c", "/dev/null", "-o", "export", d.devicePath)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
+		// blkid returned non-zero. Check sysfs to see if an Audio CD (CD-DA with no filesystem) is present
+		devName := filepath.Base(d.devicePath)
+		sizeBytes, sErr := os.ReadFile(fmt.Sprintf("/sys/class/block/%s/size", devName))
+		if sErr == nil && strings.TrimSpace(string(sizeBytes)) != "0" && strings.TrimSpace(string(sizeBytes)) != "" {
+			disc := DiscInfo{
+				Inserted: true,
+				DiscType: DiscTypeCD,
+				Label:    "Audio CD",
+				ID:       fmt.Sprintf("cdda_%s", devName),
+			}
+			d.trayOpen = false
+			status.TrayOpen = false
+			status.Disc = disc
+			return status, nil
+		}
+
 		// No readable media or tray empty
 		status.Disc = DiscInfo{
 			Inserted: false,
@@ -143,7 +159,16 @@ func parseBlkidOutput(output string) DiscInfo {
 			disc.ID = strings.TrimPrefix(line, "UUID=")
 		} else if strings.HasPrefix(line, "TYPE=") {
 			fsType = strings.ToLower(strings.TrimPrefix(line, "TYPE="))
+		} else if strings.HasPrefix(line, "SEC_TYPE=") {
+			if strings.Contains(strings.ToLower(line), "aacs") {
+				disc.Encrypted = true
+			}
 		}
+	}
+
+	upperOutput := strings.ToUpper(output)
+	if strings.Contains(upperOutput, "AACS") || strings.Contains(upperOutput, "ENCRYPTED=1") {
+		disc.Encrypted = true
 	}
 
 	switch fsType {
@@ -151,6 +176,10 @@ func parseBlkidOutput(output string) DiscInfo {
 		disc.DiscType = DiscTypeDVD
 	case "udf":
 		disc.DiscType = DiscTypeBluray
+		// In commercial Blu-rays, UDF filesystem with BD or AACS
+		if strings.Contains(upperOutput, "AACS") || strings.Contains(upperOutput, "ENCRYPTED") || strings.Contains(upperOutput, "BD") {
+			disc.Encrypted = true
+		}
 	default:
 		if disc.Label != "" {
 			disc.DiscType = DiscTypeDVD
@@ -160,7 +189,11 @@ func parseBlkidOutput(output string) DiscInfo {
 	}
 
 	if disc.ID == "" {
-		disc.ID = strings.ToLower(strings.ReplaceAll(disc.Label, " ", "_"))
+		if disc.Label != "" {
+			disc.ID = strings.ToLower(strings.ReplaceAll(disc.Label, " ", "_"))
+		} else if disc.DiscType == DiscTypeCD {
+			disc.ID = "audio_cd"
+		}
 	}
 
 	return disc
@@ -179,6 +212,7 @@ func (d *LinuxOpticalDriver) Eject(ctx context.Context) error {
 	cmd := exec.CommandContext(ctx, "eject", d.devicePath)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		d.logger.Warn("eject command returned error", "device", d.devicePath, "error", err, "output", string(out))
+		return fmt.Errorf("eject failed: %w", err)
 	}
 	d.trayOpen = true
 	return nil
@@ -197,6 +231,7 @@ func (d *LinuxOpticalDriver) CloseTray(ctx context.Context) error {
 	cmd := exec.CommandContext(ctx, "eject", "-t", d.devicePath)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		d.logger.Warn("eject -t command returned error", "device", d.devicePath, "error", err, "output", string(out))
+		return fmt.Errorf("close tray failed: %w", err)
 	}
 	d.trayOpen = false
 	return nil
@@ -213,6 +248,9 @@ func (d *LinuxOpticalDriver) RipDisc(ctx context.Context, disc DiscInfo, destDir
 	}
 
 	destFile := filepath.Join(destDir, "disc.iso")
+	if disc.DiscType == DiscTypeCD {
+		destFile = filepath.Join(destDir, "track01.cdda")
+	}
 	d.logger.Info("starting optical disc rip to staging", "device", d.devicePath, "dest", destFile)
 
 	// Stream read with bounded buffer and cancellation support

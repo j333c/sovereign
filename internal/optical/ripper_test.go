@@ -29,7 +29,7 @@ func setupTestRipper(t *testing.T) (*OpticalRipper, *MockOpticalDriver, *KEYDBMa
 		KeyMgr:          keyMgr,
 		PollingInterval: 20 * time.Millisecond,
 		RetryDelay:      10 * time.Millisecond,
-		EjectResetDelay: 0,
+		EjectResetDelay: -1,
 		HeadroomChecker: func(path string) (float64, error) {
 			return 0.50, nil // 50% free space by default
 		},
@@ -297,6 +297,7 @@ func TestOpticalRipper_StorageHeadroomGuard(t *testing.T) {
 		Driver:          driver,
 		KeyMgr:          keyMgr,
 		PollingInterval: 20 * time.Millisecond,
+		EjectResetDelay: -1,
 		EventBroadcaster: func(event string, data any) {
 			if event == "optical.alert" {
 				if m, ok := data.(map[string]any); ok {
@@ -486,3 +487,191 @@ PK 0x0123456789ABCDEF0123456789ABCDEF
 		t.Errorf("expected info.Exists true and 3 keys, got: %+v", info)
 	}
 }
+
+// TestOpticalRipper_BackgroundPollingLoop verifies that ripper.Start(ctx) continuously
+// polls the driver and detects inserted media asynchronously without manual PollOnce calls.
+func TestOpticalRipper_BackgroundPollingLoop(t *testing.T) {
+	ripper, driver, _, dataDir := setupTestRipper(t)
+
+	var detectedDiscID string
+	var mu sync.Mutex
+	done := make(chan struct{})
+
+	ripper.SetEventBroadcaster(func(event string, data any) {
+		if event == "optical.disc_detected" {
+			mu.Lock()
+			if m, ok := data.(map[string]any); ok {
+				detectedDiscID = fmt.Sprintf("%v", m["id"])
+			}
+			mu.Unlock()
+		} else if event == "optical.disc_ejected" {
+			select {
+			case <-done:
+			default:
+				close(done)
+			}
+		}
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	ripper.Start(ctx)
+	defer ripper.Close()
+
+	disc := DiscInfo{
+		DiscType:  DiscTypeDVD,
+		Label:     "ASYNC_MOVIE",
+		ID:        "async_movie_123",
+		Encrypted: false,
+	}
+
+	// Insert disc while background loop is running
+	driver.InsertDisc(disc)
+
+	select {
+	case <-done:
+		// Succeeded
+	case <-time.After(2 * time.Second):
+		t.Fatalf("timed out waiting for background polling loop to process disc")
+	}
+
+	mu.Lock()
+	id := detectedDiscID
+	mu.Unlock()
+
+	if id != disc.ID {
+		t.Errorf("expected detected disc ID %q, got %q", disc.ID, id)
+	}
+
+	expectedFile := filepath.Join(dataDir, "media", "staging", "discs", disc.ID, "disc.iso")
+	if _, err := os.Stat(expectedFile); err != nil {
+		t.Errorf("expected staged file %q: %v", expectedFile, err)
+	}
+}
+
+// TestOpticalRipper_EjectCancelsActiveRip verifies that calling Eject during an in-flight
+// rip cancels reading immediately without performing remaining retries.
+func TestOpticalRipper_EjectCancelsActiveRip(t *testing.T) {
+	ripper, driver, _, _ := setupTestRipper(t)
+
+	ripStarted := make(chan struct{})
+	driver.SetOnRip(func(ctx context.Context, disc DiscInfo, destDir string, progressCb func(percent float64)) error {
+		select {
+		case <-ripStarted:
+		default:
+			close(ripStarted)
+		}
+		// Block until cancelled
+		<-ctx.Done()
+		return ctx.Err()
+	})
+
+	disc := DiscInfo{
+		DiscType:  DiscTypeDVD,
+		Label:     "LONG_RIP",
+		ID:        "long_rip_disc",
+		Encrypted: false,
+	}
+	driver.InsertDisc(disc)
+
+	ripDone := make(chan struct{})
+	go func() {
+		ripper.PollOnce(context.Background())
+		close(ripDone)
+	}()
+
+	select {
+	case <-ripStarted:
+	case <-time.After(1 * time.Second):
+		t.Fatalf("timed out waiting for rip to start")
+	}
+
+	// Calling Eject should cancel in-flight rip immediately
+	if err := ripper.Eject(context.Background()); err != nil {
+		t.Fatalf("unexpected error during eject: %v", err)
+	}
+
+	select {
+	case <-ripDone:
+		// Successful cancellation
+	case <-time.After(1 * time.Second):
+		t.Fatalf("PollOnce did not terminate quickly after eject")
+	}
+
+	st := ripper.GetStatus()
+	if st.State != StateIdle {
+		t.Errorf("expected state idle after eject, got %q", st.State)
+	}
+}
+
+// TestOpticalRipper_HardFailureCleansStaging verifies that when ripping fails after 3 retries,
+// partial files in the staging directory are completely cleaned up.
+func TestOpticalRipper_HardFailureCleansStaging(t *testing.T) {
+	ripper, driver, _, dataDir := setupTestRipper(t)
+
+	driver.SetOnRip(func(ctx context.Context, disc DiscInfo, destDir string, progressCb func(percent float64)) error {
+		_ = os.MkdirAll(destDir, 0755)
+		_ = os.WriteFile(filepath.Join(destDir, "partial.iso"), []byte("partial data"), 0644)
+		return errors.New("unrecoverable laser read error")
+	})
+
+	disc := DiscInfo{
+		DiscType:  DiscTypeDVD,
+		Label:     "CORRUPT_DISC",
+		ID:        "corrupt_disc_99",
+		Encrypted: false,
+	}
+	driver.InsertDisc(disc)
+
+	ripper.PollOnce(context.Background())
+
+	stagingTarget := filepath.Join(dataDir, "media", "staging", "discs", disc.ID)
+	if _, err := os.Stat(stagingTarget); !os.IsNotExist(err) {
+		t.Errorf("expected partial staging directory %q to be deleted on hard failure: %v", stagingTarget, err)
+	}
+}
+
+// TestKEYDBManager_LoadExistingFromDisk verifies that KEYDBManager loads existing keys
+// on startup from disk.
+func TestKEYDBManager_LoadExistingFromDisk(t *testing.T) {
+	tempDir := t.TempDir()
+	keyPath := filepath.Join(tempDir, "state", "keys", "KEYDB.cfg")
+	_ = os.MkdirAll(filepath.Dir(keyPath), 0755)
+
+	content := []byte(`
+PK 0x0123456789ABCDEF0123456789ABCDEF
+0xAABBCCDDEEFF00112233445566778899 = Preloaded Title | V | 0x11223344556677889900AABBCCDDEEFF
+`)
+	if err := os.WriteFile(keyPath, content, 0644); err != nil {
+		t.Fatalf("failed to write test keydb: %v", err)
+	}
+
+	mgr := NewKEYDBManager(keyPath, nil)
+	if !mgr.HasKeys() {
+		t.Errorf("expected HasKeys() to be true for pre-existing keydb on disk")
+	}
+	if mgr.KeyCount() != 2 {
+		t.Errorf("expected 2 keys loaded on startup, got %d", mgr.KeyCount())
+	}
+	if !mgr.HasKeyForDisc("aabbccddeeff00112233445566778899") {
+		t.Errorf("expected HasKeyForDisc to be true for preloaded title")
+	}
+}
+
+// TestDefaultHeadroomChecker verifies that defaultHeadroomChecker calculates free ratio
+// and handles non-existent paths by checking parent directories.
+func TestDefaultHeadroomChecker(t *testing.T) {
+	tempDir := t.TempDir()
+	nestedNonExistent := filepath.Join(tempDir, "a", "b", "c")
+
+	ratio, err := defaultHeadroomChecker(nestedNonExistent)
+	if err != nil {
+		t.Fatalf("defaultHeadroomChecker failed for %s: %v", nestedNonExistent, err)
+	}
+
+	if ratio <= 0.0 || ratio > 1.0 {
+		t.Errorf("expected headroom ratio between 0 and 1, got %f", ratio)
+	}
+}
+

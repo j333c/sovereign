@@ -52,6 +52,10 @@ func setupTestServer(t *testing.T) (*Server, string) {
 		t.Fatalf("failed to create test server: %v", err)
 	}
 
+	if srv.OpticalRipper() != nil {
+		srv.OpticalRipper().SetEjectResetDelay(0)
+	}
+
 	return srv, dataDir
 }
 
@@ -3037,5 +3041,211 @@ func TestServer_Optical_SSE_TelemetryStream(t *testing.T) {
 	}
 }
 
+func TestServer_Optical_Keys_Upload_PayloadTooLarge(t *testing.T) {
+	srv, _ := setupTestServer(t)
+	defer srv.Close()
 
+	// 1. Raw text body exceeding 10MB limit
+	const largeSize = 10<<20 + 1024 // 10MB + 1KB
+	largePayload := make([]byte, largeSize)
+	for i := range largePayload {
+		largePayload[i] = 'A'
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/optical/keys", bytes.NewReader(largePayload))
+	req.Header.Set("Content-Type", "text/plain")
+	w := httptest.NewRecorder()
 
+	srv.Handler().ServeHTTP(w, req)
+
+	if w.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("expected status 413, got %d: %s", w.Code, w.Body.String())
+	}
+
+	contentType := w.Header().Get("Content-Type")
+	if contentType != "application/problem+json" {
+		t.Errorf("expected Content-Type application/problem+json, got %q", contentType)
+	}
+
+	var prob ProblemDetails
+	if err := json.Unmarshal(w.Body.Bytes(), &prob); err != nil {
+		t.Fatalf("failed to decode problem details: %v", err)
+	}
+	if prob.Status != http.StatusRequestEntityTooLarge {
+		t.Errorf("expected problem status 413, got %d", prob.Status)
+	}
+	if prob.Title != "Payload Too Large" {
+		t.Errorf("expected title 'Payload Too Large', got %q", prob.Title)
+	}
+
+	// 2. Explicit Content-Length > 10MB header rejection before reading body
+	hdrReq := httptest.NewRequest(http.MethodPost, "/api/v1/optical/keys", strings.NewReader("dummy"))
+	hdrReq.ContentLength = 15 * 1024 * 1024 // 15MB
+	hdrReq.Header.Set("Content-Type", "text/plain")
+	hdrW := httptest.NewRecorder()
+
+	srv.Handler().ServeHTTP(hdrW, hdrReq)
+
+	if hdrW.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("expected status 413 for oversized Content-Length, got %d", hdrW.Code)
+	}
+}
+
+func TestServer_Optical_SSE_ActiveRippingTelemetry(t *testing.T) {
+	tempDir := t.TempDir()
+	dataDir := filepath.Join(tempDir, "data")
+	stateDir := filepath.Join(dataDir, "state")
+	_ = os.MkdirAll(stateDir, 0755)
+	_ = os.WriteFile(filepath.Join(stateDir, "boot_state.json"), []byte(`{"clean_shutdown": true}`), 0644)
+
+	mockEngine := supervisor.NewMockRuntimeEngine()
+	svcMgr := supervisor.NewServiceManager(supervisor.ServiceManagerConfig{
+		DataDir: dataDir,
+		Engine:  mockEngine,
+	})
+
+	mockOpticalDriver := optical.NewMockOpticalDriver()
+
+	srv, err := NewServer(Config{
+		DataDir:           dataDir,
+		ServiceMgr:        svcMgr,
+		OpticalDriver:     mockOpticalDriver,
+		TelemetryInterval: 25 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("failed to create server: %v", err)
+	}
+	defer srv.Close()
+
+	srv.OpticalRipper().SetEjectResetDelay(0)
+
+	// Use channels to coordinate and hold rip in active state and eject in active state
+	ripStartedCh := make(chan struct{})
+	continueRipCh := make(chan struct{})
+	ejectStartedCh := make(chan struct{})
+	continueEjectCh := make(chan struct{})
+
+	mockOpticalDriver.SetOnRip(func(ctx context.Context, disc optical.DiscInfo, destDir string, progressCb func(percent float64)) error {
+		if progressCb != nil {
+			progressCb(42.0)
+		}
+		close(ripStartedCh)
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-continueRipCh:
+		}
+		if progressCb != nil {
+			progressCb(100.0)
+		}
+		_ = os.MkdirAll(destDir, 0755)
+		return os.WriteFile(filepath.Join(destDir, "disc.iso"), []byte("data"), 0644)
+	})
+
+	mockOpticalDriver.SetOnEject(func(ctx context.Context) error {
+		select {
+		case ejectStartedCh <- struct{}{}:
+		default:
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-continueEjectCh:
+		}
+		return nil
+	})
+
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, ts.URL+"/api/v1/system/events", nil)
+	if err != nil {
+		t.Fatalf("failed to create SSE request: %v", err)
+	}
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("failed to open SSE stream: %v", err)
+	}
+	defer resp.Body.Close()
+
+	reader := bufio.NewReader(resp.Body)
+
+	// Insert DVD into mock driver and trigger PollOnce in background
+	disc := optical.DiscInfo{
+		DiscType:  optical.DiscTypeDVD,
+		Label:     "TEST_ACTIVE_RIP",
+		ID:        "test_active_rip",
+		Encrypted: false,
+	}
+	mockOpticalDriver.InsertDisc(disc)
+
+	go srv.OpticalRipper().PollOnce(ctx)
+
+	// Wait until rip begins and reports 42%
+	select {
+	case <-ripStartedCh:
+	case <-ctx.Done():
+		t.Fatalf("context canceled waiting for rip start")
+	}
+
+	// Read SSE telemetry.update events looking for "Ripping (42%)"
+	var sawRippingTelemetry bool
+	for {
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			break
+		}
+		if strings.HasPrefix(line, "data: ") {
+			data := strings.TrimPrefix(line, "data: ")
+			var update TelemetryUpdate
+			if err := json.Unmarshal([]byte(data), &update); err == nil {
+				if update.OpticalStatus == "Ripping (42%)" {
+					sawRippingTelemetry = true
+					break
+				}
+			}
+		}
+	}
+
+	if !sawRippingTelemetry {
+		t.Errorf("expected telemetry.update SSE to report %q", "Ripping (42%)")
+	}
+
+	// Allow ripping to finish, moving to auto-eject
+	close(continueRipCh)
+
+	select {
+	case <-ejectStartedCh:
+	case <-ctx.Done():
+		t.Fatalf("context canceled waiting for eject start")
+	}
+
+	// Read SSE telemetry.update events looking for "Auto-ejecting disc"
+	var sawAutoEjectingTelemetry bool
+	for {
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			break
+		}
+		if strings.HasPrefix(line, "data: ") {
+			data := strings.TrimPrefix(line, "data: ")
+			var update TelemetryUpdate
+			if err := json.Unmarshal([]byte(data), &update); err == nil {
+				if update.OpticalStatus == "Auto-ejecting disc" {
+					sawAutoEjectingTelemetry = true
+					break
+				}
+			}
+		}
+	}
+
+	if !sawAutoEjectingTelemetry {
+		t.Errorf("expected telemetry.update SSE to report 'Auto-ejecting disc'")
+	}
+
+	// Allow eject to complete
+	close(continueEjectCh)
+}
