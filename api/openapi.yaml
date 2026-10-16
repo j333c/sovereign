@@ -821,6 +821,44 @@ paths:
               schema:
                 $ref: '#/components/schemas/ProblemDetails'
 
+  /api/v1/enrichment/status:
+    get:
+      summary: Media metadata and artwork enrichment engine status
+      description: Returns real-time status of the media enrichment engine, active jobs, scan timestamps, and processed count.
+      operationId: getEnrichmentStatus
+      responses:
+        '200':
+          description: Real-time enrichment engine status.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EnrichmentStatusResponse'
+        '500':
+          description: Internal supervisor error retrieving enrichment status.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/v1/enrichment/scan:
+    post:
+      summary: Trigger manual enrichment scan
+      description: Initiates an immediate scan of staged optical discs, enriches metadata and artwork, promotes media, and dispatches library refreshes.
+      operationId: triggerEnrichmentScan
+      responses:
+        '200':
+          description: Enrichment scan completed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EnrichmentScanResponse'
+        '500':
+          description: Internal error executing enrichment scan.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
 components:
   schemas:
     HealthResponse:
@@ -1704,5 +1742,53 @@ components:
         message:
           type: string
           example: "KEYDB.cfg uploaded successfully"
+
+    EnrichmentStatusResponse:
+      type: object
+      required:
+        - state
+        - status_text
+        - progress
+        - items_processed
+      properties:
+        state:
+          type: string
+          enum: [idle, enriching, paused, error]
+          example: idle
+        status_text:
+          type: string
+          example: "Idle"
+        current_disc:
+          type: string
+          example: "THE_MATRIX_1999"
+        progress:
+          type: number
+          format: double
+          example: 0.0
+        last_scanned_at:
+          type: string
+          format: date-time
+        items_processed:
+          type: integer
+          example: 5
+        last_error:
+          type: string
+
+    EnrichmentScanResponse:
+      type: object
+      required:
+        - status
+        - message
+        - items_processed
+      properties:
+        status:
+          type: string
+          example: "ok"
+        message:
+          type: string
+          example: "Enrichment scan completed successfully: 1 items processed"
+        items_processed:
+          type: integer
+          example: 1
 
 

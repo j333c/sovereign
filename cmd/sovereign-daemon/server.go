@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"sovereign/internal/auth"
+	"sovereign/internal/enrichment"
 	"sovereign/internal/hardware"
 	"sovereign/internal/ingress"
 	"sovereign/internal/optical"
@@ -29,6 +30,13 @@ import (
 const (
 	AppVersion = "0.1.0"
 )
+
+// EnrichmentScanResponse matches the OpenAPI 3.1 contract.
+type EnrichmentScanResponse struct {
+	Status         string `json:"status"`
+	Message        string `json:"message"`
+	ItemsProcessed int    `json:"items_processed"`
+}
 
 // OpticalEjectResponse matches the OpenAPI 3.1 contract.
 type OpticalEjectResponse struct {
@@ -111,6 +119,8 @@ type Config struct {
 	OpticalDriver     optical.OpticalDriver
 	OpticalRipper     *optical.OpticalRipper
 	KEYDBManager      *optical.KEYDBManager
+	EnrichmentEngine  *enrichment.EnrichmentEngine
+	MetadataClient    enrichment.MetadataClient
 }
 
 type sseEvent struct {
@@ -134,6 +144,7 @@ type Server struct {
 	serviceMgr        *supervisor.ServiceManager
 	dropzoneEngine    *storage.DropzoneEngine
 	opticalRipper     *optical.OpticalRipper
+	enrichmentEngine  *enrichment.EnrichmentEngine
 	stopChan          chan struct{}
 	closeOnce         sync.Once
 	mu                sync.RWMutex
@@ -302,6 +313,31 @@ func NewServer(cfg Config) (*Server, error) {
 	}
 	s.opticalRipper = cfg.OpticalRipper
 
+	if cfg.EnrichmentEngine == nil {
+		client := cfg.MetadataClient
+		if client == nil {
+			client = enrichment.NewHTTPMetadataClient(enrichment.HTTPMetadataConfig{})
+		}
+		var err error
+		cfg.EnrichmentEngine, err = enrichment.NewEnrichmentEngine(enrichment.EngineConfig{
+			DataDir:     cfg.DataDir,
+			Client:      client,
+			Refresher:   s.serviceMgr,
+			Broadcaster: s.BroadcastEvent,
+			Logger:      cfg.Logger,
+		})
+		if err != nil {
+			cfg.Logger.Error("enrichment engine initialization failed", "error", err)
+			return nil, fmt.Errorf("enrichment engine initialization failed: %w", err)
+		}
+	} else {
+		if s.serviceMgr != nil {
+			cfg.EnrichmentEngine.SetRefresher(s.serviceMgr)
+		}
+		cfg.EnrichmentEngine.SetBroadcaster(s.BroadcastEvent)
+	}
+	s.enrichmentEngine = cfg.EnrichmentEngine
+
 	s.routes()
 	return s, nil
 }
@@ -395,6 +431,11 @@ func (s *Server) StartBackgroundServices(ctx context.Context) {
 	if s.opticalRipper != nil {
 		s.opticalRipper.Start(ctx)
 	}
+
+	// 9. Start metadata enrichment worker loop
+	if s.enrichmentEngine != nil {
+		s.enrichmentEngine.Start(ctx)
+	}
 }
 
 // BootManager returns the active BootManager instance.
@@ -446,6 +487,13 @@ func (s *Server) OpticalRipper() *optical.OpticalRipper {
 	return s.opticalRipper
 }
 
+// EnrichmentEngine returns the active EnrichmentEngine instance.
+func (s *Server) EnrichmentEngine() *enrichment.EnrichmentEngine {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.enrichmentEngine
+}
+
 // BroadcastEvent emits an SSE event to all actively connected SSE clients.
 func (s *Server) BroadcastEvent(event string, data any) {
 	s.eventsMu.RLock()
@@ -457,6 +505,17 @@ func (s *Server) BroadcastEvent(event string, data any) {
 		case ch <- evt:
 		default:
 			// Non-blocking drop if client channel buffer is full
+		}
+	}
+
+	// When an optical rip completes, automatically trigger enrichment scan
+	if event == "optical.disc_ejected" {
+		if m, ok := data.(map[string]any); ok && m["reason"] == "complete" {
+			if s.enrichmentEngine != nil {
+				go func() {
+					_, _ = s.enrichmentEngine.Scan(context.Background())
+				}()
+			}
 		}
 	}
 }
@@ -471,6 +530,10 @@ func (s *Server) Close() error {
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	if s.enrichmentEngine != nil {
+		_ = s.enrichmentEngine.Close()
+	}
 
 	if s.opticalRipper != nil {
 		_ = s.opticalRipper.Close()
@@ -561,6 +624,10 @@ func (s *Server) routes() {
 	s.router.HandleFunc("GET /api/v1/optical/status", s.handleOpticalStatus)
 	s.router.HandleFunc("POST /api/v1/optical/eject", s.handleOpticalEject)
 	s.router.HandleFunc("POST /api/v1/optical/keys", s.requireSetupOrAdmin(s.handleOpticalKeys))
+
+	// Media metadata and artwork enrichment endpoints
+	s.router.HandleFunc("GET /api/v1/enrichment/status", s.handleEnrichmentStatus)
+	s.router.HandleFunc("POST /api/v1/enrichment/scan", s.handleEnrichmentScan)
 }
 
 
@@ -796,6 +863,9 @@ func (s *Server) getTelemetryUpdate(ctx context.Context) TelemetryUpdate {
 	opticalStatus := "Idle · Ready for disc"
 	if ripper != nil {
 		opticalStatus = ripper.GetStatus().StatusText
+	}
+	if s.enrichmentEngine != nil && s.enrichmentEngine.IsEnriching() {
+		opticalStatus = "Matching metadata"
 	}
 
 	return TelemetryUpdate{
@@ -1710,6 +1780,38 @@ func (s *Server) handleOpticalKeys(w http.ResponseWriter, r *http.Request) {
 		Status:    "active",
 		KeysCount: count,
 		Message:   "KEYDB.cfg uploaded successfully",
+	})
+}
+
+// handleEnrichmentStatus returns current media metadata and artwork enrichment engine state.
+func (s *Server) handleEnrichmentStatus(w http.ResponseWriter, r *http.Request) {
+	if s.enrichmentEngine == nil {
+		s.writeProblem(w, http.StatusServiceUnavailable, "Enrichment Engine Unavailable", "Enrichment engine is not initialized", r.URL.Path)
+		return
+	}
+
+	status := s.enrichmentEngine.GetStatus()
+	s.writeJSON(w, http.StatusOK, status)
+}
+
+// handleEnrichmentScan initiates an immediate scan and enrichment of staged optical discs.
+func (s *Server) handleEnrichmentScan(w http.ResponseWriter, r *http.Request) {
+	if s.enrichmentEngine == nil {
+		s.writeProblem(w, http.StatusServiceUnavailable, "Enrichment Engine Unavailable", "Enrichment engine is not initialized", r.URL.Path)
+		return
+	}
+
+	count, err := s.enrichmentEngine.Scan(r.Context())
+	if err != nil {
+		s.logger.Error("enrichment scan failed", "error", err)
+		s.writeProblem(w, http.StatusInternalServerError, "Scan Failed", "Enrichment scan encountered an error: "+err.Error(), r.URL.Path)
+		return
+	}
+
+	s.writeJSON(w, http.StatusOK, EnrichmentScanResponse{
+		Status:         "ok",
+		Message:        fmt.Sprintf("Enrichment scan completed successfully: %d items processed", count),
+		ItemsProcessed: count,
 	})
 }
 

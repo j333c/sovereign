@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"sovereign/internal/enrichment"
 	"sovereign/internal/hardware"
 	"sovereign/internal/ingress"
 	"sovereign/internal/optical"
@@ -54,6 +55,12 @@ func setupTestServer(t *testing.T) (*Server, string) {
 
 	if srv.OpticalRipper() != nil {
 		srv.OpticalRipper().SetEjectResetDelay(0)
+	}
+
+	if srv.EnrichmentEngine() != nil {
+		srv.EnrichmentEngine().SetHeadroomChecker(func(path string) (float64, error) {
+			return 0.50, nil
+		})
 	}
 
 	return srv, dataDir
@@ -3248,4 +3255,307 @@ func TestServer_Optical_SSE_ActiveRippingTelemetry(t *testing.T) {
 
 	// Allow eject to complete
 	close(continueEjectCh)
+}
+
+func TestServer_Enrichment_Status_Endpoint(t *testing.T) {
+	srv, _ := setupTestServer(t)
+	defer srv.Close()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/enrichment/status", nil)
+	w := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var status enrichment.EngineStatus
+	if err := json.Unmarshal(w.Body.Bytes(), &status); err != nil {
+		t.Fatalf("failed to parse status JSON: %v", err)
+	}
+
+	if status.State != enrichment.StateIdle {
+		t.Errorf("expected state %q, got %q", enrichment.StateIdle, status.State)
+	}
+	if status.StatusText != enrichment.StatusTextIdle {
+		t.Errorf("expected status_text %q, got %q", enrichment.StatusTextIdle, status.StatusText)
+	}
+}
+
+func TestServer_Enrichment_Scan_PromotesMovie_TriggersJellyfinRefresh(t *testing.T) {
+	srv, dataDir := setupTestServer(t)
+	defer srv.Close()
+
+	ctx := context.Background()
+
+	// Activate Jellyfin service
+	if _, err := srv.serviceMgr.ActivateService(ctx, supervisor.ServiceJellyfin); err != nil {
+		t.Fatalf("failed to activate jellyfin: %v", err)
+	}
+
+	refreshCalled := make(chan string, 1)
+	srv.serviceMgr.JellyfinProvisioner().RefreshFunc = func(ctx context.Context) error {
+		select {
+		case refreshCalled <- supervisor.ServiceJellyfin:
+		default:
+		}
+		return nil
+	}
+
+	// Mock metadata client
+	mockClient := enrichment.NewMockMetadataClient()
+	mockClient.MockMovie = &enrichment.MovieMetadata{
+		Title:       "The Matrix",
+		Year:        1999,
+		Overview:    "A computer hacker learns from mysterious rebels about the true nature of his reality.",
+		Genres:      []string{"Action", "Sci-Fi"},
+		PosterBytes: []byte("matrix-poster-image"),
+	}
+	srv.EnrichmentEngine().SetClient(mockClient)
+
+	// Stage disc rip
+	stagingDir := filepath.Join(dataDir, "media", "staging", "discs", "THE_MATRIX_1999")
+	if err := os.MkdirAll(stagingDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(stagingDir, "disc.iso"), []byte("the-matrix-movie-payload"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Trigger manual scan
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/enrichment/scan", nil)
+	w := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var scanResp EnrichmentScanResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &scanResp); err != nil {
+		t.Fatalf("failed to decode scan response: %v", err)
+	}
+	if scanResp.ItemsProcessed != 1 {
+		t.Errorf("expected 1 item processed, got %d", scanResp.ItemsProcessed)
+	}
+
+	// Verify target movie library
+	movieTarget := filepath.Join(dataDir, "media", "movies", "The Matrix (1999)")
+	mediaFile := filepath.Join(movieTarget, "disc.iso")
+	content, err := os.ReadFile(mediaFile)
+	if err != nil {
+		t.Fatalf("expected moved disc.iso: %v", err)
+	}
+	if string(content) != "the-matrix-movie-payload" {
+		t.Errorf("unexpected content: %s", string(content))
+	}
+
+	// Verify movie.nfo and poster.jpg
+	nfoPath := filepath.Join(movieTarget, "movie.nfo")
+	if _, err := os.Stat(nfoPath); err != nil {
+		t.Errorf("expected movie.nfo in target: %v", err)
+	}
+	posterPath := filepath.Join(movieTarget, "poster.jpg")
+	if _, err := os.Stat(posterPath); err != nil {
+		t.Errorf("expected poster.jpg in target: %v", err)
+	}
+
+	// Verify staging folder was cleaned up
+	if _, err := os.Stat(stagingDir); !os.IsNotExist(err) {
+		t.Errorf("expected staging dir to be removed: %v", err)
+	}
+
+	// Verify Jellyfin refresh triggered within 5 seconds
+	select {
+	case svc := <-refreshCalled:
+		if svc != supervisor.ServiceJellyfin {
+			t.Errorf("expected refresh on %s, got %s", supervisor.ServiceJellyfin, svc)
+		}
+	case <-time.After(5 * time.Second):
+		t.Errorf("timed out waiting for Jellyfin refresh webhook")
+	}
+}
+
+func TestServer_Enrichment_Scan_PromotesMusic_TriggersNavidromeRefresh(t *testing.T) {
+	srv, dataDir := setupTestServer(t)
+	defer srv.Close()
+
+	ctx := context.Background()
+
+	// Activate Navidrome service
+	if _, err := srv.serviceMgr.ActivateService(ctx, supervisor.ServiceNavidrome); err != nil {
+		t.Fatalf("failed to activate navidrome: %v", err)
+	}
+
+	refreshCalled := make(chan string, 1)
+	srv.serviceMgr.AudioProvisioner().NavidromeRefreshFunc = func(ctx context.Context) error {
+		select {
+		case refreshCalled <- supervisor.ServiceNavidrome:
+		default:
+		}
+		return nil
+	}
+
+	// Mock metadata client
+	mockClient := enrichment.NewMockMetadataClient()
+	mockClient.MockMusic = &enrichment.MusicMetadata{
+		Artist:     "Pink Floyd",
+		Album:      "The Dark Side of the Moon",
+		Year:       1973,
+		CoverBytes: []byte("pink-floyd-cover"),
+	}
+	srv.EnrichmentEngine().SetClient(mockClient)
+
+	// Stage audio CD rip
+	stagingDir := filepath.Join(dataDir, "media", "staging", "discs", "AUDIO_CD_8F3A")
+	if err := os.MkdirAll(stagingDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(stagingDir, "track01.cdda"), []byte("track01-audio-payload"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Trigger manual scan
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/enrichment/scan", nil)
+	w := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var scanResp EnrichmentScanResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &scanResp); err != nil {
+		t.Fatalf("failed to decode scan response: %v", err)
+	}
+	if scanResp.ItemsProcessed != 1 {
+		t.Errorf("expected 1 item processed, got %d", scanResp.ItemsProcessed)
+	}
+
+	// Verify target music library
+	musicTarget := filepath.Join(dataDir, "media", "music", "Pink Floyd", "The Dark Side of the Moon (1973)")
+	trackFile := filepath.Join(musicTarget, "track01.cdda")
+	content, err := os.ReadFile(trackFile)
+	if err != nil {
+		t.Fatalf("expected moved track01.cdda: %v", err)
+	}
+	if string(content) != "track01-audio-payload" {
+		t.Errorf("unexpected content: %s", string(content))
+	}
+
+	// Verify cover.jpg
+	coverPath := filepath.Join(musicTarget, "cover.jpg")
+	if _, err := os.Stat(coverPath); err != nil {
+		t.Errorf("expected cover.jpg in target: %v", err)
+	}
+
+	// Verify staging folder was cleaned up
+	if _, err := os.Stat(stagingDir); !os.IsNotExist(err) {
+		t.Errorf("expected staging dir to be removed: %v", err)
+	}
+
+	// Verify Navidrome refresh triggered within 5 seconds
+	select {
+	case svc := <-refreshCalled:
+		if svc != supervisor.ServiceNavidrome {
+			t.Errorf("expected refresh on %s, got %s", supervisor.ServiceNavidrome, svc)
+		}
+	case <-time.After(5 * time.Second):
+		t.Errorf("timed out waiting for Navidrome refresh webhook")
+	}
+}
+
+func TestServer_Enrichment_TelemetryUpdate_MatchingMetadata(t *testing.T) {
+	srv, dataDir := setupTestServer(t)
+	defer srv.Close()
+
+	// Stage a movie disc
+	stagingDir := filepath.Join(dataDir, "media", "staging", "discs", "THE_MATRIX_1999")
+	if err := os.MkdirAll(stagingDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(stagingDir, "disc.iso"), []byte("payload"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	fetchStarted := make(chan struct{})
+	continueFetch := make(chan struct{})
+
+	mockClient := enrichment.NewMockMetadataClient()
+	mockClient.MovieFunc = func(ctx context.Context, query string, year int) (*enrichment.MovieMetadata, error) {
+		close(fetchStarted)
+		<-continueFetch
+		return &enrichment.MovieMetadata{
+			Title: "The Matrix",
+			Year:  1999,
+		}, nil
+	}
+	srv.EnrichmentEngine().SetClient(mockClient)
+
+	// Run scan in background
+	scanDone := make(chan struct{})
+	go func() {
+		_, _ = srv.EnrichmentEngine().Scan(context.Background())
+		close(scanDone)
+	}()
+
+	// Wait until metadata fetch starts (enrichment is active)
+	<-fetchStarted
+
+	// Check telemetry update while enrichment is active
+	update := srv.getTelemetryUpdate(context.Background())
+	if update.OpticalStatus != "Matching metadata" {
+		t.Errorf("expected OpticalStatus to be 'Matching metadata' while enriching, got %q", update.OpticalStatus)
+	}
+
+	// Allow fetch to finish
+	close(continueFetch)
+	<-scanDone
+
+	// After completion, telemetry should return to idle
+	updateAfter := srv.getTelemetryUpdate(context.Background())
+	if updateAfter.OpticalStatus != "Idle · Ready for disc" {
+		t.Errorf("expected OpticalStatus to return to 'Idle · Ready for disc', got %q", updateAfter.OpticalStatus)
+	}
+}
+
+func TestServer_OpticalRipper_TriggersEnrichmentScanOnComplete(t *testing.T) {
+	srv, dataDir := setupTestServer(t)
+	defer srv.Close()
+
+	// Stage a movie disc
+	stagingDir := filepath.Join(dataDir, "media", "staging", "discs", "THE_MATRIX_1999")
+	if err := os.MkdirAll(stagingDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(stagingDir, "disc.iso"), []byte("disc-payload"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	mockClient := enrichment.NewMockMetadataClient()
+	mockClient.MockMovie = &enrichment.MovieMetadata{Title: "The Matrix", Year: 1999}
+	srv.EnrichmentEngine().SetClient(mockClient)
+
+	// Broadcast optical.disc_ejected with reason: complete
+	srv.BroadcastEvent("optical.disc_ejected", map[string]any{
+		"disc_id":      "THE_MATRIX_1999",
+		"staging_path": stagingDir,
+		"reason":       "complete",
+	})
+
+	// Wait for background scan to process staged disc
+	deadline := time.Now().Add(5 * time.Second)
+	movieTarget := filepath.Join(dataDir, "media", "movies", "The Matrix (1999)", "disc.iso")
+	var success bool
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(movieTarget); err == nil {
+			success = true
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	if !success {
+		t.Fatalf("expected optical.disc_ejected event to trigger enrichment scan and promote movie to %q", movieTarget)
+	}
 }
