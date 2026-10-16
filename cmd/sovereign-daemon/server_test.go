@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"mime/multipart"
@@ -1477,11 +1478,11 @@ func TestServer_Services_ListInitial(t *testing.T) {
 		t.Fatalf("failed to decode services response: %v", err)
 	}
 
-	if len(res.Services) != 3 {
-		t.Fatalf("expected 3 services, got %d", len(res.Services))
+	if len(res.Services) != 4 {
+		t.Fatalf("expected 4 services, got %d", len(res.Services))
 	}
 
-	expectedIDs := []string{"jellyfin", "navidrome", "audiobookshelf"}
+	expectedIDs := []string{"jellyfin", "navidrome", "audiobookshelf", "paperless"}
 	for i, id := range expectedIDs {
 		svc := res.Services[i]
 		if svc.ID != id {
@@ -2363,6 +2364,239 @@ func TestServer_AudioBundle_ActivationAndRefresh(t *testing.T) {
 
 	if wFail.Code != http.StatusBadGateway {
 		t.Errorf("expected 502 Bad Gateway on pull failure in audio bundle, got: %d: %s", wFail.Code, wFail.Body.String())
+	}
+	var prob ProblemDetails
+	_ = json.Unmarshal(wFail.Body.Bytes(), &prob)
+	if prob.Title != "Image Pull Failed" {
+		t.Errorf("expected title 'Image Pull Failed', got: %s", prob.Title)
+	}
+}
+
+func TestServer_Paperless_Activation_LifecycleAndIngressRouting(t *testing.T) {
+	tempDir := t.TempDir()
+	dataDir := filepath.Join(tempDir, "data")
+
+	mockEngine := supervisor.NewMockRuntimeEngine()
+	mockIngress := &mockIngressManager{
+		status: map[string]any{"connected": true, "status": "ok"},
+	}
+
+	svcMgr := supervisor.NewServiceManager(supervisor.ServiceManagerConfig{
+		DataDir: dataDir,
+		Engine:  mockEngine,
+		PaperlessProvisioner: supervisor.NewPaperlessProvisioner(dataDir, nil, supervisor.PaperlessProvisionerOptions{
+			NumCPU: func() int { return 4 },
+		}),
+	})
+
+	srv, err := NewServer(Config{
+		DataDir:    dataDir,
+		IngressMgr: mockIngress,
+		ServiceMgr: svcMgr,
+	})
+	if err != nil {
+		t.Fatalf("failed to create test server: %v", err)
+	}
+	defer srv.Close()
+
+	// 1. Verify alias resolution in inactive state
+	aliases := []string{"paperless", "dms", "documents"}
+	for _, alias := range aliases {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/services/"+alias, nil)
+		w := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected 200 OK for GET /services/%s, got: %d", alias, w.Code)
+		}
+		var st supervisor.ServiceStatus
+		if err := json.Unmarshal(w.Body.Bytes(), &st); err != nil {
+			t.Fatalf("failed to parse service status for %s: %v", alias, err)
+		}
+		if st.ID != supervisor.ServicePaperless {
+			t.Errorf("expected ID %s for alias %s, got %s", supervisor.ServicePaperless, alias, st.ID)
+		}
+		if st.Status != supervisor.StatusInactive {
+			t.Errorf("expected status inactive for %s, got %s", alias, st.Status)
+		}
+		if st.Port != 8000 {
+			t.Errorf("expected port 8000, got %d", st.Port)
+		}
+		if st.Subpath != "/docs" {
+			t.Errorf("expected subpath /docs, got %s", st.Subpath)
+		}
+	}
+
+	// 2. Initial Ingress status has 3 default routes (no paperless route)
+	reqIngressInit := httptest.NewRequest(http.MethodGet, "/api/v1/system/ingress", nil)
+	wIngressInit := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(wIngressInit, reqIngressInit)
+	var ingressInit IngressStatusResponse
+	_ = json.Unmarshal(wIngressInit.Body.Bytes(), &ingressInit)
+	for _, r := range ingressInit.Routes {
+		if r.Service == "paperless" {
+			t.Fatalf("unexpected paperless route in initial ingress status: %+v", r)
+		}
+	}
+
+	// 3. Activate Paperless via alias "dms"
+	reqAct := httptest.NewRequest(http.MethodPost, "/api/v1/services/dms/activate", nil)
+	wAct := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(wAct, reqAct)
+
+	if wAct.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK activating dms, got: %d: %s", wAct.Code, wAct.Body.String())
+	}
+
+	var actRes supervisor.ServiceStatus
+	_ = json.Unmarshal(wAct.Body.Bytes(), &actRes)
+	if actRes.ID != supervisor.ServicePaperless || actRes.Status != supervisor.StatusRunning {
+		t.Errorf("unexpected activation response: %+v", actRes)
+	}
+	if actRes.MemLimitBytes != supervisor.MemLimitPaperless {
+		t.Errorf("expected memory limit %d, got %d", supervisor.MemLimitPaperless, actRes.MemLimitBytes)
+	}
+	if actRes.MemReservationBytes != supervisor.MemReservationPaperless {
+		t.Errorf("expected memory reservation %d, got %d", supervisor.MemReservationPaperless, actRes.MemReservationBytes)
+	}
+
+	// 4. Verify directory provisioning and permissions
+	expectedDirs := []string{
+		filepath.Join(dataDir, "documents"),
+		filepath.Join(dataDir, "documents", "media"),
+		filepath.Join(dataDir, "documents", "data"),
+		filepath.Join(dataDir, "documents", "consume"),
+		filepath.Join(dataDir, "documents", "export"),
+		filepath.Join(dataDir, "state", "services", "paperless"),
+	}
+	for _, d := range expectedDirs {
+		fi, err := os.Stat(d)
+		if err != nil {
+			t.Errorf("expected directory %s to exist: %v", d, err)
+		} else if !fi.IsDir() {
+			t.Errorf("expected %s to be directory", d)
+		}
+	}
+
+	// 5. Verify SQLite WAL mode at /data/documents/data/db.sqlite3
+	dbPath := filepath.Join(dataDir, "documents", "data", "db.sqlite3")
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("failed to open sqlite database: %v", err)
+	}
+	var journalMode string
+	if err := db.QueryRow("PRAGMA journal_mode;").Scan(&journalMode); err != nil {
+		t.Fatalf("failed to query journal_mode: %v", err)
+	}
+	if strings.ToLower(journalMode) != "wal" {
+		t.Errorf("expected SQLite journal mode 'wal', got %q", journalMode)
+	}
+
+	// Insert test data to verify preservation across restart and deactivation
+	_, err = db.Exec("CREATE TABLE docs (id INT PRIMARY KEY, title TEXT);")
+	if err != nil {
+		t.Fatalf("failed to create test table: %v", err)
+	}
+	_, err = db.Exec("INSERT INTO docs VALUES (1, 'Medical Insurance');")
+	if err != nil {
+		t.Fatalf("failed to insert test record: %v", err)
+	}
+	db.Close()
+
+	// Write document file into media
+	mediaDoc := filepath.Join(dataDir, "documents", "media", "policy-01.pdf")
+	if err := os.WriteFile(mediaDoc, []byte("%PDF-1.4 sample policy"), 0644); err != nil {
+		t.Fatalf("failed to write test media file: %v", err)
+	}
+
+	// 6. Verify Caddy Ingress was synchronized with route /docs and dedicated port 8000
+	if mockIngress.SyncCalls() == 0 {
+		t.Errorf("expected Caddy route sync calls > 0 on Paperless activation")
+	}
+
+	reqIngressActive := httptest.NewRequest(http.MethodGet, "/api/v1/system/ingress", nil)
+	wIngressActive := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(wIngressActive, reqIngressActive)
+	var ingressActive IngressStatusResponse
+	_ = json.Unmarshal(wIngressActive.Body.Bytes(), &ingressActive)
+
+	hasPaperlessRoute := false
+	for _, r := range ingressActive.Routes {
+		if r.Service == "paperless" && r.Subpath == "/docs" && r.Upstream == "sovereign-paperless:8000" {
+			hasPaperlessRoute = true
+			break
+		}
+	}
+	if !hasPaperlessRoute {
+		t.Errorf("expected paperless ingress route (/docs -> sovereign-paperless:8000), found: %+v", ingressActive.Routes)
+	}
+
+	// 7. Restart Paperless via alias "paperless"
+	reqRestart := httptest.NewRequest(http.MethodPost, "/api/v1/services/paperless/restart", nil)
+	wRestart := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(wRestart, reqRestart)
+	if wRestart.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK on restart, got: %d: %s", wRestart.Code, wRestart.Body.String())
+	}
+
+	// Verify volume data is preserved across restart
+	if _, err := os.Stat(mediaDoc); err != nil {
+		t.Fatalf("document file was lost on restart: %v", err)
+	}
+
+	// 8. Deactivate Paperless via alias "documents"
+	reqDeact := httptest.NewRequest(http.MethodPost, "/api/v1/services/documents/deactivate", nil)
+	wDeact := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(wDeact, reqDeact)
+
+	if wDeact.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK on deactivation, got: %d: %s", wDeact.Code, wDeact.Body.String())
+	}
+	var deactRes supervisor.ServiceStatus
+	_ = json.Unmarshal(wDeact.Body.Bytes(), &deactRes)
+	if deactRes.Status != supervisor.StatusInactive {
+		t.Errorf("expected inactive status, got %s", deactRes.Status)
+	}
+
+	// Verify document file and database strictly preserved after deactivation
+	if _, err := os.Stat(mediaDoc); err != nil {
+		t.Fatalf("document file in /data/documents was pruned or deleted on deactivation: %v", err)
+	}
+	dbPreserved, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("failed to open preserved sqlite database: %v", err)
+	}
+	defer dbPreserved.Close()
+	var docTitle string
+	if err := dbPreserved.QueryRow("SELECT title FROM docs WHERE id = 1;").Scan(&docTitle); err != nil {
+		t.Fatalf("failed to read record from preserved sqlite db: %v", err)
+	}
+	if docTitle != "Medical Insurance" {
+		t.Errorf("expected preserved record 'Medical Insurance', got %q", docTitle)
+	}
+
+	// 9. Ingress routes no longer contain paperless after deactivation
+	reqIngressPostDeact := httptest.NewRequest(http.MethodGet, "/api/v1/system/ingress", nil)
+	wIngressPostDeact := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(wIngressPostDeact, reqIngressPostDeact)
+	var ingressPostDeact IngressStatusResponse
+	_ = json.Unmarshal(wIngressPostDeact.Body.Bytes(), &ingressPostDeact)
+	for _, r := range ingressPostDeact.Routes {
+		if r.Service == "paperless" {
+			t.Errorf("expected paperless route to be removed from ingress after deactivation, found: %+v", r)
+		}
+	}
+
+	// 10. Image pull failure returns 502 Bad Gateway with ProblemDetails
+	mockEngine.SetPullFailure(supervisor.ImagePaperless, errors.New("simulated network timeout pulling paperless"))
+	mockEngine.SetImagePresent(supervisor.ImagePaperless, false)
+
+	reqFail := httptest.NewRequest(http.MethodPost, "/api/v1/services/paperless/activate", nil)
+	wFail := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(wFail, reqFail)
+
+	if wFail.Code != http.StatusBadGateway {
+		t.Errorf("expected 502 Bad Gateway on pull failure, got: %d: %s", wFail.Code, wFail.Body.String())
 	}
 	var prob ProblemDetails
 	_ = json.Unmarshal(wFail.Body.Bytes(), &prob)

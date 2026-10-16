@@ -461,9 +461,10 @@ paths:
         - name: id
           in: path
           required: true
+          description: Unique service identifier or alias (e.g. jellyfin, navidrome, audiobookshelf, paperless, dms, documents, audio, video).
           schema:
             type: string
-            example: jellyfin
+            example: paperless
       responses:
         '200':
           description: Service status details.
@@ -493,9 +494,10 @@ paths:
         - name: id
           in: path
           required: true
+          description: Unique service identifier or alias (e.g. jellyfin, navidrome, audiobookshelf, paperless, dms, documents, audio).
           schema:
             type: string
-            example: jellyfin
+            example: paperless
       responses:
         '200':
           description: Service activated successfully.
@@ -537,9 +539,10 @@ paths:
         - name: id
           in: path
           required: true
+          description: Unique service identifier or alias (e.g. jellyfin, navidrome, audiobookshelf, paperless, dms, documents, audio).
           schema:
             type: string
-            example: jellyfin
+            example: paperless
       responses:
         '200':
           description: Service deactivated successfully.
@@ -569,9 +572,10 @@ paths:
         - name: id
           in: path
           required: true
+          description: Unique service identifier or alias (e.g. jellyfin, navidrome, audiobookshelf, paperless, dms, documents, audio).
           schema:
             type: string
-            example: jellyfin
+            example: paperless
       responses:
         '200':
           description: Service restarted successfully.
@@ -1665,13 +1669,16 @@ components:
       properties:
         id:
           type: string
-          example: jellyfin
+          description: Unique service identifier (e.g. jellyfin, navidrome, audiobookshelf, paperless).
+          example: paperless
         name:
           type: string
-          example: Jellyfin
+          description: Human-readable service name (e.g. Jellyfin, Navidrome, Audiobookshelf, Paperless-ngx).
+          example: Paperless-ngx
         description:
           type: string
-          example: Video Streaming
+          description: Service description or role (e.g. Video Streaming, Music Streaming, Audiobook Streaming, Document Management).
+          example: Document Management
         status:
           type: string
           enum: [inactive, starting, running, degraded, stopped, error]
@@ -1682,31 +1689,34 @@ components:
           example: unknown
         image:
           type: string
-          example: jellyfin/jellyfin:12.2.0
+          example: paperlessngx/paperless-ngx:3.3.1
         image_downloaded:
           type: boolean
           example: false
         mem_limit_bytes:
           type: integer
           format: int64
-          example: 2147483648
+          example: 1073741824
         mem_reservation_bytes:
           type: integer
           format: int64
-          example: 1073741824
+          example: 536870912
         subpath:
           type: string
-          example: /media
+          example: /docs
         port:
           type: integer
-          example: 8096
+          example: 8000
         volumes:
           type: array
           items:
             type: string
           example:
-            - /data/media/movies:/data/media/movies
-            - /data/state/services/jellyfin:/config
+            - /data/documents/data:/usr/src/paperless/data
+            - /data/documents/media:/usr/src/paperless/media
+            - /data/documents/consume:/usr/src/paperless/consume
+            - /data/documents/export:/usr/src/paperless/export
+            - /data/state/services/paperless:/usr/src/paperless/state
         updated_at:
           type: string
           format: date-time

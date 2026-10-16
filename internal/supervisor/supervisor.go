@@ -17,6 +17,7 @@ const (
 	ServiceJellyfin       = "jellyfin"
 	ServiceNavidrome      = "navidrome"
 	ServiceAudiobookshelf = "audiobookshelf"
+	ServicePaperless      = "paperless"
 )
 
 // Official project OCI image pins
@@ -24,6 +25,7 @@ const (
 	ImageJellyfin       = "jellyfin/jellyfin:12.2.0"
 	ImageNavidrome      = "deluan/navidrome:0.54.5"
 	ImageAudiobookshelf = "advplyr/audiobookshelf:2.19.5"
+	ImagePaperless      = "paperlessngx/paperless-ngx:3.3.1"
 )
 
 // Strict memory bounds
@@ -36,6 +38,9 @@ const (
 
 	MemLimitAudiobookshelf       int64 = 512 * 1024 * 1024 // 512 MB
 	MemReservationAudiobookshelf int64 = 256 * 1024 * 1024 // 256 MB
+
+	MemLimitPaperless       int64 = 1024 * 1024 * 1024 // 1024 MB
+	MemReservationPaperless int64 = 512 * 1024 * 1024  // 512 MB
 )
 
 // Service lifecycle states
@@ -232,32 +237,34 @@ func (w *WatchdogDebouncer) GetState(serviceID string) ServiceWatchdogState {
 
 // ServiceManagerConfig holds options for initializing the ServiceManager.
 type ServiceManagerConfig struct {
-	DataDir             string
-	Engine              RuntimeEngine
-	Logger              *slog.Logger
-	WatchdogConfig      WatchdogConfig
-	EventBroadcaster    EventBroadcaster
-	HardwareOpts        HardwareProbeOptions
-	JellyfinProvisioner *JellyfinProvisioner
-	AudioProvisioner    *AudioProvisioner
+	DataDir              string
+	Engine               RuntimeEngine
+	Logger               *slog.Logger
+	WatchdogConfig       WatchdogConfig
+	EventBroadcaster     EventBroadcaster
+	HardwareOpts         HardwareProbeOptions
+	JellyfinProvisioner  *JellyfinProvisioner
+	AudioProvisioner     *AudioProvisioner
+	PaperlessProvisioner *PaperlessProvisioner
 }
 
 // ServiceManager orchestrates on-demand container lifecycles, health probing, and volume preservation.
 type ServiceManager struct {
-	mu                  sync.RWMutex
-	dataDir             string
-	engine              RuntimeEngine
-	logger              *slog.Logger
-	broadcaster         EventBroadcaster
-	debouncer           *WatchdogDebouncer
-	definitions         map[string]ServiceDef
-	statuses            map[string]*ServiceStatus
-	activating          map[string]bool
-	cancelWatch         context.CancelFunc
-	stopOnce            sync.Once
-	timeNow             func() time.Time
-	jellyfinProvisioner *JellyfinProvisioner
-	audioProvisioner    *AudioProvisioner
+	mu                   sync.RWMutex
+	dataDir              string
+	engine               RuntimeEngine
+	logger               *slog.Logger
+	broadcaster          EventBroadcaster
+	debouncer            *WatchdogDebouncer
+	definitions          map[string]ServiceDef
+	statuses             map[string]*ServiceStatus
+	activating           map[string]bool
+	cancelWatch          context.CancelFunc
+	stopOnce             sync.Once
+	timeNow              func() time.Time
+	jellyfinProvisioner  *JellyfinProvisioner
+	audioProvisioner     *AudioProvisioner
+	paperlessProvisioner *PaperlessProvisioner
 }
 
 // NewServiceManager constructs and initializes the appliance service lifecycle manager.
@@ -280,6 +287,11 @@ func NewServiceManager(cfg ServiceManagerConfig) *ServiceManager {
 	ap := cfg.AudioProvisioner
 	if ap == nil {
 		ap = NewAudioProvisioner(cfg.DataDir, cfg.Logger)
+	}
+
+	pp := cfg.PaperlessProvisioner
+	if pp == nil {
+		pp = NewPaperlessProvisioner(cfg.DataDir, cfg.Logger)
 	}
 
 	timeFunc := cfg.WatchdogConfig.TimeFunc
@@ -336,6 +348,23 @@ func NewServiceManager(cfg ServiceManagerConfig) *ServiceManager {
 				"state/services/audiobookshelf/metadata:/metadata",
 			},
 		},
+		ServicePaperless: {
+			ID:                  ServicePaperless,
+			Name:                "Paperless-ngx",
+			Description:         "Document Management",
+			Image:               ImagePaperless,
+			MemLimitBytes:       MemLimitPaperless,
+			MemReservationBytes: MemReservationPaperless,
+			Port:                8000,
+			Subpath:             "/docs",
+			VolumeTemplates: []string{
+				"documents/data:/usr/src/paperless/data",
+				"documents/media:/usr/src/paperless/media",
+				"documents/consume:/usr/src/paperless/consume",
+				"documents/export:/usr/src/paperless/export",
+				"state/services/paperless:/usr/src/paperless/state",
+			},
+		},
 	}
 
 	statuses := make(map[string]*ServiceStatus)
@@ -359,17 +388,18 @@ func NewServiceManager(cfg ServiceManagerConfig) *ServiceManager {
 	}
 
 	return &ServiceManager{
-		dataDir:             cfg.DataDir,
-		engine:              cfg.Engine,
-		logger:              cfg.Logger,
-		broadcaster:         cfg.EventBroadcaster,
-		debouncer:           debouncer,
-		definitions:         defs,
-		statuses:            statuses,
-		activating:          make(map[string]bool),
-		timeNow:             timeFunc,
-		jellyfinProvisioner: jp,
-		audioProvisioner:    ap,
+		dataDir:              cfg.DataDir,
+		engine:               cfg.Engine,
+		logger:               cfg.Logger,
+		broadcaster:          cfg.EventBroadcaster,
+		debouncer:            debouncer,
+		definitions:          defs,
+		statuses:             statuses,
+		activating:           make(map[string]bool),
+		timeNow:              timeFunc,
+		jellyfinProvisioner:  jp,
+		audioProvisioner:     ap,
+		paperlessProvisioner: pp,
 	}
 }
 
@@ -400,8 +430,8 @@ func (m *ServiceManager) ListServices(ctx context.Context) ([]ServiceStatus, err
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	// Ordered list for deterministic responses: jellyfin, navidrome, audiobookshelf
-	order := []string{ServiceJellyfin, ServiceNavidrome, ServiceAudiobookshelf}
+	// Ordered list for deterministic responses: jellyfin, navidrome, audiobookshelf, paperless
+	order := []string{ServiceJellyfin, ServiceNavidrome, ServiceAudiobookshelf, ServicePaperless}
 	result := make([]ServiceStatus, 0, len(order))
 
 	for _, id := range order {
@@ -428,6 +458,8 @@ func (m *ServiceManager) resolveID(id string) string {
 		return ServiceNavidrome
 	case "audiobook", "audiobooks", "books":
 		return ServiceAudiobookshelf
+	case "dms", "documents", "paperless":
+		return ServicePaperless
 	default:
 		return id
 	}
@@ -459,6 +491,9 @@ func (m *ServiceManager) ActivateService(ctx context.Context, id string) (*Servi
 	m.mu.Lock()
 	if m.audioProvisioner == nil {
 		m.audioProvisioner = NewAudioProvisioner(m.dataDir, m.logger)
+	}
+	if m.paperlessProvisioner == nil {
+		m.paperlessProvisioner = NewPaperlessProvisioner(m.dataDir, m.logger)
 	}
 	m.mu.Unlock()
 
@@ -588,6 +623,15 @@ func (m *ServiceManager) ActivateService(ctx context.Context, id string) (*Servi
 		}
 		env = audioRes.Env
 		devices = audioRes.Devices
+	} else if id == ServicePaperless && m.paperlessProvisioner != nil {
+		paperlessRes, err := m.paperlessProvisioner.Provision(ctx)
+		if err != nil {
+			m.logger.Error("failed to provision paperless specialized environment", "service", id, "error", err)
+			emitError(fmt.Sprintf("Failed to provision %s: %v", id, err))
+			return nil, fmt.Errorf("failed to provision %s: %w", id, err)
+		}
+		env = paperlessRes.Env
+		devices = paperlessRes.Devices
 	}
 
 	// 3. Synthesize Compose specification
@@ -867,6 +911,16 @@ func (m *ServiceManager) AudioProvisioner() *AudioProvisioner {
 		m.audioProvisioner = NewAudioProvisioner(m.dataDir, m.logger)
 	}
 	return m.audioProvisioner
+}
+
+// PaperlessProvisioner returns the provisioner used for Paperless-ngx.
+func (m *ServiceManager) PaperlessProvisioner() *PaperlessProvisioner {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.paperlessProvisioner == nil {
+		m.paperlessProvisioner = NewPaperlessProvisioner(m.dataDir, m.logger)
+	}
+	return m.paperlessProvisioner
 }
 
 // RefreshService triggers a library scan or metadata refresh for the specified service.

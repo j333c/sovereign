@@ -58,11 +58,11 @@ func TestSupervisor_InitialListServices_InactiveAndNotDownloaded(t *testing.T) {
 		t.Fatalf("ListServices failed: %v", err)
 	}
 
-	if len(services) != 3 {
-		t.Fatalf("expected 3 services, got %d", len(services))
+	if len(services) != 4 {
+		t.Fatalf("expected 4 services, got %d", len(services))
 	}
 
-	expectedIDs := []string{ServiceJellyfin, ServiceNavidrome, ServiceAudiobookshelf}
+	expectedIDs := []string{ServiceJellyfin, ServiceNavidrome, ServiceAudiobookshelf, ServicePaperless}
 	for i, id := range expectedIDs {
 		svc := services[i]
 		if svc.ID != id {
@@ -87,36 +87,44 @@ func TestSupervisor_EnforceMemoryBounds(t *testing.T) {
 	ctx := context.Background()
 
 	tests := []struct {
-		id             string
-		expectedLimit  int64
-		expectedRes    int64
-		expectedImage  string
-		expectedPort   int
+		id              string
+		expectedLimit   int64
+		expectedRes     int64
+		expectedImage   string
+		expectedPort    int
 		expectedSubpath string
 	}{
 		{
-			id:             ServiceJellyfin,
-			expectedLimit:  MemLimitJellyfin,       // 2048 MB
-			expectedRes:    MemReservationJellyfin, // 1024 MB
-			expectedImage:  ImageJellyfin,
-			expectedPort:   8096,
+			id:              ServiceJellyfin,
+			expectedLimit:   MemLimitJellyfin,       // 2048 MB
+			expectedRes:     MemReservationJellyfin, // 1024 MB
+			expectedImage:   ImageJellyfin,
+			expectedPort:    8096,
 			expectedSubpath: "/media",
 		},
 		{
-			id:             ServiceNavidrome,
-			expectedLimit:  MemLimitNavidrome,       // 512 MB
-			expectedRes:    MemReservationNavidrome, // 256 MB
-			expectedImage:  ImageNavidrome,
-			expectedPort:   4533,
+			id:              ServiceNavidrome,
+			expectedLimit:   MemLimitNavidrome,       // 512 MB
+			expectedRes:     MemReservationNavidrome, // 256 MB
+			expectedImage:   ImageNavidrome,
+			expectedPort:    4533,
 			expectedSubpath: "/music",
 		},
 		{
-			id:             ServiceAudiobookshelf,
-			expectedLimit:  MemLimitAudiobookshelf,       // 512 MB
-			expectedRes:    MemReservationAudiobookshelf, // 256 MB
-			expectedImage:  ImageAudiobookshelf,
-			expectedPort:   13378,
+			id:              ServiceAudiobookshelf,
+			expectedLimit:   MemLimitAudiobookshelf,       // 512 MB
+			expectedRes:     MemReservationAudiobookshelf, // 256 MB
+			expectedImage:   ImageAudiobookshelf,
+			expectedPort:    13378,
 			expectedSubpath: "/audiobooks",
+		},
+		{
+			id:              ServicePaperless,
+			expectedLimit:   MemLimitPaperless,       // 1024 MB
+			expectedRes:     MemReservationPaperless, // 512 MB
+			expectedImage:   ImagePaperless,
+			expectedPort:    8000,
+			expectedSubpath: "/docs",
 		},
 	}
 
