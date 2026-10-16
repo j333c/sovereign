@@ -1022,6 +1022,86 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/ai/personas": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List AI personas
+         * @description Returns the catalogue of household AI personas with localized names, descriptions, generation presets, and prompt templates.
+         */
+        get: operations["getPersonas"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/ai/personas/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get AI persona details
+         * @description Returns detailed configuration and localized system prompt for a specific persona.
+         */
+        get: operations["getPersona"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/ai/personas/active": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Set active default AI persona
+         * @description Updates the active default persona in state store and seeds Open WebUI configuration.
+         */
+        post: operations["setActivePersona"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/ai/prompts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List localized system prompt templates
+         * @description Returns localized system prompt templates across personas and supported languages.
+         */
+        get: operations["getAIPrompts"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -2120,6 +2200,52 @@ export interface components {
                 /** @example dgpu */
                 llama?: string;
             };
+        };
+        Persona: {
+            /** @example legal_advisor */
+            id: string;
+            /** @example Legal & Contract Advisor */
+            name: string;
+            /** @example Specialized in German / EU consumer rights, statutory revocation, and formal notice templates. */
+            description: string;
+            /**
+             * @example precise
+             * @enum {string}
+             */
+            preset: "precise" | "balanced" | "creative";
+            /** @example You are the Sovereign Legal & Contract Advisor... */
+            system_prompt: string;
+            /** @example de */
+            language?: string;
+            /** @example true */
+            is_active?: boolean;
+        };
+        PersonaListResponse: {
+            personas: components["schemas"]["Persona"][];
+            /** @example household */
+            active_id: string;
+            /** @example en */
+            language?: string;
+        };
+        SetActivePersonaRequest: {
+            /** @example legal_advisor */
+            id: string;
+            /** @example de */
+            language?: string;
+        };
+        PromptTemplate: {
+            /** @example legal_advisor_de */
+            id: string;
+            /** @example legal_advisor */
+            persona_id: string;
+            /** @example de */
+            language: string;
+            /** @example Rechts- & Vertragsberater */
+            name: string;
+            system_prompt: string;
+        };
+        PromptsResponse: {
+            prompts: components["schemas"]["PromptTemplate"][];
         };
     };
     responses: never;
@@ -4256,6 +4382,120 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AIStatusResponse"];
+                };
+            };
+        };
+    };
+    getPersonas: {
+        parameters: {
+            query?: {
+                /** @description Target language code for localization. */
+                lang?: "en" | "de" | "es" | "fr";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description List of personas with active selection. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PersonaListResponse"];
+                };
+            };
+        };
+    };
+    getPersona: {
+        parameters: {
+            query?: {
+                /** @description Target language code for localization. */
+                lang?: "en" | "de" | "es" | "fr";
+            };
+            header?: never;
+            path: {
+                /** @description Unique persona identifier. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Detailed persona configuration with localized prompt. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Persona"];
+                };
+            };
+            /** @description Persona identifier not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    setActivePersona: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetActivePersonaRequest"];
+            };
+        };
+        responses: {
+            /** @description Active persona successfully updated. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Persona"];
+                };
+            };
+            /** @description Invalid persona identifier or malformed request payload. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    getAIPrompts: {
+        parameters: {
+            query?: {
+                /** @description Optional language filter. */
+                lang?: "en" | "de" | "es" | "fr";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description List of localized prompt templates. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PromptsResponse"];
                 };
             };
         };

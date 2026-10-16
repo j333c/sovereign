@@ -247,6 +247,7 @@ type ServiceManagerConfig struct {
 	AudioProvisioner     *AudioProvisioner
 	PaperlessProvisioner *PaperlessProvisioner
 	LlamaProvisioner     *LlamaProvisioner
+	OpenWebUIProvisioner *OpenWebUIProvisioner
 }
 
 // ServiceManager orchestrates on-demand container lifecycles, health probing, and volume preservation.
@@ -267,6 +268,7 @@ type ServiceManager struct {
 	audioProvisioner     *AudioProvisioner
 	paperlessProvisioner *PaperlessProvisioner
 	llamaProvisioner     *LlamaProvisioner
+	openwebuiProvisioner *OpenWebUIProvisioner
 }
 
 // NewServiceManager constructs and initializes the appliance service lifecycle manager.
@@ -303,6 +305,11 @@ func NewServiceManager(cfg ServiceManagerConfig) *ServiceManager {
 			SysfsRoot: cfg.HardwareOpts.SysfsRoot,
 			ProcRoot:  cfg.HardwareOpts.ProcRoot,
 		})
+	}
+
+	owp := cfg.OpenWebUIProvisioner
+	if owp == nil {
+		owp = NewOpenWebUIProvisioner(cfg.DataDir, cfg.Logger)
 	}
 
 	timeFunc := cfg.WatchdogConfig.TimeFunc
@@ -389,6 +396,19 @@ func NewServiceManager(cfg ServiceManagerConfig) *ServiceManager {
 				"models:/models:ro",
 			},
 		},
+		ServiceOpenWebUI: {
+			ID:                  ServiceOpenWebUI,
+			Name:                "Open WebUI",
+			Description:         "Private AI Chat",
+			Image:               ImageOpenWebUI,
+			MemLimitBytes:       MemLimitOpenWebUI,
+			MemReservationBytes: MemReservationOpenWebUI,
+			Port:                DefaultOpenWebUIPort,
+			Subpath:             DefaultOpenWebUISubpath,
+			VolumeTemplates: []string{
+				"state/services/openwebui:/app/backend/data",
+			},
+		},
 	}
 
 	statuses := make(map[string]*ServiceStatus)
@@ -425,6 +445,7 @@ func NewServiceManager(cfg ServiceManagerConfig) *ServiceManager {
 		audioProvisioner:     ap,
 		paperlessProvisioner: pp,
 		llamaProvisioner:     lp,
+		openwebuiProvisioner: owp,
 	}
 }
 
@@ -455,8 +476,8 @@ func (m *ServiceManager) ListServices(ctx context.Context) ([]ServiceStatus, err
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	// Ordered list for deterministic responses: jellyfin, navidrome, audiobookshelf, paperless, llama
-	order := []string{ServiceJellyfin, ServiceNavidrome, ServiceAudiobookshelf, ServicePaperless, ServiceLlama}
+	// Ordered list for deterministic responses: jellyfin, navidrome, audiobookshelf, paperless, llama, openwebui
+	order := []string{ServiceJellyfin, ServiceNavidrome, ServiceAudiobookshelf, ServicePaperless, ServiceLlama, ServiceOpenWebUI}
 	result := make([]ServiceStatus, 0, len(order))
 
 	for _, id := range order {
@@ -487,6 +508,8 @@ func (m *ServiceManager) resolveID(id string) string {
 		return ServicePaperless
 	case "llama", "ai", "llm", "llama-server":
 		return ServiceLlama
+	case "chat", "open-webui", "openwebui":
+		return ServiceOpenWebUI
 	default:
 		return id
 	}
@@ -524,6 +547,9 @@ func (m *ServiceManager) ActivateService(ctx context.Context, id string) (*Servi
 	}
 	if m.llamaProvisioner == nil {
 		m.llamaProvisioner = NewLlamaProvisioner(m.dataDir, m.logger)
+	}
+	if m.openwebuiProvisioner == nil {
+		m.openwebuiProvisioner = NewOpenWebUIProvisioner(m.dataDir, m.logger)
 	}
 	m.mu.Unlock()
 
@@ -739,6 +765,14 @@ func (m *ServiceManager) ActivateService(ctx context.Context, id string) (*Servi
 			return &stCopy, nil
 		}
 		containerSpec = llamaRes.ContainerSpec
+	} else if id == ServiceOpenWebUI && m.openwebuiProvisioner != nil {
+		webuiRes, err := m.openwebuiProvisioner.Provision(ctx)
+		if err != nil {
+			m.logger.Error("failed to provision openwebui specialized environment", "service", id, "error", err)
+			emitError(fmt.Sprintf("Failed to provision %s: %v", id, err))
+			return nil, fmt.Errorf("failed to provision %s: %w", id, err)
+		}
+		containerSpec = webuiRes.ContainerSpec
 	} else {
 		containerSpec = ContainerSpec{
 			Name:                   def.ID,
@@ -1105,6 +1139,16 @@ func (m *ServiceManager) PaperlessProvisioner() *PaperlessProvisioner {
 		m.paperlessProvisioner = NewPaperlessProvisioner(m.dataDir, m.logger)
 	}
 	return m.paperlessProvisioner
+}
+
+// OpenWebUIProvisioner returns the provisioner used for Open WebUI.
+func (m *ServiceManager) OpenWebUIProvisioner() *OpenWebUIProvisioner {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.openwebuiProvisioner == nil {
+		m.openwebuiProvisioner = NewOpenWebUIProvisioner(m.dataDir, m.logger)
+	}
+	return m.openwebuiProvisioner
 }
 
 // RefreshService triggers a library scan or metadata refresh for the specified service.

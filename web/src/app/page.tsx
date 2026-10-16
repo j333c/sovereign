@@ -84,7 +84,10 @@ const serviceIdMap: Record<string, string> = {
   paperless: "dms",
   dms: "dms",
   "open-webui": "ai",
+  openwebui: "ai",
+  chat: "ai",
   "llama-server": "ai",
+  llama: "ai",
   ai: "ai",
 };
 

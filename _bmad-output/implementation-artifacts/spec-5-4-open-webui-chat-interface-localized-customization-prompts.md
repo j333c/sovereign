@@ -2,7 +2,7 @@
 title: 'Story 5.4: Open WebUI Chat Interface & Localized Customization Prompts'
 type: 'feature'
 created: '2026-10-16'
-status: 'in-progress'
+status: 'review'
 route: 'dispatch'
 baseline_commit: '01dfcae2aad7a38b9e2ab094b6889adf2290e031'
 review_loop_iteration: 0

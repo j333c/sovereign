@@ -47,6 +47,20 @@
 		}
 	}
 
+	# Route Open WebUI chat interface with prefix stripping (/chat and /chat/*)
+	@chat path /chat /chat/*
+	handle @chat {
+		uri strip_prefix /chat
+		reverse_proxy sovereign-openwebui:3001 {
+			header_up Host {host}
+			header_up X-Real-IP {remote_host}
+			header_up X-Forwarded-For {remote_host}
+			header_up X-Forwarded-Proto {scheme}
+			header_up X-Forwarded-Host {host}
+			header_up X-Forwarded-Prefix /chat
+		}
+	}
+
 	# Route UI root (/) and all remaining web client assets to web frontend
 	handle {
 		reverse_proxy sovereign-web:3000 {
@@ -69,3 +83,15 @@ https://sovereign.local, https://localhost, :443 {
 	tls internal
 	import common_ingress
 }
+
+# Open WebUI dedicated port ingress (:3001)
+:3001 {
+	reverse_proxy sovereign-openwebui:3001 {
+		header_up Host {host}
+		header_up X-Real-IP {remote_host}
+		header_up X-Forwarded-For {remote_host}
+		header_up X-Forwarded-Proto {scheme}
+		header_up X-Forwarded-Host {host}
+	}
+}
+

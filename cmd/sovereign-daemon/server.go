@@ -207,6 +207,7 @@ type Config struct {
 	LlamaProvisioner  *supervisor.LlamaProvisioner
 	AIGateway         ai.Gateway
 	LlamaURL          string
+	PersonaStore      *ai.PersonaStore
 }
 
 type sseEvent struct {
@@ -241,6 +242,7 @@ type Server struct {
 	llamaProvisioner  *supervisor.LlamaProvisioner
 	aiGateway         ai.Gateway
 	llamaURL          string
+	personaStore      *ai.PersonaStore
 	stopChan          chan struct{}
 	closeOnce         sync.Once
 	mu                sync.RWMutex
@@ -450,6 +452,13 @@ func NewServer(cfg Config) (*Server, error) {
 		})
 	} else {
 		s.aiGateway = cfg.AIGateway
+	}
+
+	if cfg.PersonaStore == nil {
+		openwebuiStateDir := filepath.Join(cfg.DataDir, "state", "services", "openwebui")
+		s.personaStore = ai.NewPersonaStore(openwebuiStateDir, cfg.Logger)
+	} else {
+		s.personaStore = cfg.PersonaStore
 	}
 
 	if cfg.DropzoneEngine == nil {
@@ -1033,6 +1042,12 @@ func (s *Server) routes() {
 	s.router.HandleFunc("GET /api/v1/ai/status", s.handleAIStatus)
 	s.router.HandleFunc("/v1", s.handleAIGateway)
 	s.router.HandleFunc("/v1/{path...}", s.handleAIGateway)
+
+	// AI Persona and Prompt Customization Endpoints
+	s.router.HandleFunc("GET /api/v1/ai/personas", s.handleListAIPersonas)
+	s.router.HandleFunc("GET /api/v1/ai/personas/{id}", s.handleGetAIPersona)
+	s.router.HandleFunc("POST /api/v1/ai/personas/active", s.handleSetActiveAIPersona)
+	s.router.HandleFunc("GET /api/v1/ai/prompts", s.handleListAIPrompts)
 }
 
 // handleAIGateway mediates /v1 inference requests to the internal llama-server spoke,
@@ -1132,6 +1147,161 @@ func (s *Server) handleAIStatus(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(status)
 }
+
+// PersonaStore returns the active PersonaStore instance.
+func (s *Server) PersonaStore() *ai.PersonaStore {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.personaStore
+}
+
+// SetPersonaStore updates the PersonaStore instance.
+func (s *Server) SetPersonaStore(store *ai.PersonaStore) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.personaStore = store
+}
+
+// handleListAIPersonas returns all localized AI personas with their active status and presets.
+func (s *Server) handleListAIPersonas(w http.ResponseWriter, r *http.Request) {
+	s.mu.RLock()
+	store := s.personaStore
+	s.mu.RUnlock()
+
+	if store == nil {
+		s.writeProblem(w, http.StatusInternalServerError, "Internal Server Error", "Persona store unavailable", r.URL.Path)
+		return
+	}
+
+	lang := r.URL.Query().Get("lang")
+	personas := store.ListPersonas(lang)
+	activeID, activeLang := store.GetActive()
+
+	targetLang := ai.NormalizeLanguage(lang)
+	if strings.TrimSpace(lang) == "" {
+		targetLang = activeLang
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(ai.PersonaListResponse{
+		Personas: personas,
+		ActiveID: activeID,
+		Language: targetLang,
+	})
+}
+
+// handleGetAIPersona returns detailed persona configuration including localized prompt.
+func (s *Server) handleGetAIPersona(w http.ResponseWriter, r *http.Request) {
+	s.mu.RLock()
+	store := s.personaStore
+	s.mu.RUnlock()
+
+	if store == nil {
+		s.writeProblem(w, http.StatusInternalServerError, "Internal Server Error", "Persona store unavailable", r.URL.Path)
+		return
+	}
+
+	id := r.PathValue("id")
+	lang := r.URL.Query().Get("lang")
+
+	persona, err := store.GetPersona(id, lang)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/problem+json")
+		w.WriteHeader(http.StatusNotFound)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"type":     "https://sovereign.local/problems/persona-not-found",
+			"title":    "Persona Not Found",
+			"status":   http.StatusNotFound,
+			"detail":   fmt.Sprintf("Persona %q not found", id),
+			"instance": r.URL.Path,
+		})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(persona)
+}
+
+// handleSetActiveAIPersona updates the active persona and language preference, seeding Open WebUI.
+func (s *Server) handleSetActiveAIPersona(w http.ResponseWriter, r *http.Request) {
+	s.mu.RLock()
+	store := s.personaStore
+	s.mu.RUnlock()
+
+	if store == nil {
+		s.writeProblem(w, http.StatusInternalServerError, "Internal Server Error", "Persona store unavailable", r.URL.Path)
+		return
+	}
+
+	var req ai.SetActivePersonaRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.Header().Set("Content-Type", "application/problem+json")
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"type":     "https://sovereign.local/problems/invalid-payload",
+			"title":    "Invalid Request Body",
+			"status":   http.StatusBadRequest,
+			"detail":   fmt.Sprintf("Failed to parse request JSON: %v", err),
+			"instance": r.URL.Path,
+		})
+		return
+	}
+
+	if strings.TrimSpace(req.ID) == "" {
+		w.Header().Set("Content-Type", "application/problem+json")
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"type":     "https://sovereign.local/problems/invalid-persona",
+			"title":    "Invalid Persona ID",
+			"status":   http.StatusBadRequest,
+			"detail":   "Persona ID is required",
+			"instance": r.URL.Path,
+		})
+		return
+	}
+
+	persona, err := store.SetActive(req.ID, req.Language)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/problem+json")
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"type":     "https://sovereign.local/problems/invalid-persona",
+			"title":    "Invalid Persona ID",
+			"status":   http.StatusBadRequest,
+			"detail":   fmt.Sprintf("Unknown persona ID: %s", req.ID),
+			"instance": r.URL.Path,
+		})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(persona)
+}
+
+// handleListAIPrompts returns system prompt templates across languages and personas.
+func (s *Server) handleListAIPrompts(w http.ResponseWriter, r *http.Request) {
+	s.mu.RLock()
+	store := s.personaStore
+	s.mu.RUnlock()
+
+	if store == nil {
+		s.writeProblem(w, http.StatusInternalServerError, "Internal Server Error", "Persona store unavailable", r.URL.Path)
+		return
+	}
+
+	lang := r.URL.Query().Get("lang")
+	prompts := store.ListPrompts(lang)
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(ai.PromptsResponse{
+		Prompts: prompts,
+	})
+}
+
 
 
 // isAllowedOrigin checks if the origin is trusted (localhost, 127.0.0.1, sovereign.local, or matching host/LAN IP).

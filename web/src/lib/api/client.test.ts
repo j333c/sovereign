@@ -1343,7 +1343,145 @@ describe("SovereignApiClient", () => {
     assert.equal(status.hybrid_assignments?.jellyfin, "igpu");
     assert.equal(status.hybrid_assignments?.llama, "dgpu");
   });
+
+  it("successfully calls getPersonas, getPersona, setActivePersona, and getAIPrompts", async () => {
+    const mockPersonas = [
+      {
+        id: "household",
+        name: "Household Assistant",
+        description: "Everyday helper",
+        preset: "balanced",
+        system_prompt: "You are the household assistant...",
+        language: "en",
+        is_active: true,
+      },
+      {
+        id: "legal_advisor",
+        name: "Legal & Contract Advisor",
+        description: "Consumer rights",
+        preset: "precise",
+        system_prompt: "You are the legal advisor with BGB § 312g...",
+        language: "en",
+        is_active: false,
+      },
+    ];
+
+    const mockFetch: typeof fetch = async (input, init) => {
+      const url = String(input);
+
+      if (url === "http://localhost:8080/api/v1/ai/personas?lang=de") {
+        return new Response(
+          JSON.stringify({
+            personas: [
+              {
+                ...mockPersonas[1],
+                name: "Rechts- & Vertragsberater",
+                language: "de",
+              },
+            ],
+            active_id: "household",
+            language: "de",
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+
+      if (url === "http://localhost:8080/api/v1/ai/personas") {
+        return new Response(
+          JSON.stringify({
+            personas: mockPersonas,
+            active_id: "household",
+            language: "en",
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+
+      if (url === "http://localhost:8080/api/v1/ai/personas/legal_advisor?lang=de") {
+        return new Response(
+          JSON.stringify({
+            id: "legal_advisor",
+            name: "Rechts- & Vertragsberater",
+            description: "Verbraucherrecht",
+            preset: "precise",
+            system_prompt: "BGB § 312g Widerrufsrecht...",
+            language: "de",
+            is_active: false,
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+
+      if (url === "http://localhost:8080/api/v1/ai/personas/active" && init?.method === "POST") {
+        const body = JSON.parse(init.body as string);
+        assert.equal(body.id, "legal_advisor");
+        assert.equal(body.language, "de");
+        return new Response(
+          JSON.stringify({
+            id: "legal_advisor",
+            name: "Rechts- & Vertragsberater",
+            description: "Verbraucherrecht",
+            preset: "precise",
+            system_prompt: "BGB § 312g Widerrufsrecht...",
+            language: "de",
+            is_active: true,
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+
+      if (url === "http://localhost:8080/api/v1/ai/prompts?lang=de") {
+        return new Response(
+          JSON.stringify({
+            prompts: [
+              {
+                id: "legal_advisor_de",
+                persona_id: "legal_advisor",
+                language: "de",
+                name: "Rechts- & Vertragsberater",
+                system_prompt: "BGB § 312g...",
+              },
+            ],
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+
+      return new Response("Not found", { status: 404 });
+    };
+
+    const client = new SovereignApiClient({
+      baseUrl: "http://localhost:8080",
+      fetchFn: mockFetch,
+    });
+
+    // 1. List personas default
+    const listRes = await client.getPersonas();
+    assert.equal(listRes.personas.length, 2);
+    assert.equal(listRes.active_id, "household");
+
+    // 2. List personas German
+    const listDERes = await client.getPersonas("de");
+    assert.equal(listDERes.personas[0].name, "Rechts- & Vertragsberater");
+
+    // 3. Get single persona German
+    const persona = await client.getPersona("legal_advisor", "de");
+    assert.equal(persona.id, "legal_advisor");
+    assert.equal(persona.name, "Rechts- & Vertragsberater");
+    assert.equal(persona.preset, "precise");
+
+    // 4. Set active persona
+    const activated = await client.setActivePersona("legal_advisor", "de");
+    assert.equal(activated.id, "legal_advisor");
+    assert.equal(activated.is_active, true);
+
+    // 5. Get prompts
+    const promptsRes = await client.getAIPrompts("de");
+    assert.equal(promptsRes.prompts.length, 1);
+    assert.equal(promptsRes.prompts[0].persona_id, "legal_advisor");
+  });
 });
+
 
 
 

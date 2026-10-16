@@ -405,3 +405,107 @@ func TestCaddyClient_AudioRoutes_MusicAndAudiobooks(t *testing.T) {
 		t.Errorf("expected srv_13378 listen [:13378], got %v", listen13378)
 	}
 }
+
+func TestCaddyClient_OpenWebUIRoutes_ChatAndPort3001(t *testing.T) {
+	client := NewCaddyClient("http://caddy:2019", nil)
+
+	routes := []RouteConfig{
+		{
+			Service: "openwebui",
+			Port:    3001,
+			Subpath: "/chat",
+		},
+	}
+
+	cfg := client.BuildCaddyConfig(routes)
+
+	apps, ok := cfg["apps"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected apps block in caddy config")
+	}
+	httpApp, ok := apps["http"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected http app block in caddy config")
+	}
+	servers, ok := httpApp["servers"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected servers block in caddy config")
+	}
+
+	srv0, ok := servers["srv0"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected srv0 server block in caddy config")
+	}
+	caddyRoutes, ok := srv0["routes"].([]map[string]any)
+	if !ok {
+		t.Fatalf("expected routes list in srv0 block")
+	}
+
+	// Route 0: /api
+	// Route 1: /v1
+	// Route 2: /chat -> sovereign-openwebui:3001
+	// Route 3: fallback web
+	if len(caddyRoutes) != 4 {
+		t.Fatalf("expected 4 routes in caddy config, got %d", len(caddyRoutes))
+	}
+
+	// Verify Open WebUI subpath route
+	chatRoute := caddyRoutes[2]
+	if chatRoute["@id"] != "route-spoke-chat" {
+		t.Errorf("expected chat route id route-spoke-chat, got %v", chatRoute["@id"])
+	}
+
+	chatHandles, ok := chatRoute["handle"].([]map[string]any)
+	if !ok || len(chatHandles) < 2 {
+		t.Fatalf("expected at least 2 handles in chat route (rewrite + reverse_proxy)")
+	}
+	if chatHandles[0]["handler"] != "rewrite" || chatHandles[0]["strip_path_prefix"] != "/chat" {
+		t.Errorf("expected rewrite with strip_path_prefix /chat, got %v", chatHandles[0])
+	}
+
+	chatProxyUpstreams := chatHandles[1]["upstreams"].([]map[string]any)
+	if len(chatProxyUpstreams) == 0 || chatProxyUpstreams[0]["dial"] != "sovereign-openwebui:3001" {
+		t.Errorf("expected dial sovereign-openwebui:3001, got %v", chatProxyUpstreams)
+	}
+
+	// Verify headers for X-Forwarded-Prefix
+	headers, ok := chatHandles[1]["headers"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected headers map in reverse_proxy")
+	}
+	reqHeaders, ok := headers["request"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected request headers map in reverse_proxy")
+	}
+	setHeaders, ok := reqHeaders["set"].(map[string][]string)
+	if !ok || len(setHeaders["X-Forwarded-Prefix"]) == 0 || setHeaders["X-Forwarded-Prefix"][0] != "/chat" {
+		t.Errorf("expected X-Forwarded-Prefix [/chat], got %v", setHeaders["X-Forwarded-Prefix"])
+	}
+
+	// Verify dedicated port listener srv_3001
+	srv3001, ok := servers["srv_3001"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected servers to contain srv_3001")
+	}
+	listen3001, ok := srv3001["listen"].([]string)
+	if !ok || len(listen3001) != 1 || listen3001[0] != ":3001" {
+		t.Errorf("expected srv_3001 listen [:3001], got %v", srv3001["listen"])
+	}
+
+	directRoutes, ok := srv3001["routes"].([]map[string]any)
+	if !ok || len(directRoutes) == 0 {
+		t.Fatalf("expected routes in srv_3001")
+	}
+	directHandles, ok := directRoutes[0]["handle"].([]map[string]any)
+	if !ok || len(directHandles) == 0 {
+		t.Fatalf("expected handle in srv_3001 route")
+	}
+	if directHandles[0]["handler"] != "reverse_proxy" {
+		t.Errorf("expected reverse_proxy handler in srv_3001, got %v", directHandles[0]["handler"])
+	}
+	directUpstreams, ok := directHandles[0]["upstreams"].([]map[string]any)
+	if !ok || len(directUpstreams) == 0 || directUpstreams[0]["dial"] != "sovereign-openwebui:3001" {
+		t.Errorf("expected dial sovereign-openwebui:3001 in srv_3001, got %v", directHandles[0]["upstreams"])
+	}
+}
+

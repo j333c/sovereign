@@ -58,11 +58,11 @@ func TestSupervisor_InitialListServices_InactiveAndNotDownloaded(t *testing.T) {
 		t.Fatalf("ListServices failed: %v", err)
 	}
 
-	if len(services) != 5 {
-		t.Fatalf("expected 5 services, got %d", len(services))
+	if len(services) != 6 {
+		t.Fatalf("expected 6 services, got %d", len(services))
 	}
 
-	expectedIDs := []string{ServiceJellyfin, ServiceNavidrome, ServiceAudiobookshelf, ServicePaperless, ServiceLlama}
+	expectedIDs := []string{ServiceJellyfin, ServiceNavidrome, ServiceAudiobookshelf, ServicePaperless, ServiceLlama, ServiceOpenWebUI}
 	for i, id := range expectedIDs {
 		svc := services[i]
 		if svc.ID != id {

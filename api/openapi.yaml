@@ -1623,6 +1623,108 @@ paths:
               schema:
                 $ref: '#/components/schemas/AIStatusResponse'
 
+  /api/v1/ai/personas:
+    get:
+      summary: List AI personas
+      description: Returns the catalogue of household AI personas with localized names, descriptions, generation presets, and prompt templates.
+      operationId: getPersonas
+      parameters:
+        - name: lang
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [en, de, es, fr]
+            default: en
+          description: Target language code for localization.
+      responses:
+        '200':
+          description: List of personas with active selection.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PersonaListResponse'
+
+  /api/v1/ai/personas/{id}:
+    get:
+      summary: Get AI persona details
+      description: Returns detailed configuration and localized system prompt for a specific persona.
+      operationId: getPersona
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Unique persona identifier.
+        - name: lang
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [en, de, es, fr]
+            default: en
+          description: Target language code for localization.
+      responses:
+        '200':
+          description: Detailed persona configuration with localized prompt.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Persona'
+        '404':
+          description: Persona identifier not found.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/v1/ai/personas/active:
+    post:
+      summary: Set active default AI persona
+      description: Updates the active default persona in state store and seeds Open WebUI configuration.
+      operationId: setActivePersona
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetActivePersonaRequest'
+      responses:
+        '200':
+          description: Active persona successfully updated.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Persona'
+        '400':
+          description: Invalid persona identifier or malformed request payload.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/v1/ai/prompts:
+    get:
+      summary: List localized system prompt templates
+      description: Returns localized system prompt templates across personas and supported languages.
+      operationId: getAIPrompts
+      parameters:
+        - name: lang
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [en, de, es, fr]
+          description: Optional language filter.
+      responses:
+        '200':
+          description: List of localized prompt templates.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PromptsResponse'
+
 components:
   schemas:
     HealthResponse:
@@ -3397,6 +3499,102 @@ components:
             llama:
               type: string
               example: dgpu
+
+    Persona:
+      type: object
+      required:
+        - id
+        - name
+        - description
+        - preset
+        - system_prompt
+      properties:
+        id:
+          type: string
+          example: legal_advisor
+        name:
+          type: string
+          example: Legal & Contract Advisor
+        description:
+          type: string
+          example: Specialized in German / EU consumer rights, statutory revocation, and formal notice templates.
+        preset:
+          type: string
+          enum: [precise, balanced, creative]
+          example: precise
+        system_prompt:
+          type: string
+          example: You are the Sovereign Legal & Contract Advisor...
+        language:
+          type: string
+          example: de
+        is_active:
+          type: boolean
+          example: true
+
+    PersonaListResponse:
+      type: object
+      required:
+        - personas
+        - active_id
+      properties:
+        personas:
+          type: array
+          items:
+            $ref: '#/components/schemas/Persona'
+        active_id:
+          type: string
+          example: household
+        language:
+          type: string
+          example: en
+
+    SetActivePersonaRequest:
+      type: object
+      required:
+        - id
+      properties:
+        id:
+          type: string
+          example: legal_advisor
+        language:
+          type: string
+          example: de
+
+    PromptTemplate:
+      type: object
+      required:
+        - id
+        - persona_id
+        - language
+        - name
+        - system_prompt
+      properties:
+        id:
+          type: string
+          example: legal_advisor_de
+        persona_id:
+          type: string
+          example: legal_advisor
+        language:
+          type: string
+          example: de
+        name:
+          type: string
+          example: Rechts- & Vertragsberater
+        system_prompt:
+          type: string
+
+    PromptsResponse:
+      type: object
+      required:
+        - prompts
+      properties:
+        prompts:
+          type: array
+          items:
+            $ref: '#/components/schemas/PromptTemplate'
+
 
 
 

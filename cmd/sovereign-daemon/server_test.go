@@ -1495,11 +1495,11 @@ func TestServer_Services_ListInitial(t *testing.T) {
 		t.Fatalf("failed to decode services response: %v", err)
 	}
 
-	if len(res.Services) != 5 {
-		t.Fatalf("expected 5 services, got %d", len(res.Services))
+	if len(res.Services) != 6 {
+		t.Fatalf("expected 6 services, got %d", len(res.Services))
 	}
 
-	expectedIDs := []string{"jellyfin", "navidrome", "audiobookshelf", "paperless", "llama"}
+	expectedIDs := []string{"jellyfin", "navidrome", "audiobookshelf", "paperless", "llama", "openwebui"}
 	for i, id := range expectedIDs {
 		svc := res.Services[i]
 		if svc.ID != id {
@@ -5626,6 +5626,170 @@ func TestServer_AIIdleSurrender_SSEBroadcast(t *testing.T) {
 		t.Errorf("expected state %s, got %v", ai.ArbitratorStateIdleSurrendered, payload["state"])
 	}
 }
+
+func TestServer_AIPersonas_Endpoints(t *testing.T) {
+	srv, _ := setupTestServer(t)
+	defer srv.Close()
+
+	// 1. GET /api/v1/ai/personas (default English)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/ai/personas", nil)
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected HTTP 200 from GET /api/v1/ai/personas, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var res ai.PersonaListResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &res); err != nil {
+		t.Fatalf("failed to decode personas response: %v", err)
+	}
+
+	if len(res.Personas) != 4 {
+		t.Fatalf("expected 4 personas, got %d", len(res.Personas))
+	}
+	if res.ActiveID != "household" {
+		t.Errorf("expected default active_id household, got %s", res.ActiveID)
+	}
+	if res.Language != "en" {
+		t.Errorf("expected default language en, got %s", res.Language)
+	}
+
+	// 2. GET /api/v1/ai/personas?lang=de
+	reqDE := httptest.NewRequest(http.MethodGet, "/api/v1/ai/personas?lang=de", nil)
+	wDE := httptest.NewRecorder()
+	srv.router.ServeHTTP(wDE, reqDE)
+
+	if wDE.Code != http.StatusOK {
+		t.Fatalf("expected HTTP 200 from GET /api/v1/ai/personas?lang=de, got %d: %s", wDE.Code, wDE.Body.String())
+	}
+
+	var resDE ai.PersonaListResponse
+	if err := json.Unmarshal(wDE.Body.Bytes(), &resDE); err != nil {
+		t.Fatalf("failed to decode personas response: %v", err)
+	}
+	foundLegal := false
+	for _, p := range resDE.Personas {
+		if p.ID == "legal_advisor" {
+			foundLegal = true
+			if p.Name != "Rechts- & Vertragsberater" {
+				t.Errorf("expected German name 'Rechts- & Vertragsberater', got %q", p.Name)
+			}
+			if p.Preset != "precise" {
+				t.Errorf("expected preset precise, got %s", p.Preset)
+			}
+		}
+	}
+	if !foundLegal {
+		t.Errorf("legal_advisor not found in German persona list")
+	}
+
+	// 3. GET /api/v1/ai/personas/legal_advisor?lang=de
+	reqDetail := httptest.NewRequest(http.MethodGet, "/api/v1/ai/personas/legal_advisor?lang=de", nil)
+	wDetail := httptest.NewRecorder()
+	srv.router.ServeHTTP(wDetail, reqDetail)
+
+	if wDetail.Code != http.StatusOK {
+		t.Fatalf("expected HTTP 200 from GET /api/v1/ai/personas/legal_advisor?lang=de, got %d: %s", wDetail.Code, wDetail.Body.String())
+	}
+
+	var legalDetail ai.Persona
+	if err := json.Unmarshal(wDetail.Body.Bytes(), &legalDetail); err != nil {
+		t.Fatalf("failed to decode legal_advisor detail: %v", err)
+	}
+	if legalDetail.ID != "legal_advisor" {
+		t.Errorf("expected persona id legal_advisor, got %s", legalDetail.ID)
+	}
+	if !strings.Contains(legalDetail.SystemPrompt, "BGB § 312g") || !strings.Contains(legalDetail.SystemPrompt, "Gewährleistung") {
+		t.Errorf("expected legal_advisor German prompt to mention BGB § 312g and Gewährleistung")
+	}
+
+	// 4. GET /api/v1/ai/personas/unknown_persona -> 404 Problem Details
+	req404 := httptest.NewRequest(http.MethodGet, "/api/v1/ai/personas/unknown_persona", nil)
+	w404 := httptest.NewRecorder()
+	srv.router.ServeHTTP(w404, req404)
+
+	if w404.Code != http.StatusNotFound {
+		t.Fatalf("expected HTTP 404 for unknown persona, got %d", w404.Code)
+	}
+
+	// 5. POST /api/v1/ai/personas/active with {"id": "legal_advisor", "language": "de"}
+	activeBody := `{"id": "legal_advisor", "language": "de"}`
+	reqActive := httptest.NewRequest(http.MethodPost, "/api/v1/ai/personas/active", strings.NewReader(activeBody))
+	reqActive.Header.Set("Content-Type", "application/json")
+	wActive := httptest.NewRecorder()
+	srv.router.ServeHTTP(wActive, reqActive)
+
+	if wActive.Code != http.StatusOK {
+		t.Fatalf("expected HTTP 200 from POST /api/v1/ai/personas/active, got %d: %s", wActive.Code, wActive.Body.String())
+	}
+
+	var updatedPersona ai.Persona
+	if err := json.Unmarshal(wActive.Body.Bytes(), &updatedPersona); err != nil {
+		t.Fatalf("failed to decode updated persona: %v", err)
+	}
+	if updatedPersona.ID != "legal_advisor" || updatedPersona.Language != "de" {
+		t.Errorf("expected legal_advisor/de, got %s/%s", updatedPersona.ID, updatedPersona.Language)
+	}
+	if !updatedPersona.IsActive {
+		t.Errorf("expected persona.IsActive to be true")
+	}
+
+	// Verify subsequent list query reflects legal_advisor as active
+	wCheck := httptest.NewRecorder()
+	srv.router.ServeHTTP(wCheck, req)
+	var resCheck ai.PersonaListResponse
+	_ = json.Unmarshal(wCheck.Body.Bytes(), &resCheck)
+	if resCheck.ActiveID != "legal_advisor" {
+		t.Errorf("expected active_id to be legal_advisor after update, got %s", resCheck.ActiveID)
+	}
+
+	// 6. POST /api/v1/ai/personas/active with invalid ID -> 400 Problem Details
+	badBody := `{"id": "invalid_persona_xyz"}`
+	reqBad := httptest.NewRequest(http.MethodPost, "/api/v1/ai/personas/active", strings.NewReader(badBody))
+	reqBad.Header.Set("Content-Type", "application/json")
+	wBad := httptest.NewRecorder()
+	srv.router.ServeHTTP(wBad, reqBad)
+
+	if wBad.Code != http.StatusBadRequest {
+		t.Fatalf("expected HTTP 400 for invalid persona, got %d", wBad.Code)
+	}
+
+	// 7. GET /api/v1/ai/prompts
+	reqPrompts := httptest.NewRequest(http.MethodGet, "/api/v1/ai/prompts", nil)
+	wPrompts := httptest.NewRecorder()
+	srv.router.ServeHTTP(wPrompts, reqPrompts)
+
+	if wPrompts.Code != http.StatusOK {
+		t.Fatalf("expected HTTP 200 from GET /api/v1/ai/prompts, got %d: %s", wPrompts.Code, wPrompts.Body.String())
+	}
+
+	var promptsRes ai.PromptsResponse
+	if err := json.Unmarshal(wPrompts.Body.Bytes(), &promptsRes); err != nil {
+		t.Fatalf("failed to decode prompts response: %v", err)
+	}
+	if len(promptsRes.Prompts) != 16 {
+		t.Errorf("expected 16 prompt templates, got %d", len(promptsRes.Prompts))
+	}
+
+	// 8. GET /api/v1/ai/prompts?lang=de
+	reqPromptsDE := httptest.NewRequest(http.MethodGet, "/api/v1/ai/prompts?lang=de", nil)
+	wPromptsDE := httptest.NewRecorder()
+	srv.router.ServeHTTP(wPromptsDE, reqPromptsDE)
+
+	if wPromptsDE.Code != http.StatusOK {
+		t.Fatalf("expected HTTP 200 from GET /api/v1/ai/prompts?lang=de, got %d: %s", wPromptsDE.Code, wPromptsDE.Body.String())
+	}
+
+	var promptsResDE ai.PromptsResponse
+	if err := json.Unmarshal(wPromptsDE.Body.Bytes(), &promptsResDE); err != nil {
+		t.Fatalf("failed to decode German prompts response: %v", err)
+	}
+	if len(promptsResDE.Prompts) != 4 {
+		t.Errorf("expected 4 German prompt templates, got %d", len(promptsResDE.Prompts))
+	}
+}
+
 
 
 

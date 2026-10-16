@@ -58,6 +58,14 @@ export interface DashboardTranslations {
   aiAction: string;
   aiWarmingUpReassurance: string;
   aiCpuOptimized: string;
+  personaHouseholdName: string;
+  personaHouseholdDesc: string;
+  personaLegalAdvisorName: string;
+  personaLegalAdvisorDesc: string;
+  personaCreativeName: string;
+  personaCreativeDesc: string;
+  personaTechSupportName: string;
+  personaTechSupportDesc: string;
   connectingTelemetry: string;
   liveTelemetry: string;
   reconnecting: string;
@@ -152,6 +160,14 @@ export const translations: Record<Language, DashboardTranslations> = {
     aiAction: "Open Chat UI",
     aiWarmingUpReassurance: "Waking up private AI (ready in 5s)...",
     aiCpuOptimized: "CPU-Optimized Mode",
+    personaHouseholdName: "Household Assistant",
+    personaHouseholdDesc: "Everyday household helper, task organization, meal planning, general questions.",
+    personaLegalAdvisorName: "Legal & Contract Advisor",
+    personaLegalAdvisorDesc: "Specialized in consumer rights, statutory revocation, warranty obligations, and formal notice templates.",
+    personaCreativeName: "Creative Writer",
+    personaCreativeDesc: "Brainstorming, storytelling, family celebration speeches, imaginative writing.",
+    personaTechSupportName: "Technical Support",
+    personaTechSupportDesc: "Practical step-by-step troubleshooting for home networking, electronics, and household appliances.",
     connectingTelemetry: "Connecting to telemetry stream...",
     liveTelemetry: "Live telemetry stream active",
     reconnecting: "Reconnecting to telemetry...",
@@ -244,6 +260,14 @@ export const translations: Record<Language, DashboardTranslations> = {
     aiAction: "Chat-UI öffnen",
     aiWarmingUpReassurance: "Privates KI-Modell wird gestartet (bereit in 5s)...",
     aiCpuOptimized: "CPU-optimierter Modus",
+    personaHouseholdName: "Haushaltsassistent",
+    personaHouseholdDesc: "Alltäglicher Haushaltshelfer für Aufgabenorganisation, Menüplanung und Familienalltag.",
+    personaLegalAdvisorName: "Rechts- & Vertragsberater",
+    personaLegalAdvisorDesc: "Spezialisiert auf deutsches und EU-Verbraucherrecht (BGB § 312g Widerrufsrecht, Gewährleistung, Kündigungsfristen, Mahnungen).",
+    personaCreativeName: "Kreativer Autor",
+    personaCreativeDesc: "Brainstorming, Storytelling, Festtagsreden, kreative Geschichten und ideenreiche Texte.",
+    personaTechSupportName: "Technischer Support",
+    personaTechSupportDesc: "Praktische Schritt-für-Schritt-Fehlerbehebung für Heimnetzwerk, Elektronik und Haushaltsgeräte.",
     connectingTelemetry: "Verbinde mit Telemetriestrom...",
     liveTelemetry: "Live-Telemetriestrom aktiv",
     reconnecting: "Verbindung wird wiederhergestellt...",
@@ -336,6 +360,14 @@ export const translations: Record<Language, DashboardTranslations> = {
     aiAction: "Abrir interfaz de chat",
     aiWarmingUpReassurance: "Iniciando IA privada (lista en 5s)...",
     aiCpuOptimized: "Modo optimizado para CPU",
+    personaHouseholdName: "Asistente del Hogar",
+    personaHouseholdDesc: "Ayudante diario del hogar, organización de tareas, planificación de comidas y consultas familiares.",
+    personaLegalAdvisorName: "Asesor Legal y Contractual",
+    personaLegalAdvisorDesc: "Especializado en derechos del consumidor (LGDCU, desistimiento legal de 14 días, garantías y reclamaciones).",
+    personaCreativeName: "Escritor Creativo",
+    personaCreativeDesc: "Lluvia de ideas, narraciones, discursos para celebraciones familiares y redacción creativa.",
+    personaTechSupportName: "Soporte Técnico",
+    personaTechSupportDesc: "Resolución de problemas paso a paso para redes domésticas, electrónica y electrodomésticos.",
     connectingTelemetry: "Conectando al flujo de telemetría...",
     liveTelemetry: "Flujo de telemetría en vivo activo",
     reconnecting: "Reconectando a telemetría...",
@@ -428,6 +460,14 @@ export const translations: Record<Language, DashboardTranslations> = {
     aiAction: "Ouvrir l'interface de chat",
     aiWarmingUpReassurance: "Réveil de l'IA privée (prêt dans 5s)...",
     aiCpuOptimized: "Mode optimisé pour CPU",
+    personaHouseholdName: "Assistant Domestique",
+    personaHouseholdDesc: "Aide quotidienne pour la maison, organisation des tâches, planification des repas et vie de famille.",
+    personaLegalAdvisorName: "Conseiller Juridique et Contrats",
+    personaLegalAdvisorDesc: "Spécialisé dans le droit de la consommation (droit de rétractation de 14 jours, garantie de conformité et résiliations).",
+    personaCreativeName: "Auteur Créatif",
+    personaCreativeDesc: "Remue-méninges, narration, discours de fête de famille et écriture imaginative.",
+    personaTechSupportName: "Support Technique",
+    personaTechSupportDesc: "Dépannage pas à pas pour les réseaux domestiques, appareils connectés et équipements du foyer.",
     connectingTelemetry: "Connexion au flux de télémétrie...",
     liveTelemetry: "Flux de télémétrie en direct actif",
     reconnecting: "Reconnexion à la télémétrie...",

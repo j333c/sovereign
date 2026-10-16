@@ -55,6 +55,11 @@ export type AIPreset = components["schemas"]["AIPreset"];
 export type AIPresetsResponse = components["schemas"]["AIPresetsResponse"];
 export type AIGovernorStatusResponse = components["schemas"]["AIGovernorStatusResponse"];
 export type AIStatusResponse = components["schemas"]["AIStatusResponse"];
+export type Persona = components["schemas"]["Persona"];
+export type PersonaListResponse = components["schemas"]["PersonaListResponse"];
+export type SetActivePersonaRequest = components["schemas"]["SetActivePersonaRequest"];
+export type PromptTemplate = components["schemas"]["PromptTemplate"];
+export type PromptsResponse = components["schemas"]["PromptsResponse"];
 
 /**
  * ProblemDetailsError represents an RFC 7807 problem details error thrown by the daemon API.
@@ -573,6 +578,42 @@ export class SovereignApiClient {
    */
   async getAIStatus(): Promise<AIStatusResponse> {
     return this.request<AIStatusResponse>("/api/v1/ai/status");
+  }
+
+  /**
+   * Retrieve list of AI personas with localized names, descriptions, and presets.
+   */
+  async getPersonas(lang?: string): Promise<PersonaListResponse> {
+    const query = lang ? `?lang=${encodeURIComponent(lang)}` : "";
+    return this.request<PersonaListResponse>(`/api/v1/ai/personas${query}`);
+  }
+
+  /**
+   * Retrieve single AI persona detail including localized system prompt.
+   */
+  async getPersona(id: string, lang?: string): Promise<Persona> {
+    const query = lang ? `?lang=${encodeURIComponent(lang)}` : "";
+    return this.request<Persona>(`/api/v1/ai/personas/${encodeURIComponent(id)}${query}`);
+  }
+
+  /**
+   * Set active default AI persona.
+   */
+  async setActivePersona(id: string, language?: string): Promise<Persona> {
+    const payload: SetActivePersonaRequest = { id, language };
+    return this.request<Persona>("/api/v1/ai/personas/active", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+  }
+
+  /**
+   * Retrieve list of system prompt templates across languages and personas.
+   */
+  async getAIPrompts(lang?: string): Promise<PromptsResponse> {
+    const query = lang ? `?lang=${encodeURIComponent(lang)}` : "";
+    return this.request<PromptsResponse>(`/api/v1/ai/prompts${query}`);
   }
 
   /**
