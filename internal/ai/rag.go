@@ -327,14 +327,17 @@ func (t *HeadroomTruncator) Truncate(systemPrompt, userQuery string, excerpts []
 				remainingForSnippet := availableHeadroom - headerTokens
 				if remainingForSnippet > 20 {
 					allowedChars := remainingForSnippet * 4
-					if len([]rune(ex.Snippet)) > allowedChars {
-						ex.Snippet = string([]rune(ex.Snippet)[:allowedChars]) + "..."
+					runes := []rune(ex.Snippet)
+					if len(runes) > allowedChars {
+						ex.Snippet = string(runes[:allowedChars]) + "..."
 					}
 					retained = append(retained, ex)
 					usedTokens += estimator(FormatExcerptChunk(ex))
+					break
 				}
 			}
-			break
+			// Continue loop to see if smaller subsequent excerpts can fit in the remaining budget
+			continue
 		}
 	}
 
@@ -405,6 +408,13 @@ func (e *RAGEngine) SetInferenceClient(client InferenceClient) {
 	e.inferenceClient = client
 }
 
+// InferenceClient returns the active inference client.
+func (e *RAGEngine) InferenceClient() InferenceClient {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return e.inferenceClient
+}
+
 // SetDBPath sets or overrides the target SQLite database path.
 func (e *RAGEngine) SetDBPath(path string) {
 	e.mu.Lock()
@@ -437,10 +447,10 @@ func (e *RAGEngine) ResolveDBPath() string {
 	e.mu.RUnlock()
 
 	if explicit != "" {
-		if _, err := os.Stat(explicit); err == nil {
+		if info, err := os.Stat(explicit); err == nil && !info.IsDir() {
 			return explicit
 		}
-		return explicit
+		return ""
 	}
 
 	candidates := []string{
@@ -487,6 +497,9 @@ func (e *RAGEngine) getDB(ctx context.Context) (*sql.DB, string, error) {
 	if e.dbPool != nil {
 		if err := e.dbPool.PingContext(ctx); err == nil {
 			return e.dbPool, dbPath, nil
+		} else if ctx.Err() != nil {
+			// Do not destroy the shared connection pool if ping failed due to caller context cancellation/deadline
+			return nil, dbPath, ctx.Err()
 		}
 		_ = e.dbPool.Close()
 		e.dbPool = nil
@@ -687,6 +700,10 @@ func ExtractSnippet(content string, matchOffset int, termLen int) string {
 
 // Search searches the Paperless SQLite database using FTS5 with BM25 ranking.
 func (e *RAGEngine) Search(ctx context.Context, req RAGSearchRequest) (*RAGSearchResponse, error) {
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
+
 	limit := req.Limit
 	if limit <= 0 {
 		limit = DefaultSearchLimit
@@ -699,6 +716,9 @@ func (e *RAGEngine) Search(ctx context.Context, req RAGSearchRequest) (*RAGSearc
 
 	db, dbPath, err := e.getDB(ctx)
 	if err != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
 		e.logger.Error("failed to connect to paperless database", "error", err)
 		return nil, fmt.Errorf("paperless database error: %w", err)
 	}
@@ -716,6 +736,9 @@ func (e *RAGEngine) Search(ctx context.Context, req RAGSearchRequest) (*RAGSearc
 	// Verify documents_document table exists
 	var tableCount int
 	if err := db.QueryRowContext(ctx, "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='documents_document';").Scan(&tableCount); err != nil || tableCount == 0 {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
 		return &RAGSearchResponse{
 			Query:        req.Query,
 			TotalMatches: 0,
@@ -751,6 +774,9 @@ func (e *RAGEngine) Search(ctx context.Context, req RAGSearchRequest) (*RAGSearc
 	if queryErr == nil {
 		defer rows.Close()
 		for rows.Next() {
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
 			var docID int64
 			var title, content string
 			var score float64
@@ -762,27 +788,65 @@ func (e *RAGEngine) Search(ctx context.Context, req RAGSearchRequest) (*RAGSearc
 			page := CalculatePageNumber(content, offset)
 			snippet := ExtractSnippet(content, offset, 15)
 
+			url := fmt.Sprintf("/docs/documents/%d", docID)
+			if page > 1 {
+				url = fmt.Sprintf("/docs/documents/%d#page=%d", docID, page)
+			}
+
 			results = append(results, RAGSearchResult{
 				DocumentID: docID,
 				Title:      title,
 				PageNumber: page,
 				Snippet:    snippet,
 				Score:      score,
-				URL:        fmt.Sprintf("/docs/documents/%d", docID),
+				URL:        url,
 			})
 		}
-		_ = rows.Err()
+		if err := rows.Err(); err != nil && ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
 	} else {
 		// 2. Fallback to LIKE query on documents_document if FTS table is not present
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
 		e.logger.Warn("FTS5 query failed, executing fallback query", "error", queryErr)
 		words := wordTokenRegex.FindAllString(req.Query, -1)
-		if len(words) > 0 {
-			firstWord := "%" + words[0] + "%"
+		var significantWords []string
+		stopWords := map[string]bool{
+			"what": true, "when": true, "where": true, "which": true, "who": true, "whom": true,
+			"this": true, "that": true, "these": true, "those": true, "with": true, "from": true,
+			"have": true, "has": true, "had": true, "does": true, "doing": true, "done": true,
+			"the": true, "a": true, "an": true, "and": true, "or": true, "but": true, "our": true,
+			"der": true, "die": true, "das": true, "und": true, "oder": true, "ist": true, "sind": true,
+			"para": true, "pour": true, "dans": true,
+		}
+		for _, w := range words {
+			lower := strings.ToLower(w)
+			if len(w) >= 3 && !stopWords[lower] {
+				significantWords = append(significantWords, w)
+			}
+		}
+		if len(significantWords) == 0 && len(words) > 0 {
+			longest := words[0]
+			for _, w := range words {
+				if len(w) > len(longest) {
+					longest = w
+				}
+			}
+			significantWords = append(significantWords, longest)
+		}
+
+		if len(significantWords) > 0 {
+			searchTerm := "%" + significantWords[0] + "%"
 			likeSQL := `SELECT id, title, content FROM documents_document WHERE content LIKE ? OR title LIKE ? LIMIT ?;`
-			fallbackRows, fbErr := db.QueryContext(ctx, likeSQL, firstWord, firstWord, limit)
+			fallbackRows, fbErr := db.QueryContext(ctx, likeSQL, searchTerm, searchTerm, limit)
 			if fbErr == nil {
 				defer fallbackRows.Close()
 				for fallbackRows.Next() {
+					if ctx.Err() != nil {
+						return nil, ctx.Err()
+					}
 					var docID int64
 					var title, content string
 					if err := fallbackRows.Scan(&docID, &title, &content); err != nil {
@@ -792,14 +856,22 @@ func (e *RAGEngine) Search(ctx context.Context, req RAGSearchRequest) (*RAGSearc
 					page := CalculatePageNumber(content, offset)
 					snippet := ExtractSnippet(content, offset, 15)
 
+					url := fmt.Sprintf("/docs/documents/%d", docID)
+					if page > 1 {
+						url = fmt.Sprintf("/docs/documents/%d#page=%d", docID, page)
+					}
+
 					results = append(results, RAGSearchResult{
 						DocumentID: docID,
 						Title:      title,
 						PageNumber: page,
 						Snippet:    snippet,
 						Score:      -1.0,
-						URL:        fmt.Sprintf("/docs/documents/%d", docID),
+						URL:        url,
 					})
+				}
+				if err := fallbackRows.Err(); err != nil && ctx.Err() != nil {
+					return nil, ctx.Err()
 				}
 			}
 		}
@@ -890,12 +962,17 @@ func (e *RAGEngine) Query(ctx context.Context, req RAGQueryRequest) (*RAGQueryRe
 		capacity = DefaultContextCapacity
 	}
 
+	reserved := DefaultReservedResponseTokens
+	if req.MaxTokens > reserved {
+		reserved = req.MaxTokens
+	}
+
 	systemPrompt := GetRAGSystemPrompt(normLang)
 	truncator := e.truncator
 	if truncator == nil {
-		truncator = NewHeadroomTruncator(capacity, DefaultReservedResponseTokens, EstimateTokens)
-	} else if truncator.ContextCapacity != capacity {
-		truncator = NewHeadroomTruncator(capacity, truncator.ReservedResponseBuffer, truncator.TokenEstimator)
+		truncator = NewHeadroomTruncator(capacity, reserved, EstimateTokens)
+	} else {
+		truncator = NewHeadroomTruncator(capacity, reserved, truncator.TokenEstimator)
 	}
 
 	// 3. Truncate context to fit headroom
@@ -943,7 +1020,7 @@ func (e *RAGEngine) Query(ctx context.Context, req RAGQueryRequest) (*RAGQueryRe
 		return nil, fmt.Errorf("rag inference failed: %w", err)
 	}
 
-	if len(chatResp.Choices) == 0 {
+	if chatResp == nil || len(chatResp.Choices) == 0 {
 		return nil, errors.New("ai model returned empty completion choices")
 	}
 

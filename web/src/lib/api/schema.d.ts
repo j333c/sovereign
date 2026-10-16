@@ -2291,10 +2291,10 @@ export interface components {
             /** @example deductible on car insurance */
             query: string;
             /**
-             * @default 5
+             * @description Maximum number of document excerpts to return (default 5, max 50).
              * @example 5
              */
-            limit: number;
+            limit?: number;
             /**
              * @example en
              * @enum {string}
@@ -2338,15 +2338,15 @@ export interface components {
             /** @example qwen2.5-7b */
             model?: string;
             /**
-             * @default 512
+             * @description Max tokens reserved for the generated response (default 512).
              * @example 512
              */
-            max_tokens: number;
+            max_tokens?: number;
             /**
-             * @default 4096
+             * @description Total model context capacity (default 4096).
              * @example 4096
              */
-            context_tokens: number;
+            context_tokens?: number;
         };
         RAGQueryResponse: {
             /** @example Your deductible is $500, according to page 4 of Car Insurance Policy. */
@@ -4632,8 +4632,26 @@ export interface operations {
                     "application/json": components["schemas"]["RAGSearchResponse"];
                 };
             };
+            /** @description Invalid search request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
             /** @description Document search error */
             500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description RAG engine unavailable */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -4663,6 +4681,24 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RAGQueryResponse"];
+                };
+            };
+            /** @description Invalid query request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description RAG query execution error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
                 };
             };
             /** @description AI Gateway or model unavailable */

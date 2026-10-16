@@ -156,8 +156,8 @@ func TestRAGEngine_SearchAndFTS5(t *testing.T) {
 	if !strings.Contains(match.Snippet, "deductible") {
 		t.Errorf("expected snippet to contain 'deductible', got: %s", match.Snippet)
 	}
-	if match.URL != "/docs/documents/1" {
-		t.Errorf("expected URL '/docs/documents/1', got: %s", match.URL)
+	if match.URL != "/docs/documents/1#page=2" {
+		t.Errorf("expected URL '/docs/documents/1#page=2', got: %s", match.URL)
 	}
 }
 
@@ -372,8 +372,8 @@ func TestRAGEngine_QueryWithInferenceAndCitations(t *testing.T) {
 	if citation.PageNumber != 2 {
 		t.Errorf("expected citation page number 2, got %d", citation.PageNumber)
 	}
-	if citation.URL != "/docs/documents/1" {
-		t.Errorf("expected citation URL '/docs/documents/1', got %s", citation.URL)
+	if citation.URL != "/docs/documents/1#page=2" {
+		t.Errorf("expected citation URL '/docs/documents/1#page=2', got %s", citation.URL)
 	}
 
 	// Verify prompt passed to mockClient contained grounded context
@@ -541,5 +541,144 @@ func TestGatewayInferenceClient_Lane1Priority(t *testing.T) {
 	}
 	if capturedIntent != "precise" {
 		t.Errorf("expected X-Generation-Intent 'precise', got: %s", capturedIntent)
+	}
+}
+
+func TestHeadroomTruncator_SingleChunkExceedsHeadroom_Sliced(t *testing.T) {
+	systemPrompt := "Short system prompt" // ~5 tokens
+	userQuery := "Short query"            // ~3 tokens
+
+	// Restrict available headroom by using custom capacity
+	constrainedTruncator := NewHeadroomTruncator(600, 512, EstimateTokens)
+	// Headroom = 600 - 512 - 5 - 3 = 80 tokens
+
+	largeSnippet := strings.Repeat("Extremely long document content that contains many words and exceeds the 80 token headroom limit. ", 10)
+	excerpts := []RAGSearchResult{
+		{
+			DocumentID: 42,
+			Title:      "Large Document",
+			PageNumber: 1,
+			Snippet:    largeSnippet,
+			URL:        "/docs/documents/42",
+		},
+	}
+
+	result := constrainedTruncator.Truncate(systemPrompt, userQuery, excerpts, LangEN)
+	if !result.Truncated {
+		t.Errorf("expected truncated to be true")
+	}
+	if len(result.RetainedChunks) != 1 {
+		t.Fatalf("expected 1 retained chunk, got %d", len(result.RetainedChunks))
+	}
+	if !strings.HasSuffix(result.RetainedChunks[0].Snippet, "...") {
+		t.Errorf("expected sliced snippet to end with '...', got: %s", result.RetainedChunks[0].Snippet)
+	}
+	if len(result.RetainedChunks[0].Snippet) >= len(largeSnippet) {
+		t.Errorf("expected sliced snippet to be shorter than original")
+	}
+}
+
+func TestHeadroomTruncator_PackingSubsequentChunks(t *testing.T) {
+	// Headroom: 1000 - 512 - 5 - 3 = 480 tokens
+	truncator := NewHeadroomTruncator(1000, 512, EstimateTokens)
+	systemPrompt := "System"
+	userQuery := "Query"
+
+	// Chunk 1: small (~50 tokens) -> fits, remaining ~430
+	// Chunk 2: huge (~600 tokens) -> doesn't fit, skipped
+	// Chunk 3: small (~50 tokens) -> fits in remaining ~430!
+	excerpts := []RAGSearchResult{
+		{
+			DocumentID: 1,
+			Title:      "Small Doc 1",
+			PageNumber: 1,
+			Snippet:    "Small snippet that easily fits.",
+			URL:        "/docs/documents/1",
+		},
+		{
+			DocumentID: 2,
+			Title:      "Huge Doc 2",
+			PageNumber: 1,
+			Snippet:    strings.Repeat("Huge content that will definitely not fit into the remaining headroom limit. ", 40),
+			URL:        "/docs/documents/2",
+		},
+		{
+			DocumentID: 3,
+			Title:      "Small Doc 3",
+			PageNumber: 2,
+			Snippet:    "Another small snippet that should be packed into remaining headroom.",
+			URL:        "/docs/documents/3#page=2",
+		},
+	}
+
+	result := truncator.Truncate(systemPrompt, userQuery, excerpts, LangEN)
+	if !result.Truncated {
+		t.Errorf("expected truncated to be true")
+	}
+	if len(result.RetainedChunks) != 2 {
+		t.Fatalf("expected 2 retained chunks (doc 1 and doc 3 packed), got %d", len(result.RetainedChunks))
+	}
+	if result.RetainedChunks[0].DocumentID != 1 {
+		t.Errorf("expected first retained chunk to be doc 1, got %d", result.RetainedChunks[0].DocumentID)
+	}
+	if result.RetainedChunks[1].DocumentID != 3 {
+		t.Errorf("expected second retained chunk to be doc 3, got %d", result.RetainedChunks[1].DocumentID)
+	}
+}
+
+func TestRAGEngine_FallbackLIKESearch(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "rag-fallback-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	dbPath := filepath.Join(tempDir, "db.sqlite3")
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("failed to open sqlite db: %v", err)
+	}
+	defer db.Close()
+
+	// Create table WITHOUT FTS5
+	_, err = db.Exec(`CREATE TABLE documents_document (
+		id INTEGER PRIMARY KEY,
+		title VARCHAR(128) NOT NULL,
+		content TEXT NOT NULL,
+		created DATETIME,
+		modified DATETIME
+	);
+	INSERT INTO documents_document (id, title, content) VALUES
+		(1, 'Insurance Policy', 'Comprehensive car policy. The deductible for hail and storm damage is $500.'),
+		(2, 'Electricity Invoice', 'Monthly electricity bill 120 EUR.');`)
+	if err != nil {
+		t.Fatalf("failed to setup documents_document: %v", err)
+	}
+
+	engine := NewRAGEngine(RAGConfig{
+		DBPath: dbPath,
+	})
+	defer engine.Close()
+
+	// Query with natural language starting with stop words
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	resp, err := engine.Search(ctx, RAGSearchRequest{
+		Query:    "What is the deductible for storm damage?",
+		Language: "en",
+	})
+	if err != nil {
+		t.Fatalf("unexpected search error: %v", err)
+	}
+
+	if resp.TotalMatches == 0 {
+		t.Fatalf("expected at least 1 match via LIKE fallback, got 0")
+	}
+	if resp.Results[0].DocumentID != 1 {
+		t.Errorf("expected doc 1, got doc %d", resp.Results[0].DocumentID)
+	}
+	if !strings.Contains(resp.Results[0].Snippet, "deductible") {
+		t.Errorf("expected snippet to contain deductible, got: %s", resp.Results[0].Snippet)
 	}
 }

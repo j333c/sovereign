@@ -7,7 +7,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "test": "tsx --test src/lib/api/client.test.ts src/lib/useTelemetry.test.ts src/app/boot/boot-screen.test.tsx src/app/page.test.tsx src/app/setup/setup-wizard.test.tsx src/app/drop/page.test.tsx",
+    "check": "tsc --noEmit",
+    "test": "tsc --noEmit && tsx --test src/lib/api/client.test.ts src/lib/useTelemetry.test.ts src/app/boot/boot-screen.test.tsx src/app/page.test.tsx src/app/setup/setup-wizard.test.tsx src/app/drop/page.test.tsx",
     "codegen": "openapi-typescript ../api/openapi.yaml -o ./src/lib/api/schema.d.ts"
   },
   "dependencies": {

@@ -1743,8 +1743,20 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/RAGSearchResponse'
+        '400':
+          description: Invalid search request
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
         '500':
           description: Document search error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '503':
+          description: RAG engine unavailable
           content:
             application/problem+json:
               schema:
@@ -1768,6 +1780,18 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/RAGQueryResponse'
+        '400':
+          description: Invalid query request
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '500':
+          description: RAG query execution error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
         '503':
           description: AI Gateway or model unavailable
           content:
@@ -3655,7 +3679,7 @@ components:
           example: deductible on car insurance
         limit:
           type: integer
-          default: 5
+          description: Maximum number of document excerpts to return (default 5, max 50).
           example: 5
         language:
           type: string
@@ -3691,7 +3715,6 @@ components:
         url:
           type: string
           example: /docs/documents/1
-
     RAGSearchResponse:
       type: object
       required:
@@ -3730,11 +3753,11 @@ components:
           example: qwen2.5-7b
         max_tokens:
           type: integer
-          default: 512
+          description: Max tokens reserved for the generated response (default 512).
           example: 512
         context_tokens:
           type: integer
-          default: 4096
+          description: Total model context capacity (default 4096).
           example: 4096
 
     RAGQueryResponse:

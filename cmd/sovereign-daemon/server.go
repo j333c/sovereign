@@ -1325,6 +1325,11 @@ func (s *Server) handleRAGSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if strings.TrimSpace(req.Query) == "" {
+		s.writeProblem(w, http.StatusBadRequest, "Invalid Query", "Search query cannot be empty.", r.URL.Path)
+		return
+	}
+
 	resp, err := engine.Search(r.Context(), req)
 	if err != nil {
 		s.logger.Error("rag search failed", "query", req.Query, "error", err)

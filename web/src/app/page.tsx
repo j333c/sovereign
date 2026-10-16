@@ -294,7 +294,7 @@ function HomeScreenContent({
       .getServices()
       .then((res) => {
         if (!isMounted || !res?.services) return;
-        const rank: Record<StatusLevel, number> = {
+        const rank: Partial<Record<StatusLevel, number>> = {
           error: 5,
           degraded: 4,
           starting: 3,

@@ -5863,12 +5863,26 @@ func TestServer_RAG_SearchAndQueryEndpoints(t *testing.T) {
 	createMockGGUFFile(t, modelsDir, "qwen2.5.gguf", 3)
 	_, _ = srv.serviceMgr.ActivateService(context.Background(), supervisor.ServiceLlama)
 
+	// Assert default InferenceClient configured by NewServer
+	if srv.RAGEngine().InferenceClient() == nil {
+		t.Fatalf("expected srv.RAGEngine() to have a default InferenceClient configured by NewServer")
+	}
+
 	mockInference := &mockDaemonRAGInferenceClient{
 		answer: "Your deductible is $500, according to page 2 of Car Insurance Policy.",
 	}
 	srv.RAGEngine().SetInferenceClient(mockInference)
 
-	// 1. POST /api/v1/ai/rag/search
+	// 1a. POST /api/v1/ai/rag/search with empty query -> HTTP 400
+	reqEmpty := httptest.NewRequest(http.MethodPost, "/api/v1/ai/rag/search", strings.NewReader(`{"query": "   "}`))
+	reqEmpty.Header.Set("Content-Type", "application/json")
+	wEmpty := httptest.NewRecorder()
+	srv.router.ServeHTTP(wEmpty, reqEmpty)
+	if wEmpty.Code != http.StatusBadRequest {
+		t.Errorf("expected HTTP 400 for empty search query, got %d", wEmpty.Code)
+	}
+
+	// 1b. POST /api/v1/ai/rag/search
 	searchPayload := `{"query": "deductible on car insurance", "limit": 5, "language": "en"}`
 	reqSearch := httptest.NewRequest(http.MethodPost, "/api/v1/ai/rag/search", strings.NewReader(searchPayload))
 	reqSearch.Header.Set("Content-Type", "application/json")
@@ -5893,8 +5907,8 @@ func TestServer_RAG_SearchAndQueryEndpoints(t *testing.T) {
 	if searchRes.Results[0].PageNumber != 2 {
 		t.Errorf("expected page number 2, got %d", searchRes.Results[0].PageNumber)
 	}
-	if searchRes.Results[0].URL != "/docs/documents/1" {
-		t.Errorf("expected URL '/docs/documents/1', got %s", searchRes.Results[0].URL)
+	if searchRes.Results[0].URL != "/docs/documents/1#page=2" {
+		t.Errorf("expected URL '/docs/documents/1#page=2', got %s", searchRes.Results[0].URL)
 	}
 
 	// 2. POST /api/v1/ai/rag/query

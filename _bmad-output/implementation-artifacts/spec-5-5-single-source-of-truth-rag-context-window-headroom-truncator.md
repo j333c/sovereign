@@ -2,10 +2,10 @@
 title: 'Story 5.5: Single-Source-of-Truth RAG & Context Window Headroom Truncator'
 type: 'feature'
 created: '2026-10-16'
-status: 'review'
+status: 'done'
 route: 'dispatch'
-baseline_commit: '421b591b619f7fa5160d8ff04983a45c3614fc2a'
-review_loop_iteration: 0
+baseline_commit: '421b591e0e03c165a3773b765162b0648293b037'
+review_loop_iteration: 1
 context:
   - '_bmad-output/planning-artifacts/architecture/architecture-sovereign-2026-10-15/ARCHITECTURE-SPINE.md'
   - '_bmad-output/planning-artifacts/ux-designs/ux-sovereign-2026-10-15/DESIGN.md'
@@ -98,3 +98,34 @@ context:
    - Update `i18n.ts`.
 4. **Automated Verification**:
    - Run `go test ./...` and `npm --prefix web test`.
+
+## Review Triage Log
+
+### Iteration 1 (Reviewers: Blind Hunter, Edge Case Hunter, Verification Gap)
+1. **TypeScript OpenAPI client compilation & schema optionality (`TS2345`)**:
+   - *Finding*: `openapi-typescript` generated `limit`, `max_tokens`, and `context_tokens` as required properties on requests due to `default:` definitions in `api/openapi.yaml`, breaking TypeScript typechecking when consumers omitted optional parameters.
+   - *Disposition*: `patch` -- Removed `default:` keys in `api/openapi.yaml`, regenerated types (`schema.d.ts`), added `tsc --noEmit` to `web` test script, and fixed status ranking type in `src/app/page.tsx`.
+2. **Context Window Headroom buffer reservation with `req.MaxTokens`**:
+   - *Finding*: `HeadroomTruncator` used static 512-token response buffer, risking prompt overflow if client requested `max_tokens > 512`.
+   - *Disposition*: `patch` -- Updated `Query` to reserve `max(DefaultReservedResponseTokens, req.MaxTokens)` when configuring the truncator.
+3. **Empty/whitespace query validation on `handleRAGSearch`**:
+   - *Finding*: `handleRAGSearch` permitted whitespace-only queries to hit SQLite instead of returning HTTP 400 Bad Request.
+   - *Disposition*: `patch` -- Added `strings.TrimSpace(req.Query) == ""` check returning RFC 7807 ProblemDetails HTTP 400.
+4. **Chat completion response nil guard**:
+   - *Finding*: Potential nil dereference panic if inference client returns nil response without error.
+   - *Disposition*: `patch` -- Added `chatResp == nil || len(chatResp.Choices) == 0` guard in `Query`.
+5. **Context cancellation and connection pool management**:
+   - *Finding*: Ping failure during request cancellation could close the shared SQLite pool.
+   - *Disposition*: `patch` -- Preserved pool when error is due to `ctx.Err() != nil` and propagated context cancellation across search loops.
+6. **Fallback LIKE search query with stop-word filtering**:
+   - *Finding*: Fallback query used only first token (`words[0]`), which often degraded to question stop words like "What".
+   - *Disposition*: `patch` -- Added stop-word filtering and longest significant keyword matching. Added unit test `TestRAGEngine_FallbackLIKESearch`.
+7. **Single-chunk slicing & chunk packing in `HeadroomTruncator`**:
+   - *Finding*: Truncation broke loop on first chunk that did not fit, ignoring subsequent smaller excerpts that could fit in remaining headroom, and single-chunk slicing was untested.
+   - *Disposition*: `patch` -- Changed loop to continue checking smaller subsequent chunks for packing and added `TestHeadroomTruncator_SingleChunkExceedsHeadroom_Sliced` and `TestHeadroomTruncator_PackingSubsequentChunks`.
+8. **Citation URL page anchors**:
+   - *Finding*: Document citation URLs pointed to `/docs/documents/:id` without navigating to the specific page.
+   - *Disposition*: `patch` -- Updated citation URLs to include `#page=:page` when page > 1.
+9. **Verification of default `InferenceClient` wiring in `NewServer`**:
+   - *Finding*: Server integration tests previously overwrote `InferenceClient` without asserting default wiring.
+   - *Disposition*: `patch` -- Added `InferenceClient()` getter and asserted non-nil client in `server_test.go`.
