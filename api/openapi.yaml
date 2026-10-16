@@ -859,6 +859,133 @@ paths:
               schema:
                 $ref: '#/components/schemas/ProblemDetails'
 
+  /api/v1/transcode/queue:
+    get:
+      summary: List transcoding queue
+      description: Returns the list of video transcoding jobs, their progress, and current active encode status.
+      operationId: getTranscodeQueue
+      responses:
+        '200':
+          description: Transcoding queue list retrieved successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TranscodeQueueResponse'
+        '500':
+          description: Internal supervisor error querying transcode queue.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+    post:
+      summary: Enqueue media file for background transcoding
+      description: Enqueues a raw video rip or imported media file for universal direct-play pre-encoding.
+      operationId: enqueueTranscode
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EnqueueTranscodeRequest'
+      responses:
+        '201':
+          description: Media file enqueued successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TranscodeJobResponse'
+        '400':
+          description: Missing or invalid source file path.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '500':
+          description: Failed to enqueue media file.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/v1/transcode/schedule:
+    get:
+      summary: Get off-peak transcoding schedule
+      description: Returns the configured off-peak transcoding window and active state.
+      operationId: getTranscodeSchedule
+      responses:
+        '200':
+          description: Schedule retrieved successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TranscodeScheduleResponse'
+        '500':
+          description: Failed to retrieve schedule.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+    post:
+      summary: Update off-peak transcoding schedule
+      description: Updates the daily off-peak window hours for batch video encoding.
+      operationId: updateTranscodeSchedule
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateTranscodeScheduleRequest'
+      responses:
+        '200':
+          description: Schedule updated successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TranscodeScheduleResponse'
+        '400':
+          description: Invalid schedule configuration.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '500':
+          description: Failed to update schedule.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/v1/transcode/override:
+    post:
+      summary: Override daytime transcoding restriction
+      description: Manually enables or disables daytime batch transcoding, bypassing GPU arbitration.
+      operationId: setTranscodeOverride
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TranscodeOverrideRequest'
+      responses:
+        '200':
+          description: Manual override state updated.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TranscodeOverrideResponse'
+        '400':
+          description: Invalid override request.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '500':
+          description: Failed to set manual override.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
 components:
   schemas:
     HealthResponse:
@@ -1790,5 +1917,181 @@ components:
         items_processed:
           type: integer
           example: 1
+
+    TranscodeJobResponse:
+      type: object
+      required:
+        - id
+        - source_path
+        - target_path
+        - profile
+        - status
+        - progress
+        - created_at
+      properties:
+        id:
+          type: string
+          example: "job-0277ea13-a847-4258-bc4d-a8e57adb2589"
+        source_path:
+          type: string
+          example: "/data/media/staging/movie_raw.mkv"
+        target_path:
+          type: string
+          example: "/data/media/movies/Test Movie (2024)/movie.mp4"
+        profile:
+          type: string
+          example: "universal"
+        status:
+          type: string
+          enum: [queued, processing, paused, completed, failed]
+          example: "queued"
+        progress:
+          type: number
+          format: double
+          example: 0.0
+        encoder_used:
+          type: string
+          example: "qsv"
+        error_message:
+          type: string
+          example: ""
+        created_at:
+          type: string
+          format: date-time
+          example: "2026-10-16T08:00:00Z"
+        started_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: string
+          format: date-time
+
+    TranscodeQueueResponse:
+      type: object
+      required:
+        - jobs
+        - total
+      properties:
+        jobs:
+          type: array
+          items:
+            $ref: '#/components/schemas/TranscodeJobResponse'
+        total:
+          type: integer
+          example: 1
+        active_job_id:
+          type: string
+          example: "job-0277ea13-a847-4258-bc4d-a8e57adb2589"
+
+    EnqueueTranscodeRequest:
+      type: object
+      required:
+        - source_path
+      properties:
+        source_path:
+          type: string
+          example: "/data/media/staging/movie_raw.mkv"
+        target_path:
+          type: string
+          example: "/data/media/movies/Test Movie (2024)/movie.mp4"
+        profile:
+          type: string
+          enum: [universal, h264, h265]
+          example: "universal"
+
+    TranscodeScheduleResponse:
+      type: object
+      required:
+        - start_hour
+        - start_minute
+        - end_hour
+        - end_minute
+        - is_off_peak
+        - manual_override
+        - status
+      properties:
+        start_hour:
+          type: integer
+          minimum: 0
+          maximum: 23
+          example: 1
+        start_minute:
+          type: integer
+          minimum: 0
+          maximum: 59
+          example: 0
+        end_hour:
+          type: integer
+          minimum: 0
+          maximum: 23
+          example: 7
+        end_minute:
+          type: integer
+          minimum: 0
+          maximum: 59
+          example: 0
+        is_off_peak:
+          type: boolean
+          example: false
+        manual_override:
+          type: boolean
+          example: false
+        status:
+          type: string
+          example: "Daytime (AI Priority)"
+
+    UpdateTranscodeScheduleRequest:
+      type: object
+      required:
+        - start_hour
+        - end_hour
+      properties:
+        start_hour:
+          type: integer
+          minimum: 0
+          maximum: 23
+          example: 2
+        start_minute:
+          type: integer
+          minimum: 0
+          maximum: 59
+          example: 0
+        end_hour:
+          type: integer
+          minimum: 0
+          maximum: 23
+          example: 8
+        end_minute:
+          type: integer
+          minimum: 0
+          maximum: 59
+          example: 0
+
+    TranscodeOverrideRequest:
+      type: object
+      required:
+        - force
+      properties:
+        force:
+          type: boolean
+          example: true
+
+    TranscodeOverrideResponse:
+      type: object
+      required:
+        - status
+        - manual_override
+        - message
+      properties:
+        status:
+          type: string
+          example: "active"
+        manual_override:
+          type: boolean
+          example: true
+        message:
+          type: string
+          example: "Manual override enabled; daytime batch transcoding active"
+
 
 

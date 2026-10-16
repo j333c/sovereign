@@ -23,6 +23,7 @@ import (
 	"sovereign/internal/storage"
 	"sovereign/internal/store"
 	"sovereign/internal/supervisor"
+	"sovereign/internal/transcode"
 )
 
 
@@ -60,6 +61,13 @@ func setupTestServer(t *testing.T) (*Server, string) {
 	if srv.EnrichmentEngine() != nil {
 		srv.EnrichmentEngine().SetHeadroomChecker(func(path string) (float64, error) {
 			return 0.50, nil
+		})
+	}
+
+	if srv.TranscodeEngine() != nil {
+		srv.TranscodeEngine().SetTranscoder(transcode.NewMockTranscoder())
+		srv.TranscodeEngine().SetHeadroomChecker(func(path string) (float64, error) {
+			return 50.0, nil
 		})
 	}
 
@@ -3565,3 +3573,315 @@ func TestServer_OpticalRipper_TriggersEnrichmentScanOnComplete(t *testing.T) {
 		t.Fatalf("expected optical.disc_ejected event to trigger enrichment scan and promote movie to %q", movieTarget)
 	}
 }
+
+func TestServer_Transcode_QueueLifecycle(t *testing.T) {
+	srv, dataDir := setupTestServer(t)
+	defer srv.Close()
+
+	// 1. Initial queue should be empty
+	getReq := httptest.NewRequest(http.MethodGet, "/api/v1/transcode/queue", nil)
+	getW := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(getW, getReq)
+
+	if getW.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", getW.Code)
+	}
+
+	var queueResp TranscodeQueueResponse
+	if err := json.Unmarshal(getW.Body.Bytes(), &queueResp); err != nil {
+		t.Fatalf("failed to decode queue response: %v", err)
+	}
+	if queueResp.Total != 0 || len(queueResp.Jobs) != 0 {
+		t.Errorf("expected empty queue, got total=%d", queueResp.Total)
+	}
+
+	// 2. Validation error: empty source_path
+	emptyBody := bytes.NewBufferString(`{"source_path": ""}`)
+	emptyReq := httptest.NewRequest(http.MethodPost, "/api/v1/transcode/queue", emptyBody)
+	emptyReq.Header.Set("Content-Type", "application/json")
+	emptyW := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(emptyW, emptyReq)
+
+	if emptyW.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for empty source_path, got %d", emptyW.Code)
+	}
+
+	// 3. Validation error: non-existent file
+	missingBody := bytes.NewBufferString(`{"source_path": "/data/media/staging/does_not_exist.mkv"}`)
+	missingReq := httptest.NewRequest(http.MethodPost, "/api/v1/transcode/queue", missingBody)
+	missingReq.Header.Set("Content-Type", "application/json")
+	missingW := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(missingW, missingReq)
+
+	if missingW.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for non-existent file, got %d", missingW.Code)
+	}
+
+	// 4. Create a valid test file and enqueue
+	testVideo := filepath.Join(dataDir, "media", "staging", "sample_rip.mkv")
+	_ = os.MkdirAll(filepath.Dir(testVideo), 0755)
+	if err := os.WriteFile(testVideo, []byte("SAMPLE_RAW_VIDEO_STREAM"), 0644); err != nil {
+		t.Fatalf("failed to create test video file: %v", err)
+	}
+
+	enqueuePayload := map[string]any{
+		"source_path": testVideo,
+		"profile":     "universal",
+	}
+	payloadBytes, _ := json.Marshal(enqueuePayload)
+	enqReq := httptest.NewRequest(http.MethodPost, "/api/v1/transcode/queue", bytes.NewReader(payloadBytes))
+	enqReq.Header.Set("Content-Type", "application/json")
+	enqW := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(enqW, enqReq)
+
+	if enqW.Code != http.StatusCreated {
+		t.Fatalf("expected 201 Created for enqueue, got %d: %s", enqW.Code, enqW.Body.String())
+	}
+
+	var jobResp TranscodeJobResponse
+	if err := json.Unmarshal(enqW.Body.Bytes(), &jobResp); err != nil {
+		t.Fatalf("failed to parse job response: %v", err)
+	}
+	if jobResp.ID == "" {
+		t.Errorf("expected generated job ID")
+	}
+	if jobResp.Status != "queued" {
+		t.Errorf("expected status 'queued', got %q", jobResp.Status)
+	}
+	if !strings.HasSuffix(jobResp.TargetPath, ".mp4") {
+		t.Errorf("expected target_path ending in .mp4, got %q", jobResp.TargetPath)
+	}
+
+	// 5. Query queue again: should show 1 job
+	getReq2 := httptest.NewRequest(http.MethodGet, "/api/v1/transcode/queue", nil)
+	getW2 := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(getW2, getReq2)
+
+	if getW2.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", getW2.Code)
+	}
+	var queueResp2 TranscodeQueueResponse
+	_ = json.Unmarshal(getW2.Body.Bytes(), &queueResp2)
+	if queueResp2.Total != 1 || len(queueResp2.Jobs) != 1 {
+		t.Errorf("expected queue total=1, got %d", queueResp2.Total)
+	}
+	if queueResp2.Jobs[0].ID != jobResp.ID {
+		t.Errorf("expected job ID %q, got %q", jobResp.ID, queueResp2.Jobs[0].ID)
+	}
+}
+
+func TestServer_Transcode_Schedule(t *testing.T) {
+	srv, _ := setupTestServer(t)
+	defer srv.Close()
+
+	// 1. GET schedule (defaults to 01:00 - 07:00)
+	getReq := httptest.NewRequest(http.MethodGet, "/api/v1/transcode/schedule", nil)
+	getW := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(getW, getReq)
+
+	if getW.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", getW.Code)
+	}
+
+	var schedResp TranscodeScheduleResponse
+	if err := json.Unmarshal(getW.Body.Bytes(), &schedResp); err != nil {
+		t.Fatalf("failed to parse schedule response: %v", err)
+	}
+	if schedResp.StartHour != 1 || schedResp.EndHour != 7 {
+		t.Errorf("expected default 01:00-07:00, got %02d:%02d - %02d:%02d",
+			schedResp.StartHour, schedResp.StartMinute, schedResp.EndHour, schedResp.EndMinute)
+	}
+
+	// 2. POST invalid schedule (hour 25)
+	badBody := bytes.NewBufferString(`{"start_hour": 25, "end_hour": 7}`)
+	badReq := httptest.NewRequest(http.MethodPost, "/api/v1/transcode/schedule", badBody)
+	badReq.Header.Set("Content-Type", "application/json")
+	badW := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(badW, badReq)
+
+	if badW.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 Bad Request for hour 25, got %d", badW.Code)
+	}
+
+	// 3. POST valid schedule update (02:30 to 08:30)
+	updBody := bytes.NewBufferString(`{"start_hour": 2, "start_minute": 30, "end_hour": 8, "end_minute": 30}`)
+	updReq := httptest.NewRequest(http.MethodPost, "/api/v1/transcode/schedule", updBody)
+	updReq.Header.Set("Content-Type", "application/json")
+	updW := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(updW, updReq)
+
+	if updW.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK for schedule update, got %d: %s", updW.Code, updW.Body.String())
+	}
+
+	var updatedResp TranscodeScheduleResponse
+	if err := json.Unmarshal(updW.Body.Bytes(), &updatedResp); err != nil {
+		t.Fatalf("failed to decode updated schedule: %v", err)
+	}
+	if updatedResp.StartHour != 2 || updatedResp.StartMinute != 30 || updatedResp.EndHour != 8 || updatedResp.EndMinute != 30 {
+		t.Errorf("expected updated 02:30-08:30, got %02d:%02d - %02d:%02d",
+			updatedResp.StartHour, updatedResp.StartMinute, updatedResp.EndHour, updatedResp.EndMinute)
+	}
+}
+
+func TestServer_Transcode_Override(t *testing.T) {
+	srv, _ := setupTestServer(t)
+	defer srv.Close()
+
+	// 1. Enable manual override
+	onBody := bytes.NewBufferString(`{"force": true}`)
+	onReq := httptest.NewRequest(http.MethodPost, "/api/v1/transcode/override", onBody)
+	onReq.Header.Set("Content-Type", "application/json")
+	onW := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(onW, onReq)
+
+	if onW.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", onW.Code, onW.Body.String())
+	}
+
+	var onResp TranscodeOverrideResponse
+	if err := json.Unmarshal(onW.Body.Bytes(), &onResp); err != nil {
+		t.Fatalf("failed to parse override response: %v", err)
+	}
+	if onResp.Status != "active" || !onResp.ManualOverride {
+		t.Errorf("expected status 'active' and manual_override=true, got %+v", onResp)
+	}
+
+	// Verify schedule endpoint reflects manual override
+	schedReq := httptest.NewRequest(http.MethodGet, "/api/v1/transcode/schedule", nil)
+	schedW := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(schedW, schedReq)
+
+	var schedResp TranscodeScheduleResponse
+	_ = json.Unmarshal(schedW.Body.Bytes(), &schedResp)
+	if !schedResp.ManualOverride {
+		t.Errorf("expected schedule endpoint to report manual_override=true")
+	}
+
+	// 2. Disable manual override
+	offBody := bytes.NewBufferString(`{"force": false}`)
+	offReq := httptest.NewRequest(http.MethodPost, "/api/v1/transcode/override", offBody)
+	offReq.Header.Set("Content-Type", "application/json")
+	offW := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(offW, offReq)
+
+	if offW.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", offW.Code, offW.Body.String())
+	}
+
+	var offResp TranscodeOverrideResponse
+	_ = json.Unmarshal(offW.Body.Bytes(), &offResp)
+	if offResp.Status != "inactive" || offResp.ManualOverride {
+		t.Errorf("expected status 'inactive' and manual_override=false, got %+v", offResp)
+	}
+}
+
+func TestServer_Transcode_TelemetryGPUStatus(t *testing.T) {
+	srv, _ := setupTestServer(t)
+	defer srv.Close()
+
+	// Fix time to daytime (14:00)
+	srv.TranscodeEngine().Scheduler().SetNowFunc(func() time.Time {
+		return time.Date(2026, 10, 16, 14, 0, 0, 0, time.Local)
+	})
+
+	// 1. Daytime telemetry without override
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/system/events", nil)
+	w := httptest.NewRecorder()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	req = req.WithContext(ctx)
+
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		cancel()
+	}()
+	srv.Handler().ServeHTTP(w, req)
+
+	// Verify initial SSE push contains gpu_status
+	body := w.Body.String()
+	if !strings.Contains(body, `"gpu_status":"Daytime (AI Priority)"`) {
+		t.Errorf("expected SSE telemetry to include 'Daytime (AI Priority)', got: %s", body)
+	}
+
+	// 2. Enable manual override: GPU status transitions to Off-Peak
+	srv.TranscodeEngine().SetManualOverride(true)
+
+	w2 := httptest.NewRecorder()
+	ctx2, cancel2 := context.WithCancel(context.Background())
+	defer cancel2()
+	req2 := httptest.NewRequest(http.MethodGet, "/api/v1/system/events", nil).WithContext(ctx2)
+
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		cancel2()
+	}()
+	srv.Handler().ServeHTTP(w2, req2)
+
+	body2 := w2.Body.String()
+	if !strings.Contains(body2, `"gpu_status":"Off-Peak (Transcoding Active)"`) {
+		t.Errorf("expected SSE telemetry to include 'Off-Peak (Transcoding Active)' under manual override, got: %s", body2)
+	}
+}
+
+func TestServer_Transcode_EndToEndBatchExecution(t *testing.T) {
+	srv, dataDir := setupTestServer(t)
+	defer srv.Close()
+
+	// Configure night window
+	srv.TranscodeEngine().Scheduler().SetNowFunc(func() time.Time {
+		return time.Date(2026, 10, 16, 2, 0, 0, 0, time.Local) // 02:00
+	})
+
+	// Prepare raw rip in staging
+	rawRip := filepath.Join(dataDir, "media", "staging", "movie_raw.mkv")
+	_ = os.MkdirAll(filepath.Dir(rawRip), 0755)
+	_ = os.WriteFile(rawRip, []byte("RAW_DISC_STREAM"), 0644)
+
+	// Enqueue job via HTTP API
+	targetMP4 := filepath.Join(dataDir, "media", "movies", "Test Movie (2024)", "movie.mp4")
+	enqPayload := map[string]any{
+		"source_path": rawRip,
+		"target_path": targetMP4,
+		"profile":     "universal",
+	}
+	body, _ := json.Marshal(enqPayload)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/transcode/queue", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(w, req)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("enqueue failed with status %d: %s", w.Code, w.Body.String())
+	}
+
+	var job TranscodeJobResponse
+	_ = json.Unmarshal(w.Body.Bytes(), &job)
+
+	// Process job via engine
+	err := srv.TranscodeEngine().ProcessOnce(context.Background())
+	if err != nil {
+		t.Fatalf("ProcessOnce failed: %v", err)
+	}
+
+	// Verify target MP4 exists and is verified
+	fi, err := os.Stat(targetMP4)
+	if err != nil {
+		t.Fatalf("expected target MP4 %q to exist: %v", targetMP4, err)
+	}
+	if fi.Size() == 0 {
+		t.Fatalf("target MP4 is empty")
+	}
+
+	// Verify queue status is completed
+	qReq := httptest.NewRequest(http.MethodGet, "/api/v1/transcode/queue", nil)
+	qW := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(qW, qReq)
+
+	var qResp TranscodeQueueResponse
+	_ = json.Unmarshal(qW.Body.Bytes(), &qResp)
+	if len(qResp.Jobs) != 1 || qResp.Jobs[0].Status != "completed" {
+		t.Errorf("expected 1 completed job in queue, got: %+v", qResp)
+	}
+}
+

@@ -25,11 +25,72 @@ import (
 	"sovereign/internal/storage"
 	"sovereign/internal/store"
 	"sovereign/internal/supervisor"
+	"sovereign/internal/transcode"
 )
 
 const (
 	AppVersion = "0.1.0"
 )
+
+// TranscodeJobResponse matches the OpenAPI 3.1 contract.
+type TranscodeJobResponse struct {
+	ID           string  `json:"id"`
+	SourcePath   string  `json:"source_path"`
+	TargetPath   string  `json:"target_path"`
+	Profile      string  `json:"profile"`
+	Status       string  `json:"status"`
+	Progress     float64 `json:"progress"`
+	EncoderUsed  string  `json:"encoder_used,omitempty"`
+	ErrorMessage string  `json:"error_message,omitempty"`
+	CreatedAt    string  `json:"created_at"`
+	StartedAt    string  `json:"started_at,omitempty"`
+	CompletedAt  string  `json:"completed_at,omitempty"`
+}
+
+// TranscodeQueueResponse matches the OpenAPI 3.1 contract.
+type TranscodeQueueResponse struct {
+	Jobs        []TranscodeJobResponse `json:"jobs"`
+	Total       int                    `json:"total"`
+	ActiveJobID string                 `json:"active_job_id,omitempty"`
+}
+
+// EnqueueTranscodeRequest matches the OpenAPI 3.1 contract.
+type EnqueueTranscodeRequest struct {
+	SourcePath string `json:"source_path"`
+	TargetPath string `json:"target_path,omitempty"`
+	Profile    string `json:"profile,omitempty"`
+}
+
+// TranscodeScheduleResponse matches the OpenAPI 3.1 contract.
+type TranscodeScheduleResponse struct {
+	StartHour      int    `json:"start_hour"`
+	StartMinute    int    `json:"start_minute"`
+	EndHour        int    `json:"end_hour"`
+	EndMinute      int    `json:"end_minute"`
+	IsOffPeak      bool   `json:"is_off_peak"`
+	ManualOverride bool   `json:"manual_override"`
+	Status         string `json:"status"`
+}
+
+// UpdateTranscodeScheduleRequest matches the OpenAPI 3.1 contract.
+type UpdateTranscodeScheduleRequest struct {
+	StartHour   int `json:"start_hour"`
+	StartMinute int `json:"start_minute,omitempty"`
+	EndHour     int `json:"end_hour"`
+	EndMinute   int `json:"end_minute,omitempty"`
+}
+
+// TranscodeOverrideRequest matches the OpenAPI 3.1 contract.
+type TranscodeOverrideRequest struct {
+	Force bool `json:"force"`
+}
+
+// TranscodeOverrideResponse matches the OpenAPI 3.1 contract.
+type TranscodeOverrideResponse struct {
+	Status         string `json:"status"`
+	ManualOverride bool   `json:"manual_override"`
+	Message        string `json:"message"`
+}
 
 // EnrichmentScanResponse matches the OpenAPI 3.1 contract.
 type EnrichmentScanResponse struct {
@@ -121,6 +182,10 @@ type Config struct {
 	KEYDBManager      *optical.KEYDBManager
 	EnrichmentEngine  *enrichment.EnrichmentEngine
 	MetadataClient    enrichment.MetadataClient
+	TranscodeEngine   *transcode.TranscodeEngine
+	Transcoder        transcode.Transcoder
+	TranscodeStore    transcode.Store
+	TranscodeSchedule *transcode.Scheduler
 }
 
 type sseEvent struct {
@@ -145,6 +210,7 @@ type Server struct {
 	dropzoneEngine    *storage.DropzoneEngine
 	opticalRipper     *optical.OpticalRipper
 	enrichmentEngine  *enrichment.EnrichmentEngine
+	transcodeEngine   *transcode.TranscodeEngine
 	stopChan          chan struct{}
 	closeOnce         sync.Once
 	mu                sync.RWMutex
@@ -355,6 +421,45 @@ func NewServer(cfg Config) (*Server, error) {
 	}
 	s.enrichmentEngine = cfg.EnrichmentEngine
 
+	if cfg.TranscodeEngine == nil {
+		store := cfg.TranscodeStore
+		if store == nil && db != nil {
+			store = transcode.NewSQLiteStore(db.DB)
+			if err := store.InitSchema(context.Background()); err != nil {
+				cfg.Logger.Warn("transcode queue schema initialization warning", "error", err)
+			}
+		}
+		sched := cfg.TranscodeSchedule
+		if sched == nil {
+			var err error
+			sched, err = transcode.NewScheduler(transcode.DefaultScheduleConfig())
+			if err != nil {
+				cfg.Logger.Error("failed to create transcode scheduler", "error", err)
+				return nil, fmt.Errorf("transcode scheduler initialization failed: %w", err)
+			}
+		}
+		var err error
+		cfg.TranscodeEngine, err = transcode.NewTranscodeEngine(transcode.EngineConfig{
+			DataDir:     cfg.DataDir,
+			Store:       store,
+			Scheduler:   sched,
+			Transcoder:  cfg.Transcoder,
+			Refresher:   s.serviceMgr,
+			Broadcaster: s.BroadcastEvent,
+			Logger:      cfg.Logger,
+		})
+		if err != nil {
+			cfg.Logger.Error("transcode engine initialization failed", "error", err)
+			return nil, fmt.Errorf("transcode engine initialization failed: %w", err)
+		}
+	} else {
+		if s.serviceMgr != nil {
+			cfg.TranscodeEngine.SetRefresher(s.serviceMgr)
+		}
+		cfg.TranscodeEngine.SetBroadcaster(s.BroadcastEvent)
+	}
+	s.transcodeEngine = cfg.TranscodeEngine
+
 	s.routes()
 	return s, nil
 }
@@ -453,6 +558,11 @@ func (s *Server) StartBackgroundServices(ctx context.Context) {
 	if s.enrichmentEngine != nil {
 		s.enrichmentEngine.Start(ctx)
 	}
+
+	// 10. Start off-peak transcoding queue runner
+	if s.transcodeEngine != nil {
+		s.transcodeEngine.Start(ctx)
+	}
 }
 
 // BootManager returns the active BootManager instance.
@@ -511,6 +621,13 @@ func (s *Server) EnrichmentEngine() *enrichment.EnrichmentEngine {
 	return s.enrichmentEngine
 }
 
+// TranscodeEngine returns the active TranscodeEngine instance.
+func (s *Server) TranscodeEngine() *transcode.TranscodeEngine {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.transcodeEngine
+}
+
 // BroadcastEvent emits an SSE event to all actively connected SSE clients.
 func (s *Server) BroadcastEvent(event string, data any) {
 	s.eventsMu.RLock()
@@ -547,6 +664,10 @@ func (s *Server) Close() error {
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	if s.transcodeEngine != nil {
+		_ = s.transcodeEngine.Close()
+	}
 
 	if s.enrichmentEngine != nil {
 		_ = s.enrichmentEngine.Close()
@@ -645,6 +766,13 @@ func (s *Server) routes() {
 	// Media metadata and artwork enrichment endpoints
 	s.router.HandleFunc("GET /api/v1/enrichment/status", s.handleEnrichmentStatus)
 	s.router.HandleFunc("POST /api/v1/enrichment/scan", s.handleEnrichmentScan)
+
+	// Off-peak transcoding queue and pre-encoding endpoints
+	s.router.HandleFunc("GET /api/v1/transcode/queue", s.handleTranscodeQueue)
+	s.router.HandleFunc("POST /api/v1/transcode/queue", s.handleEnqueueTranscode)
+	s.router.HandleFunc("GET /api/v1/transcode/schedule", s.handleGetTranscodeSchedule)
+	s.router.HandleFunc("POST /api/v1/transcode/schedule", s.requireSetupOrAdmin(s.handleUpdateTranscodeSchedule))
+	s.router.HandleFunc("POST /api/v1/transcode/override", s.requireSetupOrAdmin(s.handleTranscodeOverride))
 }
 
 
@@ -885,6 +1013,11 @@ func (s *Server) getTelemetryUpdate(ctx context.Context) TelemetryUpdate {
 		opticalStatus = "Matching metadata"
 	}
 
+	gpuStatus := "Daytime (AI Priority)"
+	if s.transcodeEngine != nil {
+		gpuStatus = s.transcodeEngine.GetGPUStatus()
+	}
+
 	return TelemetryUpdate{
 		CPUPercent:        cpuPercent,
 		MemoryUsedBytes:   memUsed,
@@ -896,7 +1029,7 @@ func (s *Server) getTelemetryUpdate(ctx context.Context) TelemetryUpdate {
 		NASMessage:        nasMessage,
 		OverallStatus:     overallStatus,
 		OpticalStatus:     opticalStatus,
-		GPUStatus:         "Daytime (AI Priority)",
+		GPUStatus:         gpuStatus,
 		Timestamp:         time.Now().UTC().Format(time.RFC3339),
 	}
 }
@@ -1831,4 +1964,182 @@ func (s *Server) handleEnrichmentScan(w http.ResponseWriter, r *http.Request) {
 		ItemsProcessed: count,
 	})
 }
+
+// handleTranscodeQueue lists all jobs currently in the transcoding queue.
+func (s *Server) handleTranscodeQueue(w http.ResponseWriter, r *http.Request) {
+	if s.transcodeEngine == nil {
+		s.writeProblem(w, http.StatusServiceUnavailable, "Transcode Engine Unavailable", "Transcode engine is not initialized", r.URL.Path)
+		return
+	}
+
+	jobs, err := s.transcodeEngine.GetQueue(r.Context())
+	if err != nil {
+		s.logger.Error("failed to list transcode queue", "error", err)
+		s.writeProblem(w, http.StatusInternalServerError, "Queue Query Failed", err.Error(), r.URL.Path)
+		return
+	}
+
+	st := s.transcodeEngine.GetStatus()
+	resp := TranscodeQueueResponse{
+		Jobs:        make([]TranscodeJobResponse, 0, len(jobs)),
+		Total:       len(jobs),
+		ActiveJobID: st.ActiveJobID,
+	}
+
+	for _, j := range jobs {
+		item := TranscodeJobResponse{
+			ID:           j.ID,
+			SourcePath:   j.SourcePath,
+			TargetPath:   j.TargetPath,
+			Profile:      j.Profile,
+			Status:       string(j.Status),
+			Progress:     j.Progress,
+			EncoderUsed:  j.EncoderUsed,
+			ErrorMessage: j.ErrorMessage,
+			CreatedAt:    j.CreatedAt.Format(time.RFC3339),
+		}
+		if j.StartedAt != nil {
+			item.StartedAt = j.StartedAt.Format(time.RFC3339)
+		}
+		if j.CompletedAt != nil {
+			item.CompletedAt = j.CompletedAt.Format(time.RFC3339)
+		}
+		resp.Jobs = append(resp.Jobs, item)
+	}
+
+	s.writeJSON(w, http.StatusOK, resp)
+}
+
+// handleEnqueueTranscode enqueues a media file for background off-peak transcoding.
+func (s *Server) handleEnqueueTranscode(w http.ResponseWriter, r *http.Request) {
+	if s.transcodeEngine == nil {
+		s.writeProblem(w, http.StatusServiceUnavailable, "Transcode Engine Unavailable", "Transcode engine is not initialized", r.URL.Path)
+		return
+	}
+
+	var req EnqueueTranscodeRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.writeProblem(w, http.StatusBadRequest, "Invalid JSON", "Failed to parse request body: "+err.Error(), r.URL.Path)
+		return
+	}
+
+	if strings.TrimSpace(req.SourcePath) == "" {
+		s.writeProblem(w, http.StatusBadRequest, "Missing Source Path", "source_path is required", r.URL.Path)
+		return
+	}
+
+	job, err := s.transcodeEngine.Enqueue(r.Context(), transcode.EnqueueRequest{
+		SourcePath: req.SourcePath,
+		TargetPath: req.TargetPath,
+		Profile:    req.Profile,
+	})
+	if err != nil {
+		s.writeProblem(w, http.StatusBadRequest, "Invalid File Path", err.Error(), r.URL.Path)
+		return
+	}
+
+	resp := TranscodeJobResponse{
+		ID:           job.ID,
+		SourcePath:   job.SourcePath,
+		TargetPath:   job.TargetPath,
+		Profile:      job.Profile,
+		Status:       string(job.Status),
+		Progress:     job.Progress,
+		EncoderUsed:  job.EncoderUsed,
+		ErrorMessage: job.ErrorMessage,
+		CreatedAt:    job.CreatedAt.Format(time.RFC3339),
+	}
+
+	s.writeJSON(w, http.StatusCreated, resp)
+}
+
+// handleGetTranscodeSchedule returns current off-peak schedule configuration and live status.
+func (s *Server) handleGetTranscodeSchedule(w http.ResponseWriter, r *http.Request) {
+	if s.transcodeEngine == nil {
+		s.writeProblem(w, http.StatusServiceUnavailable, "Transcode Engine Unavailable", "Transcode engine is not initialized", r.URL.Path)
+		return
+	}
+
+	sched := s.transcodeEngine.Scheduler()
+	cfg := sched.GetConfig()
+	resp := TranscodeScheduleResponse{
+		StartHour:      cfg.StartHour,
+		StartMinute:    cfg.StartMinute,
+		EndHour:        cfg.EndHour,
+		EndMinute:      cfg.EndMinute,
+		IsOffPeak:      sched.IsOffPeakNow(),
+		ManualOverride: sched.ManualOverride(),
+		Status:         sched.GetGPUStatusNow(),
+	}
+
+	s.writeJSON(w, http.StatusOK, resp)
+}
+
+// handleUpdateTranscodeSchedule updates off-peak window hours and minutes.
+func (s *Server) handleUpdateTranscodeSchedule(w http.ResponseWriter, r *http.Request) {
+	if s.transcodeEngine == nil {
+		s.writeProblem(w, http.StatusServiceUnavailable, "Transcode Engine Unavailable", "Transcode engine is not initialized", r.URL.Path)
+		return
+	}
+
+	var req UpdateTranscodeScheduleRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.writeProblem(w, http.StatusBadRequest, "Invalid JSON", "Failed to parse schedule config: "+err.Error(), r.URL.Path)
+		return
+	}
+
+	sched := s.transcodeEngine.Scheduler()
+	currentCfg := sched.GetConfig()
+	currentCfg.StartHour = req.StartHour
+	currentCfg.StartMinute = req.StartMinute
+	currentCfg.EndHour = req.EndHour
+	currentCfg.EndMinute = req.EndMinute
+
+	if err := sched.SetConfig(currentCfg); err != nil {
+		s.writeProblem(w, http.StatusBadRequest, "Invalid Schedule", err.Error(), r.URL.Path)
+		return
+	}
+
+	resp := TranscodeScheduleResponse{
+		StartHour:      currentCfg.StartHour,
+		StartMinute:    currentCfg.StartMinute,
+		EndHour:        currentCfg.EndHour,
+		EndMinute:      currentCfg.EndMinute,
+		IsOffPeak:      sched.IsOffPeakNow(),
+		ManualOverride: sched.ManualOverride(),
+		Status:         sched.GetGPUStatusNow(),
+	}
+
+	s.writeJSON(w, http.StatusOK, resp)
+}
+
+// handleTranscodeOverride enables or disables manual override bypassing daytime schedule restrictions.
+func (s *Server) handleTranscodeOverride(w http.ResponseWriter, r *http.Request) {
+	if s.transcodeEngine == nil {
+		s.writeProblem(w, http.StatusServiceUnavailable, "Transcode Engine Unavailable", "Transcode engine is not initialized", r.URL.Path)
+		return
+	}
+
+	var req TranscodeOverrideRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.writeProblem(w, http.StatusBadRequest, "Invalid JSON", "Failed to parse override body: "+err.Error(), r.URL.Path)
+		return
+	}
+
+	s.transcodeEngine.SetManualOverride(req.Force)
+
+	statusStr := "inactive"
+	msg := "Manual override disabled; daytime AI priority restored"
+	if req.Force {
+		statusStr = "active"
+		msg = "Manual override enabled; daytime batch transcoding active"
+	}
+
+	s.writeJSON(w, http.StatusOK, TranscodeOverrideResponse{
+		Status:         statusStr,
+		ManualOverride: req.Force,
+		Message:        msg,
+	})
+}
+
 
