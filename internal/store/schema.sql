@@ -78,3 +78,19 @@ CREATE TABLE IF NOT EXISTS imap_configs (
 
 CREATE INDEX IF NOT EXISTS idx_imap_configs_enabled ON imap_configs(enabled, updated_at);
 
+CREATE TABLE IF NOT EXISTS document_deadlines (
+    id TEXT PRIMARY KEY,
+    document_id TEXT NOT NULL,
+    title TEXT NOT NULL,
+    due_date TEXT NOT NULL,
+    amount REAL NULL,
+    currency TEXT DEFAULT '',
+    snippet TEXT DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'pending',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_document_deadlines_doc_due ON document_deadlines(document_id, due_date);
+CREATE INDEX IF NOT EXISTS idx_document_deadlines_status_due ON document_deadlines(status, due_date);
+

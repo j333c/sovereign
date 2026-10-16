@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -198,6 +199,8 @@ type Config struct {
 	IMAPStore         *store.IMAPStore
 	IMAPPoller        *documents.Poller
 	IngestEngine      *documents.IngestEngine
+	DeadlineStore     *store.DeadlineStore
+	ObligationScanner *documents.ObligationScanner
 }
 
 type sseEvent struct {
@@ -226,6 +229,8 @@ type Server struct {
 	imapStore         *store.IMAPStore
 	imapPoller        *documents.Poller
 	ingestEngine      *documents.IngestEngine
+	deadlineStore     *store.DeadlineStore
+	obligationScanner *documents.ObligationScanner
 	stopChan          chan struct{}
 	closeOnce         sync.Once
 	mu                sync.RWMutex
@@ -519,6 +524,27 @@ func NewServer(cfg Config) (*Server, error) {
 	}
 	s.imapPoller = cfg.IMAPPoller
 
+	// 12. Initialize DeadlineStore and ObligationScanner
+	if cfg.DeadlineStore == nil && db != nil {
+		var err error
+		cfg.DeadlineStore, err = store.NewDeadlineStore(db)
+		if err != nil {
+			cfg.Logger.Error("failed to initialize deadline store", "error", err)
+			return nil, fmt.Errorf("deadline store initialization failed: %w", err)
+		}
+	}
+	s.deadlineStore = cfg.DeadlineStore
+
+	if cfg.ObligationScanner == nil && s.deadlineStore != nil {
+		llmBaseURL := cfg.CaddyURL
+		if llmBaseURL == "" {
+			llmBaseURL = "http://127.0.0.1:8080"
+		}
+		llmExtractor := documents.NewGatewayLLMExtractor(llmBaseURL, cfg.Logger)
+		cfg.ObligationScanner = documents.NewObligationScanner(s.deadlineStore, llmExtractor, s.BroadcastEvent, cfg.Logger)
+	}
+	s.obligationScanner = cfg.ObligationScanner
+
 	s.routes()
 	return s, nil
 }
@@ -627,6 +653,11 @@ func (s *Server) StartBackgroundServices(ctx context.Context) {
 	if s.imapPoller != nil {
 		s.imapPoller.Start(ctx)
 	}
+
+	// 12. Start obligation scanner background runner
+	if s.obligationScanner != nil {
+		s.obligationScanner.Start(ctx)
+	}
 }
 
 // BootManager returns the active BootManager instance.
@@ -716,6 +747,25 @@ func (s *Server) BroadcastEvent(event string, data any) {
 			}
 		}
 	}
+
+	// When a document is ingested, automatically trigger obligation scanning asynchronously
+	if event == "dms.document_ingested" {
+		if m, ok := data.(map[string]any); ok {
+			docID, _ := m["id"].(string)
+			filename, _ := m["filename"].(string)
+			consumePath, _ := m["consume_path"].(string)
+			if consumePath == "" {
+				consumePath, _ = m["path"].(string)
+			}
+			if s.obligationScanner != nil && consumePath != "" {
+				go func() {
+					ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+					defer cancel()
+					_, _ = s.obligationScanner.ScanDocumentFile(ctx, docID, filename, consumePath, false)
+				}()
+			}
+		}
+	}
 }
 
 // Close closes database handles and frees ingress/mDNS/storage/supervisor resources.
@@ -728,6 +778,10 @@ func (s *Server) Close() error {
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	if s.obligationScanner != nil {
+		s.obligationScanner.Stop()
+	}
 
 	if s.transcodeEngine != nil {
 		_ = s.transcodeEngine.Close()
@@ -848,6 +902,11 @@ func (s *Server) routes() {
 	s.router.HandleFunc("GET /api/v1/documents/imap", s.requireSetupOrAdmin(s.handleGetIMAPConfig))
 	s.router.HandleFunc("POST /api/v1/documents/imap", s.requireSetupOrAdmin(s.handleSaveIMAPConfig))
 	s.router.HandleFunc("POST /api/v1/documents/imap/test", s.requireSetupOrAdmin(s.handleTestIMAPConnection))
+
+	// Document deadline extraction and obligation scanner endpoints
+	s.router.HandleFunc("GET /api/v1/documents/deadlines", s.handleGetDeadlines)
+	s.router.HandleFunc("POST /api/v1/documents/deadlines/{id}/dismiss", s.requireSetupOrAdmin(s.handleDismissDeadline))
+	s.router.HandleFunc("POST /api/v1/documents/deadlines/scan", s.requireSetupOrAdmin(s.handleScanDeadlines))
 }
 
 
@@ -2648,6 +2707,155 @@ func (s *Server) IngestEngine() *documents.IngestEngine {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.ingestEngine
+}
+
+// DeadlineStore returns the active document deadline repository.
+func (s *Server) DeadlineStore() *store.DeadlineStore {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.deadlineStore
+}
+
+// ObligationScanner returns the active obligation scanner coordinator.
+func (s *Server) ObligationScanner() *documents.ObligationScanner {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.obligationScanner
+}
+
+// handleGetDeadlines handles GET /api/v1/documents/deadlines.
+func (s *Server) handleGetDeadlines(w http.ResponseWriter, r *http.Request) {
+	if s.deadlineStore == nil {
+		s.writeProblem(w, http.StatusServiceUnavailable, "Store Unavailable", "Deadline store is not initialized", r.URL.Path)
+		return
+	}
+
+	status := r.URL.Query().Get("status")
+	if status == "" {
+		status = store.DeadlineStatusPending
+	}
+
+	withinDays := 14
+	if q := r.URL.Query().Get("within_days"); q != "" {
+		if parsed, err := strconv.Atoi(q); err == nil {
+			withinDays = parsed
+		}
+	}
+
+	deadlines, err := s.deadlineStore.List(r.Context(), status, withinDays, time.Now())
+	if err != nil {
+		s.writeProblem(w, http.StatusInternalServerError, "Query Failed", fmt.Sprintf("Failed to list deadlines: %v", err), r.URL.Path)
+		return
+	}
+
+	if deadlines == nil {
+		deadlines = []*store.DocumentDeadline{}
+	}
+
+	s.writeJSON(w, http.StatusOK, deadlines)
+}
+
+// handleDismissDeadline handles POST /api/v1/documents/deadlines/{id}/dismiss.
+func (s *Server) handleDismissDeadline(w http.ResponseWriter, r *http.Request) {
+	if s.deadlineStore == nil {
+		s.writeProblem(w, http.StatusServiceUnavailable, "Store Unavailable", "Deadline store is not initialized", r.URL.Path)
+		return
+	}
+
+	id := r.PathValue("id")
+	if id == "" {
+		s.writeProblem(w, http.StatusBadRequest, "Invalid ID", "Deadline ID is required in path", r.URL.Path)
+		return
+	}
+
+	updated, err := s.deadlineStore.Dismiss(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, store.ErrDeadlineNotFound) {
+			s.writeProblem(w, http.StatusNotFound, "Not Found", fmt.Sprintf("Deadline with ID %q was not found", id), r.URL.Path)
+			return
+		}
+		s.writeProblem(w, http.StatusInternalServerError, "Dismissal Failed", fmt.Sprintf("Failed to dismiss deadline: %v", err), r.URL.Path)
+		return
+	}
+
+	s.writeJSON(w, http.StatusOK, updated)
+}
+
+// ScanDeadlinesRequest matches the OpenAPI contract for manual obligation scan trigger.
+type ScanDeadlinesRequest struct {
+	Force      bool   `json:"force"`
+	DocumentID string `json:"document_id,omitempty"`
+	Title      string `json:"title,omitempty"`
+	Text       string `json:"text,omitempty"`
+}
+
+// ScanDeadlinesResponse matches the OpenAPI contract for manual obligation scan results.
+type ScanDeadlinesResponse struct {
+	Status         string                    `json:"status"`
+	ScannedCount   int                       `json:"scanned_count"`
+	DeadlinesFound int                       `json:"deadlines_found"`
+	Deadlines      []*store.DocumentDeadline `json:"deadlines"`
+}
+
+// handleScanDeadlines handles POST /api/v1/documents/deadlines/scan.
+func (s *Server) handleScanDeadlines(w http.ResponseWriter, r *http.Request) {
+	if s.obligationScanner == nil {
+		s.writeProblem(w, http.StatusServiceUnavailable, "Scanner Unavailable", "Obligation scanner is not initialized", r.URL.Path)
+		return
+	}
+
+	var req ScanDeadlinesRequest
+	if r.Body != nil && r.ContentLength > 0 {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err != io.EOF {
+			s.writeProblem(w, http.StatusBadRequest, "Invalid Request", fmt.Sprintf("Failed to decode scan request: %v", err), r.URL.Path)
+			return
+		}
+	}
+
+	var found []*store.DocumentDeadline
+	scannedCount := 0
+
+	if strings.TrimSpace(req.Text) != "" {
+		docID := req.DocumentID
+		if docID == "" {
+			docID = "manual-scan"
+		}
+		title := req.Title
+		if title == "" {
+			title = "Scanned Document"
+		}
+		results, err := s.obligationScanner.ScanDocumentText(r.Context(), docID, title, req.Text, req.Force)
+		if err != nil {
+			s.writeProblem(w, http.StatusInternalServerError, "Scan Failed", fmt.Sprintf("Document text scan failed: %v", err), r.URL.Path)
+			return
+		}
+		found = append(found, results...)
+		scannedCount = 1
+	} else {
+		// Run batch pass over queued/pending documents
+		processed, err := s.obligationScanner.ProcessNightlyBatch(r.Context())
+		if err != nil {
+			s.logger.Warn("batch scan completed with warnings", "error", err)
+		}
+		scannedCount = processed
+		if s.deadlineStore != nil {
+			list, err := s.deadlineStore.List(r.Context(), store.DeadlineStatusPending, s.obligationScanner.AlertThreshold(), time.Now())
+			if err == nil {
+				found = list
+			}
+		}
+	}
+
+	if found == nil {
+		found = []*store.DocumentDeadline{}
+	}
+
+	s.writeJSON(w, http.StatusOK, ScanDeadlinesResponse{
+		Status:         "completed",
+		ScannedCount:   scannedCount,
+		DeadlinesFound: len(found),
+		Deadlines:      found,
+	})
 }
 
 

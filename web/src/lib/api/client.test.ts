@@ -1029,6 +1029,83 @@ describe("SovereignApiClient", () => {
     });
     assert.equal(testRes.success, true);
   });
+
+  it("successfully calls getDeadlines, dismissDeadline, and scanDeadlines", async () => {
+    const mockDeadline = {
+      id: "deadline-123",
+      document_id: "doc-482",
+      title: "Invoice #482",
+      due_date: "2026-10-28",
+      amount: 150.0,
+      currency: "USD",
+      snippet: "Invoice #482. Total Due: $150.00 by 2026-10-28",
+      status: "pending",
+      created_at: "2026-10-16T10:00:00Z",
+      updated_at: "2026-10-16T10:00:00Z",
+    };
+
+    const mockFetch: typeof fetch = async (input, init) => {
+      const url = String(input);
+
+      if (url.includes("/api/v1/documents/deadlines?") && init?.method === undefined) {
+        assert.ok(url.includes("status=pending"));
+        assert.ok(url.includes("within_days=14"));
+        return new Response(JSON.stringify([mockDeadline]), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+
+      if (url === "http://localhost:8080/api/v1/documents/deadlines/deadline-123/dismiss" && init?.method === "POST") {
+        return new Response(
+          JSON.stringify({ ...mockDeadline, status: "dismissed" }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+
+      if (url === "http://localhost:8080/api/v1/documents/deadlines/scan" && init?.method === "POST") {
+        const body = JSON.parse(init.body as string);
+        assert.equal(body.force, true);
+        return new Response(
+          JSON.stringify({
+            status: "completed",
+            scanned_count: 1,
+            deadlines_found: 1,
+            deadlines: [mockDeadline],
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+
+      return new Response("Not found", { status: 404 });
+    };
+
+    const client = new SovereignApiClient({
+      baseUrl: "http://localhost:8080",
+      fetchFn: mockFetch,
+    });
+
+    // 1. getDeadlines
+    const deadlines = await client.getDeadlines("pending", 14);
+    assert.equal(deadlines.length, 1);
+    assert.equal(deadlines[0].id, "deadline-123");
+    assert.equal(deadlines[0].due_date, "2026-10-28");
+    assert.equal(deadlines[0].amount, 150.0);
+
+    // 2. dismissDeadline
+    const dismissed = await client.dismissDeadline("deadline-123");
+    assert.equal(dismissed.id, "deadline-123");
+    assert.equal(dismissed.status, "dismissed");
+
+    // 3. scanDeadlines
+    const scanRes = await client.scanDeadlines({
+      force: true,
+      text: "Invoice #482. Total Due: $150.00 by 2026-10-28",
+    });
+    assert.equal(scanRes.status, "completed");
+    assert.equal(scanRes.deadlines_found, 1);
+    assert.equal(scanRes.deadlines[0].title, "Invoice #482");
+  });
 });
 
 

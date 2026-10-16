@@ -75,7 +75,7 @@ export interface paths {
          * Real-time SSE telemetry event stream
          * @description Streams real-time hardware telemetry updates (CPU, RAM, storage, NAS, optical, GPU),
          *     service lifecycle events (service.pull_progress, service.health_changed, service.error),
-         *     and document ingestion events (dms.document_ingested, dms.mailbox_status)
+         *     and document events (dms.document_ingested, dms.mailbox_status, dms.deadline_detected)
          *     via Server-Sent Events.
          */
         get: operations["getSystemEvents"];
@@ -96,7 +96,7 @@ export interface paths {
         };
         /**
          * Real-time SSE telemetry stream alias
-         * @description Convenience root alias for /api/v1/system/events emitting telemetry, service lifecycle, and dms events.
+         * @description Convenience root alias for /api/v1/system/events emitting telemetry, service lifecycle, and dms events (including dms.deadline_detected).
          */
         get: operations["getEvents"];
         put?: never;
@@ -559,6 +559,68 @@ export interface paths {
          *     to degraded (amber) with reassuring microcopy without terminating the container.
          */
         post: operations["testIMAPConnection"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/documents/deadlines": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Query detected document deadlines and obligations
+         * @description Returns list of extracted document deadlines ordered by due_date ASC.
+         *     Filterable by status (default: pending) and within_days time threshold (default: 14 days).
+         */
+        get: operations["getDeadlines"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/documents/deadlines/{id}/dismiss": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Dismiss a detected document deadline
+         * @description Updates deadline status to dismissed, excluding it from active upcoming alert queries.
+         */
+        post: operations["dismissDeadline"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/documents/deadlines/scan": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Trigger manual document obligation scan
+         * @description Executes deterministic Tier 1 regex parsing and optional Tier 2 LLM extraction.
+         *     Supports scanning provided text directly or running batch window processing.
+         */
+        post: operations["scanDeadlines"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1567,6 +1629,103 @@ export interface components {
             last_error?: string;
             /** @example 2026-10-16T10:00:00Z */
             last_polled_at?: string;
+        };
+        DocumentDeadline: {
+            /** @example 018f27ab-4318-7b9c-8517-8e67f70bca11 */
+            id: string;
+            /** @example doc-482 */
+            document_id: string;
+            /** @example Invoice #482 */
+            title: string;
+            /**
+             * Format: date
+             * @example 2026-10-28
+             */
+            due_date: string;
+            /**
+             * Format: double
+             * @example 150
+             */
+            amount?: number | null;
+            /** @example USD */
+            currency?: string;
+            /** @example Invoice #482. Total Due: $150.00 by 2026-10-28 */
+            snippet?: string;
+            /**
+             * @example pending
+             * @enum {string}
+             */
+            status: "pending" | "future" | "dismissed";
+            /**
+             * Format: date-time
+             * @example 2026-10-16T10:00:00Z
+             */
+            created_at: string;
+            /**
+             * Format: date-time
+             * @example 2026-10-16T10:00:00Z
+             */
+            updated_at: string;
+        };
+        ScanDeadlinesRequest: {
+            /**
+             * @description Force Tier 2 LLM extraction even during daytime peak hours.
+             * @example false
+             */
+            force?: boolean;
+            /**
+             * @description Optional document UUID to associate with extraction.
+             * @example manual-doc-1
+             */
+            document_id?: string;
+            /**
+             * @description Optional document title.
+             * @example Invoice #482
+             */
+            title?: string;
+            /**
+             * @description Document text or OCR content to scan.
+             * @example Invoice #482. Total Due: $150.00 by 2026-10-28
+             */
+            text?: string;
+        };
+        ScanDeadlinesResponse: {
+            /** @example completed */
+            status: string;
+            /** @example 1 */
+            scanned_count: number;
+            /** @example 1 */
+            deadlines_found: number;
+            deadlines: components["schemas"]["DocumentDeadline"][];
+        };
+        DMSDeadlineDetectedEvent: {
+            /** @example 018f27ab-4318-7b9c-8517-8e67f70bca11 */
+            id: string;
+            /** @example doc-482 */
+            document_id: string;
+            /** @example Invoice #482 */
+            title: string;
+            /**
+             * Format: date
+             * @example 2026-10-28
+             */
+            due_date: string;
+            /**
+             * Format: double
+             * @example 150
+             */
+            amount?: number | null;
+            /** @example USD */
+            currency?: string;
+            /** @example Invoice #482. Total Due: $150.00 by 2026-10-28 */
+            snippet?: string;
+            /**
+             * @example pending
+             * @enum {string}
+             */
+            status: "pending" | "future" | "dismissed";
+            /** @example 12 */
+            days_remaining?: number;
         };
     };
     responses: never;
@@ -2701,6 +2860,123 @@ export interface operations {
             };
             /** @description Mailbox connection or authentication failed. */
             502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    getDeadlines: {
+        parameters: {
+            query?: {
+                /** @description Filter deadlines by status (pending, future, dismissed, all). */
+                status?: "pending" | "future" | "dismissed" | "all";
+                /** @description Alert threshold in days from today (default 14). */
+                within_days?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description List of detected document deadlines and obligations. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DocumentDeadline"][];
+                };
+            };
+            /** @description Internal server error querying deadlines. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    dismissDeadline: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Unique deadline UUID identifier. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deadline dismissed successfully. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DocumentDeadline"];
+                };
+            };
+            /** @description Deadline ID not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Internal server error dismissing deadline. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    scanDeadlines: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["ScanDeadlinesRequest"];
+            };
+        };
+        responses: {
+            /** @description Scan executed and detected obligations returned. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScanDeadlinesResponse"];
+                };
+            };
+            /** @description Malformed scan request payload. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Error executing obligation scan. */
+            500: {
                 headers: {
                     [name: string]: unknown;
                 };

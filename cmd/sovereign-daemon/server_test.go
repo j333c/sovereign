@@ -5002,5 +5002,187 @@ func TestServer_IMAPTestConnection_SuccessAndDegradation(t *testing.T) {
 	}
 }
 
+func TestServer_Deadlines_QueryAndDismiss(t *testing.T) {
+	srv, _ := setupTestServer(t)
+	defer srv.Close()
+
+	ctx := context.Background()
+	dStore := srv.DeadlineStore()
+	if dStore == nil {
+		t.Fatalf("expected initialized deadline store")
+	}
+
+	now := time.Now().UTC()
+	amt1 := 150.00
+	d1 := &store.DocumentDeadline{
+		DocumentID: "doc-1",
+		Title:      "Electricity Bill",
+		DueDate:    now.AddDate(0, 0, 7).Format("2006-01-02"), // 7 days in future -> pending
+		Amount:     &amt1,
+		Currency:   "USD",
+		Snippet:    "Total Due: $150.00 in 7 days",
+		Status:     store.DeadlineStatusPending,
+	}
+	_ = dStore.Save(ctx, d1)
+
+	d2 := &store.DocumentDeadline{
+		DocumentID: "doc-2",
+		Title:      "Contract Expiration",
+		DueDate:    now.AddDate(0, 0, 45).Format("2006-01-02"), // 45 days in future -> future
+		Status:     store.DeadlineStatusFuture,
+	}
+	_ = dStore.Save(ctx, d2)
+
+	// 1. Query pending deadlines within 14 days
+	req := httptest.NewRequest("GET", "/api/v1/documents/deadlines?status=pending&within_days=14", nil)
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var results []*store.DocumentDeadline
+	if err := json.Unmarshal(w.Body.Bytes(), &results); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 pending deadline within 14 days, got %d", len(results))
+	}
+	if results[0].ID != d1.ID {
+		t.Errorf("expected deadline ID %q, got %q", d1.ID, results[0].ID)
+	}
+
+	// 2. Dismiss d1
+	dismissReq := httptest.NewRequest("POST", "/api/v1/documents/deadlines/"+d1.ID+"/dismiss", nil)
+	w = httptest.NewRecorder()
+	srv.router.ServeHTTP(w, dismissReq)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK on dismissal, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var dismissed store.DocumentDeadline
+	_ = json.Unmarshal(w.Body.Bytes(), &dismissed)
+	if dismissed.Status != store.DeadlineStatusDismissed {
+		t.Errorf("expected status 'dismissed', got %q", dismissed.Status)
+	}
+
+	// Query pending again -> must be empty
+	req = httptest.NewRequest("GET", "/api/v1/documents/deadlines?status=pending&within_days=14", nil)
+	w = httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+	_ = json.Unmarshal(w.Body.Bytes(), &results)
+	if len(results) != 0 {
+		t.Errorf("expected 0 pending deadlines after dismiss, got %d", len(results))
+	}
+
+	// 3. Dismiss non-existent ID -> 404 Not Found
+	dismissReq404 := httptest.NewRequest("POST", "/api/v1/documents/deadlines/non-existent-id/dismiss", nil)
+	w = httptest.NewRecorder()
+	srv.router.ServeHTTP(w, dismissReq404)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 Not Found, got %d", w.Code)
+	}
+	var prob ProblemDetails
+	_ = json.Unmarshal(w.Body.Bytes(), &prob)
+	if prob.Status != http.StatusNotFound {
+		t.Errorf("expected ProblemDetails status 404, got %d", prob.Status)
+	}
+}
+
+func TestServer_Deadlines_ManualScanEndpoint(t *testing.T) {
+	srv, _ := setupTestServer(t)
+	defer srv.Close()
+
+	scanBody := map[string]any{
+		"force":       true,
+		"document_id": "manual-doc-1",
+		"title":       "Invoice #482",
+		"text":        "Invoice #482. Total Due: $150.00 by 2026-10-28",
+	}
+	bodyBytes, _ := json.Marshal(scanBody)
+
+	req := httptest.NewRequest("POST", "/api/v1/documents/deadlines/scan", bytes.NewReader(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp ScanDeadlinesResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to decode scan response: %v", err)
+	}
+
+	if resp.Status != "completed" {
+		t.Errorf("expected status 'completed', got %q", resp.Status)
+	}
+	if resp.DeadlinesFound != 1 {
+		t.Fatalf("expected 1 deadline found, got %d", resp.DeadlinesFound)
+	}
+	if resp.Deadlines[0].DueDate != "2026-10-28" {
+		t.Errorf("expected due_date '2026-10-28', got %q", resp.Deadlines[0].DueDate)
+	}
+	if resp.Deadlines[0].Amount == nil || *resp.Deadlines[0].Amount != 150.00 {
+		t.Errorf("expected amount 150.00, got %v", resp.Deadlines[0].Amount)
+	}
+}
+
+func TestServer_Deadlines_IngestionTrigger(t *testing.T) {
+	srv, _ := setupTestServer(t)
+	defer srv.Close()
+
+	now := time.Now().UTC()
+	dueISO := now.AddDate(0, 0, 5).Format("2006-01-02")
+	pdfContent := documents.MakeSamplePDF(fmt.Sprintf("Invoice #900. Total Due: $350.00 by %s", dueISO))
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	part, err := writer.CreateFormFile("file", "invoice_900.pdf")
+	if err != nil {
+		t.Fatalf("failed to create form file: %v", err)
+	}
+	_, _ = part.Write(pdfContent)
+	_ = writer.Close()
+
+	req := httptest.NewRequest("POST", "/api/v1/documents/upload", &body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("expected 201 Created on upload, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// Scanner runs asynchronously upon dms.document_ingested. Wait briefly for scan completion.
+	var deadlines []*store.DocumentDeadline
+	for i := 0; i < 20; i++ {
+		time.Sleep(50 * time.Millisecond)
+		reqQuery := httptest.NewRequest("GET", "/api/v1/documents/deadlines?status=pending&within_days=14", nil)
+		wQuery := httptest.NewRecorder()
+		srv.router.ServeHTTP(wQuery, reqQuery)
+		if wQuery.Code == http.StatusOK {
+			_ = json.Unmarshal(wQuery.Body.Bytes(), &deadlines)
+			if len(deadlines) > 0 {
+				break
+			}
+		}
+	}
+
+	if len(deadlines) == 0 {
+		t.Fatalf("expected deadline extracted from ingested document, got 0")
+	}
+	if deadlines[0].DueDate != dueISO {
+		t.Errorf("expected due_date %q, got %q", dueISO, deadlines[0].DueDate)
+	}
+	if deadlines[0].Amount == nil || *deadlines[0].Amount != 350.00 {
+		t.Errorf("expected amount 350.00, got %v", deadlines[0].Amount)
+	}
+}
+
 
 

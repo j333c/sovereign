@@ -40,6 +40,10 @@ export type IMAPTestRequest = components["schemas"]["IMAPTestRequest"];
 export type IMAPTestResponse = components["schemas"]["IMAPTestResponse"];
 export type DMSDocumentIngestedEvent = components["schemas"]["DMSDocumentIngestedEvent"];
 export type DMSMailboxStatusEvent = components["schemas"]["DMSMailboxStatusEvent"];
+export type DocumentDeadline = components["schemas"]["DocumentDeadline"];
+export type ScanDeadlinesRequest = components["schemas"]["ScanDeadlinesRequest"];
+export type ScanDeadlinesResponse = components["schemas"]["ScanDeadlinesResponse"];
+export type DMSDeadlineDetectedEvent = components["schemas"]["DMSDeadlineDetectedEvent"];
 
 /**
  * ProblemDetailsError represents an RFC 7807 problem details error thrown by the daemon API.
@@ -442,6 +446,40 @@ export class SovereignApiClient {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(config),
+    });
+  }
+
+  /**
+   * Retrieve extracted document deadlines and impending obligations.
+   * @param status Filter deadlines by status (default: "pending").
+   * @param withinDays Filter impending deadlines within the specified days threshold (default: 14).
+   */
+  async getDeadlines(status?: string, withinDays?: number): Promise<DocumentDeadline[]> {
+    const params = new URLSearchParams();
+    if (status) params.set("status", status);
+    if (withinDays !== undefined) params.set("within_days", withinDays.toString());
+    const query = params.toString() ? `?${params.toString()}` : "";
+    return this.request<DocumentDeadline[]>(`/api/v1/documents/deadlines${query}`);
+  }
+
+  /**
+   * Dismiss a detected document deadline.
+   * @param id Unique deadline UUID identifier.
+   */
+  async dismissDeadline(id: string): Promise<DocumentDeadline> {
+    return this.request<DocumentDeadline>(`/api/v1/documents/deadlines/${encodeURIComponent(id)}/dismiss`, {
+      method: "POST",
+    });
+  }
+
+  /**
+   * Trigger a manual obligation and deadline extraction scan.
+   */
+  async scanDeadlines(req?: ScanDeadlinesRequest): Promise<ScanDeadlinesResponse> {
+    return this.request<ScanDeadlinesResponse>("/api/v1/documents/deadlines/scan", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: req ? JSON.stringify(req) : undefined,
     });
   }
 
