@@ -572,3 +572,36 @@ func TestSupervisor_Jellyfin_RefreshService_Lifecycle(t *testing.T) {
 		t.Errorf("expected ErrInvalidOperation for unsupported refresh, got: %v", errUnsupported)
 	}
 }
+
+func TestIsHybridGPU_NvidiaDRM_NotHybrid(t *testing.T) {
+	tempDir := t.TempDir()
+	devDir := filepath.Join(tempDir, "dev")
+	sysDir := filepath.Join(tempDir, "sys")
+
+	// Create NVIDIA character device
+	_ = os.MkdirAll(devDir, 0755)
+	_ = os.WriteFile(filepath.Join(devDir, "nvidia0"), []byte{}, 0644)
+	_ = os.WriteFile(filepath.Join(devDir, "nvidiactl"), []byte{}, 0644)
+
+	// Create DRI render node
+	driDir := filepath.Join(devDir, "dri")
+	_ = os.MkdirAll(driDir, 0755)
+	_ = os.WriteFile(filepath.Join(driDir, "renderD128"), []byte{}, 0644)
+
+	// Set DRM vendor to NVIDIA (0x10de)
+	vendorDir := filepath.Join(sysDir, "class", "drm", "renderD128", "device")
+	_ = os.MkdirAll(vendorDir, 0755)
+	_ = os.WriteFile(filepath.Join(vendorDir, "vendor"), []byte("0x10de\n"), 0644)
+
+	opts := HardwareProbeOptions{
+		DevRoot:   devDir,
+		SysfsRoot: sysDir,
+		ProcRoot:  filepath.Join(tempDir, "proc"),
+	}
+
+	// Because renderD128 is from NVIDIA (0x10de), this is a discrete NVIDIA GPU with DRM, NOT a hybrid setup
+	if IsHybridGPU(opts) {
+		t.Errorf("expected IsHybridGPU to return false when renderD128 belongs to Nvidia (0x10de)")
+	}
+}
+

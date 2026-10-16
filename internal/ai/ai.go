@@ -28,4 +28,6 @@ type Gateway interface {
 	SurrenderIdleVRAM(ctx context.Context) error
 	Governor() *RequestGovernor
 	Arbitrator() *GPUArbitrator
+	Close()
 }
+

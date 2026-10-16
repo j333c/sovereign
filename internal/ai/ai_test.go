@@ -252,9 +252,15 @@ func TestSafeStubHandler(t *testing.T) {
 func TestDefaultGateway_SafeStubWhenEmpty(t *testing.T) {
 	tmpDir := t.TempDir()
 
+	arb := NewGPUArbitrator(ArbitratorConfig{
+		InitialState: ArbitratorStateReady,
+	})
+	defer arb.Close()
+
 	gw := NewGateway(GatewayConfig{
-		ModelsDir: tmpDir,
-		LlamaURL:  "http://127.0.0.1:8080",
+		ModelsDir:  tmpDir,
+		LlamaURL:   "http://127.0.0.1:8080",
+		Arbitrator: arb,
 	})
 
 	available, err := gw.CheckModelAvailability(context.Background())
@@ -272,6 +278,9 @@ func TestDefaultGateway_SafeStubWhenEmpty(t *testing.T) {
 
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("expected HTTP 503, got %d", rec.Code)
+	}
+	if gw.Arbitrator().State() != ArbitratorStateSafeStub {
+		t.Fatalf("expected arbitrator state safe_stub, got %s", gw.Arbitrator().State())
 	}
 }
 
@@ -1477,6 +1486,20 @@ func TestGateway_IdleSurrenderAndWakeIntegration(t *testing.T) {
 		t.Fatalf("expected state idle_surrendered, got %s", arb.State())
 	}
 
+	// 1b. Read-only requests (GET /v1/models and OPTIONS) must bypass wake and remain idle_surrendered
+	reqModels := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	recModels := httptest.NewRecorder()
+	gw.ServeHTTP(recModels, reqModels)
+	if recModels.Code != http.StatusOK {
+		t.Fatalf("expected HTTP 200 for GET /v1/models during idle surrender, got %d", recModels.Code)
+	}
+	if wakeCalled {
+		t.Fatal("expected read-only GET /v1/models NOT to trigger wakeFunc during idle surrender")
+	}
+	if arb.State() != ArbitratorStateIdleSurrendered {
+		t.Fatalf("expected state to remain idle_surrendered after read-only request, got %s", arb.State())
+	}
+
 	// 2. Inference request should wake model automatically
 	body := `{"model": "qwen2.5-coder-7b.gguf", "messages": [{"role": "user", "content": "hello"}]}`
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader([]byte(body)))
@@ -1494,5 +1517,50 @@ func TestGateway_IdleSurrenderAndWakeIntegration(t *testing.T) {
 		t.Fatalf("expected arbitrator to transition back to ready, got %s", arb.State())
 	}
 }
+
+func TestGateway_WarmupTimeout_504(t *testing.T) {
+	tmpDir := t.TempDir()
+	validGGUF := createMockGGUFBytes(3, 128, 42)
+	if err := os.WriteFile(filepath.Join(tmpDir, "qwen2.5-coder-7b.gguf"), validGGUF, 0o644); err != nil {
+		t.Fatalf("failed to write dummy model: %v", err)
+	}
+
+	hangingWake := func(ctx context.Context) error {
+		<-ctx.Done()
+		return ctx.Err()
+	}
+
+	arb := NewGPUArbitrator(ArbitratorConfig{
+		IdleTimeout:  300 * time.Second,
+		WakeTimeout:  40 * time.Millisecond,
+		TickInterval: 10 * time.Millisecond,
+		InitialState: ArbitratorStateIdleSurrendered,
+		WakeFunc:     hangingWake,
+	})
+	defer arb.Close()
+
+	gw := NewGateway(GatewayConfig{
+		ModelsDir:  tmpDir,
+		LlamaURL:   "http://127.0.0.1:9",
+		Arbitrator: arb,
+	})
+
+	body := `{"messages": [{"role": "user", "content": "hello"}]}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader([]byte(body)))
+	rec := httptest.NewRecorder()
+
+	gw.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusGatewayTimeout {
+		t.Fatalf("expected HTTP 504 Gateway Timeout, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Header().Get("Content-Type"), "application/problem+json") {
+		t.Errorf("expected application/problem+json, got: %s", rec.Header().Get("Content-Type"))
+	}
+	if !strings.Contains(rec.Body.String(), "warm-up timeout expired") {
+		t.Errorf("expected warm-up timeout detail, got: %s", rec.Body.String())
+	}
+}
+
 
 

@@ -2,10 +2,10 @@
 title: 'Story 5.3: Dynamic GPU Arbitration & Day/Night Idle Surrender'
 type: 'feature'
 created: '2026-10-16'
-status: 'review'
+status: 'done'
 route: 'dispatch'
 baseline_commit: '190aa9df95b4fef19f95a4fb5fa55629ae7fb870'
-review_loop_iteration: 0
+review_loop_iteration: 1
 context:
   - '_bmad-output/planning-artifacts/architecture/architecture-sovereign-2026-10-15/ARCHITECTURE-SPINE.md'
   - '_bmad-output/planning-artifacts/ux-designs/ux-sovereign-2026-10-15/DESIGN.md'
@@ -94,3 +94,36 @@ context:
 5. **Testing & Verification**:
    - Unit tests for GPU arbitrator idle surrender, day/night transitions, wake-up timeout buffers, and hybrid GPU pinning.
    - Full automated test run: `go test ./...` and `npm --prefix web test`.
+
+## Review Triage Log
+
+- **Review Cycle**: Iteration 1
+- **Reviewers**:
+  - Blind Hunter Reviewer (`92255a13-d685-49ee-9931-5dca284692d7`)
+  - Edge Case Hunter Reviewer (`c7b4864c-51f3-46d8-b4f8-b0e957593c48`)
+  - Verification Gap Reviewer (`f37b0dd3-c0ba-4274-a1f0-848745dc19c3`)
+
+### Findings Triaged & Remediations Applied
+
+1. **UnloadFunc & WakeFunc Wiring in Production Server (`cmd/sovereign-daemon/server.go`)**:
+   - *Finding*: Default arbitrator instance in `server.go` was created without wiring `UnloadFunc` and `WakeFunc` callbacks, meaning container lifecycle commands were never issued during idle surrender or daytime wake-up.
+   - *Fix*: Wired `UnloadFunc` to call `s.serviceMgr.DeactivateService(ctx, supervisor.ServiceLlama)` and `WakeFunc` to call `s.serviceMgr.ActivateService(ctx, supervisor.ServiceLlama)`.
+2. **In-Flight Inference vs. Idle Surrender Race Condition (`internal/ai/arbitrator.go`, `gateway.go`)**:
+   - *Finding*: Idle timer could trigger VRAM surrender mid-stream during long prompts or complex generation.
+   - *Fix*: Added `inFlight int` counter with `BeginInference() func()` guard. `SurrenderVRAM` and background ticker explicitly reject/skip surrender when `inFlight > 0`.
+3. **Graceful Wakeup Context Cancellation (`internal/ai/arbitrator.go`)**:
+   - *Finding*: Client disconnect or abort during `warming_up` caused the HTTP gateway to block for the full 90-second timeout.
+   - *Fix*: Integrated caller context handling in `EnsureReady(ctx)`: returns caller's `ctx.Err()` immediately while letting the background wake complete cleanly so subsequent requests benefit from readiness.
+4. **Resilient Gateway Shutdown (`internal/ai/gateway.go`, `arbitrator.go`)**:
+   - *Finding*: Arbitrator goroutine ticker was not closed when `Gateway` was shut down, risking orphaned background goroutines.
+   - *Fix*: Added `Gateway.Close()` and `GPUArbitrator.Close()` with `sync.Once` and channel shutdown. Wired into `Server.Close()`.
+5. **SafeStub Auto-Recovery (`internal/ai/gateway.go`)**:
+   - *Finding*: If the server booted with an empty `/data/models` directory, arbitrator state was trapped in `safe_stub` permanently even after models were downloaded.
+   - *Fix*: Added auto-recovery logic transitioning arbitrator from `safe_stub` to `idle_surrendered` as soon as valid models are detected.
+6. **Localization Precedence on Central Dashboard (`web/src/app/page.tsx`)**:
+   - *Finding*: The server's English reassurance message took precedence over localized client strings in German, Spanish, and French.
+   - *Fix*: Swapped evaluation order in `page.tsx` so `t.aiWarmingUpReassurance` takes precedence when AI service is warming up.
+7. **Comprehensive Automated Verification (`internal/ai/ai_test.go`, `cmd/sovereign-daemon/server_test.go`, `internal/supervisor/jellyfin_test.go`)**:
+   - *Finding*: Missing integration test verifying `gpu.idle_surrender` SSE event broadcast, hybrid GPU non-Intel fallback, and warmup 504 timeout response.
+   - *Fix*: Added `TestServer_AIIdleSurrender_SSEBroadcast`, `TestIsHybridGPU_NvidiaDRM_NotHybrid`, and `TestGateway_WarmupTimeout_504`.
+

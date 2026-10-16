@@ -404,13 +404,34 @@ func NewServer(cfg Config) (*Server, error) {
 			}
 		}
 
+		initialState := ai.ArbitratorStateReady
+		modelsDir := filepath.Join(cfg.DataDir, "models")
+		if scanned, scanErr := ai.ScanModels(modelsDir); scanErr != nil || len(scanned) == 0 {
+			initialState = ai.ArbitratorStateSafeStub
+		}
+
 		arbitrator := ai.NewGPUArbitrator(ai.ArbitratorConfig{
+			InitialState:      initialState,
 			HardwareMode:      hwMode,
 			IsGPU:             isGPU,
 			IsHybrid:          isHybrid,
 			CPUOptimized:      cpuOptimized,
 			HybridAssignments: hybridAssignments,
 			Logger:            cfg.Logger,
+			UnloadFunc: func(ctx context.Context) error {
+				if s.serviceMgr != nil {
+					_, err := s.serviceMgr.DeactivateService(ctx, supervisor.ServiceLlama)
+					return err
+				}
+				return nil
+			},
+			WakeFunc: func(ctx context.Context) error {
+				if s.serviceMgr != nil {
+					_, err := s.serviceMgr.ActivateService(ctx, supervisor.ServiceLlama)
+					return err
+				}
+				return nil
+			},
 			OnStateChange: func(oldState, newState string) {
 				if newState == ai.ArbitratorStateIdleSurrendered {
 					s.BroadcastEvent("gpu.idle_surrender", map[string]any{
@@ -422,7 +443,7 @@ func NewServer(cfg Config) (*Server, error) {
 		})
 
 		s.aiGateway = ai.NewGateway(ai.GatewayConfig{
-			ModelsDir:  filepath.Join(cfg.DataDir, "models"),
+			ModelsDir:  modelsDir,
 			LlamaURL:   s.llamaURL,
 			Logger:     cfg.Logger,
 			Arbitrator: arbitrator,
@@ -903,6 +924,10 @@ func (s *Server) Close() error {
 
 	if s.bootMgr != nil {
 		_ = s.bootMgr.Close()
+	}
+
+	if s.aiGateway != nil {
+		s.aiGateway.Close()
 	}
 
 	if s.db != nil {

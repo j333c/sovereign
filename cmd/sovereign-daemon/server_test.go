@@ -5535,6 +5535,9 @@ func TestServer_AIStatusEndpoint(t *testing.T) {
 
 	// 2. Surrender VRAM and verify status reflects idle_surrendered
 	if srv.aiGateway != nil {
+		if srv.aiGateway.Arbitrator() != nil {
+			srv.aiGateway.Arbitrator().SetState(ai.ArbitratorStateReady)
+		}
 		_ = srv.aiGateway.SurrenderIdleVRAM(context.Background())
 		wAfter := httptest.NewRecorder()
 		srv.router.ServeHTTP(wAfter, req)
@@ -5548,6 +5551,82 @@ func TestServer_AIStatusEndpoint(t *testing.T) {
 		}
 	}
 }
+
+func TestServer_AIIdleSurrender_SSEBroadcast(t *testing.T) {
+	srv, _ := setupTestServer(t)
+	defer srv.Close()
+
+	if srv.aiGateway == nil || srv.aiGateway.Arbitrator() == nil {
+		t.Skip("AI gateway or arbitrator not enabled on test server")
+	}
+
+	// Set arbitrator state to ready so surrender triggers a state change to idle_surrendered
+	srv.aiGateway.Arbitrator().SetState(ai.ArbitratorStateReady)
+
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, ts.URL+"/api/v1/system/events", nil)
+	if err != nil {
+		t.Fatalf("failed to create SSE request: %v", err)
+	}
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("failed to open SSE connection: %v", err)
+	}
+	defer resp.Body.Close()
+
+	reader := bufio.NewReader(resp.Body)
+
+	// Consume the initial telemetry.update event
+	for {
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			t.Fatalf("error reading initial SSE event: %v", err)
+		}
+		if line == "\n" {
+			break
+		}
+	}
+
+	// Trigger surrender
+	surrenderErr := srv.aiGateway.SurrenderIdleVRAM(context.Background())
+	if surrenderErr != nil {
+		t.Fatalf("unexpected error surrendering VRAM: %v", surrenderErr)
+	}
+
+	// Read lines until gpu.idle_surrender is seen
+	var foundEvent bool
+	var payload map[string]any
+	for {
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			t.Fatalf("stream closed before gpu.idle_surrender received: %v", err)
+		}
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "event: gpu.idle_surrender") {
+			foundEvent = true
+		} else if foundEvent && strings.HasPrefix(line, "data:") {
+			data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+			if err := json.Unmarshal([]byte(data), &payload); err != nil {
+				t.Fatalf("failed to parse gpu.idle_surrender data: %v", err)
+			}
+			break
+		}
+	}
+
+	if !foundEvent {
+		t.Fatalf("expected gpu.idle_surrender event to be broadcast")
+	}
+	if state, ok := payload["state"].(string); !ok || state != ai.ArbitratorStateIdleSurrendered {
+		t.Errorf("expected state %s, got %v", ai.ArbitratorStateIdleSurrendered, payload["state"])
+	}
+}
+
 
 
 

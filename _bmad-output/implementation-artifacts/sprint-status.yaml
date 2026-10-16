@@ -70,7 +70,7 @@ development_status:
   epic-5: in-progress
   5-1-managed-llama-cpp-backend-appliance-boundary-guard-suite: done
   5-2-mediated-ai-gateway-two-lane-priority-request-governor: done
-  5-3-dynamic-gpu-arbitration-day-night-idle-surrender: review
+  5-3-dynamic-gpu-arbitration-day-night-idle-surrender: done
   5-4-open-webui-chat-interface-localized-customization-prompts: backlog
   5-5-single-source-of-truth-rag-context-window-headroom-truncator: backlog
   5-6-ai-backend-model-administration-interface-in-settings: backlog

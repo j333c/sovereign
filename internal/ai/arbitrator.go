@@ -78,12 +78,14 @@ type GPUArbitrator struct {
 	hybridAssignments map[string]string
 	logger            *slog.Logger
 
+	inFlight     int
 	lastActivity time.Time
 	wakeDone     chan struct{}
 	wakeErr      error
 
-	stopChan chan struct{}
-	wg       sync.WaitGroup
+	stopChan  chan struct{}
+	closeOnce sync.Once
+	wg        sync.WaitGroup
 }
 
 // NewGPUArbitrator instantiates and starts a GPUArbitrator.
@@ -170,6 +172,28 @@ func (a *GPUArbitrator) RecordActivity() {
 	a.lastActivity = a.now()
 }
 
+// BeginInference marks an in-flight inference request to prevent idle VRAM surrender during generation.
+// Returns a release function that must be deferred until generation finishes.
+func (a *GPUArbitrator) BeginInference() func() {
+	a.mu.Lock()
+	a.inFlight++
+	a.lastActivity = a.now()
+	a.mu.Unlock()
+
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			a.mu.Lock()
+			a.inFlight--
+			if a.inFlight < 0 {
+				a.inFlight = 0
+			}
+			a.lastActivity = a.now()
+			a.mu.Unlock()
+		})
+	}
+}
+
 // State returns the current arbitrator state.
 func (a *GPUArbitrator) State() string {
 	a.mu.RLock()
@@ -206,23 +230,38 @@ func (a *GPUArbitrator) SurrenderVRAM(ctx context.Context) error {
 		a.mu.Unlock()
 		return nil
 	}
-	oldState := a.state
-	a.state = ArbitratorStateIdleSurrendered
-	onStateChange := a.onStateChange
-	unload := a.unloadFunc
-	a.mu.Unlock()
-
-	a.logger.Info("gpu arbitrator: surrendered VRAM after idle inactivity", "idle_seconds", a.idleTimeout.Seconds())
-
-	if onStateChange != nil {
-		onStateChange(oldState, ArbitratorStateIdleSurrendered)
+	if a.state == ArbitratorStateWarmingUp {
+		a.mu.Unlock()
+		return errors.New("cannot surrender VRAM while model is warming up")
 	}
+	if a.inFlight > 0 {
+		a.mu.Unlock()
+		return errors.New("cannot surrender VRAM while inference is in flight")
+	}
+	oldState := a.state
+	unload := a.unloadFunc
+	onStateChange := a.onStateChange
+	a.mu.Unlock()
 
 	if unload != nil {
 		if err := unload(ctx); err != nil {
 			a.logger.Warn("gpu arbitrator: unload func returned error", "error", err)
 			return err
 		}
+	}
+
+	a.mu.Lock()
+	if a.state == ArbitratorStateWarmingUp {
+		a.mu.Unlock()
+		return errors.New("cannot surrender VRAM: state transitioned to warming_up")
+	}
+	a.state = ArbitratorStateIdleSurrendered
+	a.mu.Unlock()
+
+	a.logger.Info("gpu arbitrator: surrendered VRAM after idle inactivity", "idle_seconds", a.idleTimeout.Seconds())
+
+	if onStateChange != nil {
+		onStateChange(oldState, ArbitratorStateIdleSurrendered)
 	}
 
 	return nil
@@ -281,45 +320,79 @@ func (a *GPUArbitrator) EnsureReady(ctx context.Context) error {
 		onStateChange(oldState, ArbitratorStateWarmingUp)
 	}
 
-	// Orchestrate wake sequence under wake timeout buffer (>=60s)
-	wakeCtx, cancel := context.WithTimeout(context.Background(), wakeTimeout)
-	defer cancel()
-
-	var wakeErr error
-	if wake != nil {
-		wakeErr = wake(wakeCtx)
-	}
-
-	a.mu.Lock()
-	var finalState string
-	if wakeErr == nil {
-		a.state = ArbitratorStateReady
-		a.lastActivity = a.now()
-		a.wakeErr = nil
-		finalState = ArbitratorStateReady
-	} else {
-		if errors.Is(wakeErr, context.DeadlineExceeded) {
-			wakeErr = ErrWakeTimeout
+	wakeResultCh := make(chan error, 1)
+	go func() {
+		wakeCtx, cancel := context.WithTimeout(context.Background(), wakeTimeout)
+		defer cancel()
+		if wake != nil {
+			wakeResultCh <- wake(wakeCtx)
+		} else {
+			wakeResultCh <- nil
 		}
-		a.state = ArbitratorStateIdleSurrendered
-		a.wakeErr = wakeErr
-		finalState = ArbitratorStateIdleSurrendered
-	}
-	close(doneCh)
-	a.wakeDone = nil
-	a.mu.Unlock()
+	}()
 
-	if onStateChange != nil {
-		onStateChange(ArbitratorStateWarmingUp, finalState)
-	}
+	select {
+	case wakeErr := <-wakeResultCh:
+		a.mu.Lock()
+		var finalState string
+		if wakeErr == nil {
+			a.state = ArbitratorStateReady
+			a.lastActivity = a.now()
+			a.wakeErr = nil
+			finalState = ArbitratorStateReady
+		} else {
+			if errors.Is(wakeErr, context.DeadlineExceeded) {
+				wakeErr = ErrWakeTimeout
+			}
+			a.state = ArbitratorStateIdleSurrendered
+			a.wakeErr = wakeErr
+			finalState = ArbitratorStateIdleSurrendered
+		}
+		close(doneCh)
+		a.wakeDone = nil
+		a.mu.Unlock()
 
-	if wakeErr != nil {
-		a.logger.Warn("gpu arbitrator: warm-up failed", "error", wakeErr)
-		return wakeErr
-	}
+		if onStateChange != nil {
+			onStateChange(ArbitratorStateWarmingUp, finalState)
+		}
 
-	a.logger.Info("gpu arbitrator: warm-up completed successfully; model is ready")
-	return nil
+		if wakeErr != nil {
+			a.logger.Warn("gpu arbitrator: warm-up failed", "error", wakeErr)
+			return wakeErr
+		}
+
+		a.logger.Info("gpu arbitrator: warm-up completed successfully; model is ready")
+		return nil
+
+	case <-ctx.Done():
+		// Caller disconnected or timed out. Keep background wake running to completion to preserve state consistency.
+		go func() {
+			err := <-wakeResultCh
+			a.mu.Lock()
+			var finalState string
+			if err == nil {
+				a.state = ArbitratorStateReady
+				a.lastActivity = a.now()
+				a.wakeErr = nil
+				finalState = ArbitratorStateReady
+			} else {
+				if errors.Is(err, context.DeadlineExceeded) {
+					err = ErrWakeTimeout
+				}
+				a.state = ArbitratorStateIdleSurrendered
+				a.wakeErr = err
+				finalState = ArbitratorStateIdleSurrendered
+			}
+			close(doneCh)
+			a.wakeDone = nil
+			a.mu.Unlock()
+
+			if onStateChange != nil {
+				onStateChange(ArbitratorStateWarmingUp, finalState)
+			}
+		}()
+		return ctx.Err()
+	}
 }
 
 // Status returns a snapshot of current arbitrator telemetry and state.
@@ -356,13 +429,9 @@ func (a *GPUArbitrator) Status() ArbitratorStatus {
 
 // Close stops the arbitrator background ticker.
 func (a *GPUArbitrator) Close() {
-	select {
-	case <-a.stopChan:
-		// already closed
-		return
-	default:
+	a.closeOnce.Do(func() {
 		close(a.stopChan)
-	}
+	})
 	a.wg.Wait()
 }
 
@@ -378,7 +447,7 @@ func (a *GPUArbitrator) runTicker() {
 			return
 		case <-ticker.C:
 			a.mu.Lock()
-			if a.state == ArbitratorStateReady {
+			if a.state == ArbitratorStateReady && a.inFlight == 0 {
 				now := a.now()
 				if now.Sub(a.lastActivity) >= a.idleTimeout {
 					a.mu.Unlock()

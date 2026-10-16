@@ -544,7 +544,7 @@ function HomeScreenContent({
       reassuranceMessage:
         serviceStates.ai?.reassuranceMessage ||
         (aiStatus?.state === "warming_up"
-          ? (aiStatus.reassurance_message || t.aiWarmingUpReassurance)
+          ? (t.aiWarmingUpReassurance || aiStatus.reassurance_message)
           : undefined),
     },
   ];

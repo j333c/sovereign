@@ -194,6 +194,10 @@ func (g *DefaultGateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	arb := g.arbitrator
 	g.mu.RUnlock()
 
+	if arb != nil && arb.State() == ArbitratorStateSafeStub {
+		arb.SetState(ArbitratorStateIdleSurrendered)
+	}
+
 	if proxy == nil {
 		SafeStubHandler(w, r)
 		return
@@ -275,6 +279,11 @@ func (g *DefaultGateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		defer release()
 	}
 
+	if arb != nil {
+		releaseInference := arb.BeginInference()
+		defer releaseInference()
+	}
+
 	proxy.ServeHTTP(w, r)
 	if arb != nil {
 		arb.RecordActivity()
@@ -306,3 +315,14 @@ func (g *DefaultGateway) SurrenderIdleVRAM(ctx context.Context) error {
 	}
 	return nil
 }
+
+// Close cleanly shuts down the gateway and underlying arbitrator.
+func (g *DefaultGateway) Close() {
+	g.mu.RLock()
+	arb := g.arbitrator
+	g.mu.RUnlock()
+	if arb != nil {
+		arb.Close()
+	}
+}
+
