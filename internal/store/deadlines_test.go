@@ -140,4 +140,46 @@ func TestDeadlineStore_CRUDAndDeduplication(t *testing.T) {
 	if err != ErrDeadlineNotFound {
 		t.Errorf("expected ErrDeadlineNotFound, got %v", err)
 	}
+
+	// Add d3 (pending) and mark it notified
+	d3 := &DocumentDeadline{
+		DocumentID: "doc-3",
+		Title:      "Utility Bill",
+		DueDate:    "2026-10-25",
+		Status:     DeadlineStatusPending,
+	}
+	if err := store.Save(ctx, d3); err != nil {
+		t.Fatalf("Save d3 failed: %v", err)
+	}
+
+	if err := store.MarkNotified(ctx, d3.ID); err != nil {
+		t.Fatalf("MarkNotified failed: %v", err)
+	}
+
+	fetchedD3, err := store.Get(ctx, d3.ID)
+	if err != nil {
+		t.Fatalf("Get d3 failed: %v", err)
+	}
+	if fetchedD3.Status != DeadlineStatusNotified {
+		t.Errorf("expected status 'notified', got %q", fetchedD3.Status)
+	}
+
+	// Rescanning d3 with status pending should preserve notified status
+	d3Rescan := &DocumentDeadline{
+		DocumentID: "doc-3",
+		Title:      "Utility Bill Rescanned",
+		DueDate:    "2026-10-25",
+		Status:     DeadlineStatusPending,
+	}
+	if err := store.Save(ctx, d3Rescan); err != nil {
+		t.Fatalf("Save d3Rescan failed: %v", err)
+	}
+	if d3Rescan.Status != DeadlineStatusNotified {
+		t.Errorf("expected preserved notified status, got %q", d3Rescan.Status)
+	}
+
+	// MarkNotified on non-existent ID -> ErrDeadlineNotFound
+	if err := store.MarkNotified(ctx, "non-existent-id"); err != ErrDeadlineNotFound {
+		t.Errorf("expected ErrDeadlineNotFound on non-existent ID, got %v", err)
+	}
 }

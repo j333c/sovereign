@@ -28,14 +28,20 @@ type QueuedNightlyDoc struct {
 	QueuedAt time.Time
 }
 
+// DeadlineAlertDispatcher triggers alert evaluation and delivery across configured channels.
+type DeadlineAlertDispatcher interface {
+	DispatchCycle(ctx context.Context) (int, error)
+}
+
 // ObligationScanner coordinates Tier 1 regex and Tier 2 off-peak LLM extraction.
 type ObligationScanner struct {
-	store          *store.DeadlineStore
-	regexParser    *RegexParser
-	llmExtractor   LLMExtractor
-	broadcaster    func(event string, data any)
-	logger         *slog.Logger
-	alertThreshold int // days, default 14
+	store           *store.DeadlineStore
+	regexParser     *RegexParser
+	llmExtractor    LLMExtractor
+	broadcaster     func(event string, data any)
+	logger          *slog.Logger
+	alertThreshold  int // days, default 14
+	alertDispatcher DeadlineAlertDispatcher
 
 	nightlyMu    sync.Mutex
 	nightlyQueue []QueuedNightlyDoc
@@ -87,6 +93,25 @@ func (s *ObligationScanner) AlertThreshold() int {
 	return s.alertThreshold
 }
 
+// SetAlertDispatcher attaches an alert dispatcher to automatically trigger notifications on impending deadlines.
+func (s *ObligationScanner) SetAlertDispatcher(dispatcher DeadlineAlertDispatcher) {
+	s.alertDispatcher = dispatcher
+}
+
+// TriggerAlertDispatch asynchronously initiates an alert dispatch cycle without blocking caller.
+func (s *ObligationScanner) TriggerAlertDispatch() {
+	if s.alertDispatcher == nil {
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if _, err := s.alertDispatcher.DispatchCycle(ctx); err != nil {
+			s.logger.Debug("async alert dispatch cycle failed", "error", err)
+		}
+	}()
+}
+
 // IsNighttime returns true exclusively between 01:00 and 07:00 local time.
 func (s *ObligationScanner) IsNighttime(t time.Time) bool {
 	hr := t.Hour()
@@ -129,6 +154,7 @@ func (s *ObligationScanner) ScanDocumentText(ctx context.Context, docID, title, 
 
 	// 3. Process, deduplicate, and persist detected obligations in SQLite
 	var persisted []*store.DocumentDeadline
+	hasNewPending := false
 	for _, obl := range obligations {
 		diffDays, err := calendarDaysDiff(obl.DueDate, now)
 		if err != nil {
@@ -170,21 +196,28 @@ func (s *ObligationScanner) ScanDocumentText(ctx context.Context, docID, title, 
 
 		// Broadcast SSE event for newly impending deadlines (new record or promoted from future)
 		isNewOrPromoted := (prior == nil) || (prior.Status == store.DeadlineStatusFuture && rec.Status == store.DeadlineStatusPending)
-		if rec.Status == store.DeadlineStatusPending && isNewOrPromoted && s.broadcaster != nil {
-			s.broadcaster(EventDeadlineDetected, map[string]any{
-				"id":             rec.ID,
-				"document_id":    rec.DocumentID,
-				"title":          rec.Title,
-				"due_date":       rec.DueDate,
-				"amount":         rec.Amount,
-				"currency":       rec.Currency,
-				"snippet":        rec.Snippet,
-				"status":         rec.Status,
-				"days_remaining": diffDays,
-			})
+		if rec.Status == store.DeadlineStatusPending && isNewOrPromoted {
+			hasNewPending = true
+			if s.broadcaster != nil {
+				s.broadcaster(EventDeadlineDetected, map[string]any{
+					"id":             rec.ID,
+					"document_id":    rec.DocumentID,
+					"title":          rec.Title,
+					"due_date":       rec.DueDate,
+					"amount":         rec.Amount,
+					"currency":       rec.Currency,
+					"snippet":        rec.Snippet,
+					"status":         rec.Status,
+					"days_remaining": diffDays,
+				})
+			}
 		}
 
 		persisted = append(persisted, rec)
+	}
+
+	if hasNewPending {
+		s.TriggerAlertDispatch()
 	}
 
 	return persisted, nil
@@ -244,6 +277,7 @@ func (s *ObligationScanner) ProcessNightlyBatch(ctx context.Context) (int, error
 	}
 
 	// 2. Review 'future' deadlines in the store to promote to 'pending' if now within threshold
+	promotedCount := 0
 	if s.store != nil {
 		futureDeadlines, err := s.store.List(ctx, store.DeadlineStatusFuture, 0, now)
 		if err == nil {
@@ -269,10 +303,15 @@ func (s *ObligationScanner) ProcessNightlyBatch(ctx context.Context) (int, error
 							"days_remaining": diffDays,
 						})
 					}
+					promotedCount++
 					processedCount++
 				}
 			}
 		}
+	}
+
+	if promotedCount > 0 {
+		s.TriggerAlertDispatch()
 	}
 
 	return processedCount, nil

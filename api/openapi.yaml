@@ -967,6 +967,172 @@ paths:
               schema:
                 $ref: '#/components/schemas/ProblemDetails'
 
+  /api/v1/alerts/config:
+    get:
+      summary: Get alert channel configurations
+      description: |
+        Retrieves current alert channel configurations for Home Assistant webhooks, MQTT, and SMTP email digests with passwords redacted.
+      operationId: getAlertConfig
+      responses:
+        '200':
+          description: Alert channel configuration with passwords redacted.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AlertConfigResponse'
+        '500':
+          description: Error retrieving alert configuration.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+    put:
+      summary: Update alert channel configurations
+      description: |
+        Updates alert channel configurations in SQLite settings. Masked or empty password fields preserve existing stored secrets.
+      operationId: updateAlertConfig
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateAlertConfigRequest'
+      responses:
+        '200':
+          description: Updated alert configuration with passwords redacted.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AlertConfigResponse'
+        '400':
+          description: Invalid alert configuration request.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '500':
+          description: Error saving alert configuration.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/v1/alerts/test/webhook:
+    post:
+      summary: Test Home Assistant webhook delivery
+      description: |
+        Sends a test deadline alert payload to target or configured Home Assistant webhook URL.
+      operationId: testWebhook
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TestWebhookRequest'
+      responses:
+        '200':
+          description: Test notification dispatched successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AlertTestResponse'
+        '400':
+          description: Webhook URL missing or invalid.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '502':
+          description: Home Assistant webhook endpoint unreachable or returned an error.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/v1/alerts/test/mqtt:
+    post:
+      summary: Test MQTT broker connection and publish
+      description: |
+        Connects to target or configured MQTT broker and publishes a QoS 1 test alert packet.
+      operationId: testMQTT
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TestMQTTRequest'
+      responses:
+        '200':
+          description: Test packet published successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AlertTestResponse'
+        '400':
+          description: MQTT broker host missing or invalid.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '502':
+          description: MQTT broker connection failed or packet rejected.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/v1/alerts/test/email:
+    post:
+      summary: Test SMTP email sending
+      description: |
+        Transmits a test notification email via target or configured SMTP server.
+      operationId: testEmail
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TestEmailRequest'
+      responses:
+        '200':
+          description: Test email dispatched successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AlertTestResponse'
+        '400':
+          description: SMTP host or recipient email missing or invalid.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '502':
+          description: SMTP server connection failed or authentication rejected.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/v1/alerts/dispatch:
+    post:
+      summary: Trigger an immediate alert evaluation and dispatch cycle
+      description: |
+        Manually triggers evaluation of pending deadlines and delivers alerts across all configured channels, updating deadline states to notified.
+      operationId: dispatchAlerts
+      responses:
+        '200':
+          description: Alert cycle completed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AlertDispatchResponse'
+        '500':
+          description: Error executing alert dispatch cycle.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
   /api/v1/optical/status:
     get:
       summary: Optical drive and disc ripping engine status
@@ -2675,7 +2841,7 @@ components:
           example: "Invoice #482. Total Due: $150.00 by 2026-10-28"
         status:
           type: string
-          enum: [pending, future, dismissed]
+          enum: [pending, future, dismissed, notified]
           example: "pending"
         created_at:
           type: string
@@ -2763,11 +2929,194 @@ components:
           example: "Invoice #482. Total Due: $150.00 by 2026-10-28"
         status:
           type: string
-          enum: [pending, future, dismissed]
+          enum: [pending, future, dismissed, notified]
           example: "pending"
         days_remaining:
           type: integer
           example: 12
+
+    AlertConfigResponse:
+      type: object
+      required:
+        - ha_webhook_url
+        - mqtt_broker_host
+        - mqtt_broker_port
+        - mqtt_topic
+        - mqtt_username
+        - mqtt_password
+        - alert_email
+        - smtp_host
+        - smtp_port
+        - smtp_username
+        - smtp_password
+        - smtp_from
+        - deadline_alert_threshold
+      properties:
+        ha_webhook_url:
+          type: string
+          example: "http://homeassistant.local:8123/api/webhook/sovereign-alerts"
+        mqtt_broker_host:
+          type: string
+          example: "192.168.1.50"
+        mqtt_broker_port:
+          type: integer
+          example: 1883
+        mqtt_topic:
+          type: string
+          example: "sovereign/alerts/documents"
+        mqtt_username:
+          type: string
+          example: "homeassistant"
+        mqtt_password:
+          type: string
+          description: Sensitive password redacted as asterisks.
+          example: "********"
+        alert_email:
+          type: string
+          format: email
+          example: "alex@family.net"
+        smtp_host:
+          type: string
+          example: "smtp.mailgun.org"
+        smtp_port:
+          type: integer
+          example: 587
+        smtp_username:
+          type: string
+          example: "postmaster@sovereign.local"
+        smtp_password:
+          type: string
+          description: Sensitive password redacted as asterisks.
+          example: "********"
+        smtp_from:
+          type: string
+          example: "alerts@sovereign.local"
+        deadline_alert_threshold:
+          type: integer
+          example: 14
+
+    UpdateAlertConfigRequest:
+      type: object
+      properties:
+        ha_webhook_url:
+          type: string
+          example: "http://homeassistant.local:8123/api/webhook/sovereign-alerts"
+        mqtt_broker_host:
+          type: string
+          example: "192.168.1.50"
+        mqtt_broker_port:
+          type: integer
+          example: 1883
+        mqtt_topic:
+          type: string
+          example: "sovereign/alerts/documents"
+        mqtt_username:
+          type: string
+          example: "homeassistant"
+        mqtt_password:
+          type: string
+          example: "secret"
+        alert_email:
+          type: string
+          format: email
+          example: "alex@family.net"
+        smtp_host:
+          type: string
+          example: "smtp.mailgun.org"
+        smtp_port:
+          type: integer
+          example: 587
+        smtp_username:
+          type: string
+          example: "postmaster@sovereign.local"
+        smtp_password:
+          type: string
+          example: "secret"
+        smtp_from:
+          type: string
+          example: "alerts@sovereign.local"
+        deadline_alert_threshold:
+          type: integer
+          example: 14
+
+    TestWebhookRequest:
+      type: object
+      properties:
+        webhook_url:
+          type: string
+          example: "http://homeassistant.local:8123/api/webhook/sovereign-alerts"
+
+    TestMQTTRequest:
+      type: object
+      properties:
+        broker_host:
+          type: string
+          example: "192.168.1.50"
+        broker_port:
+          type: integer
+          example: 1883
+        topic:
+          type: string
+          example: "sovereign/alerts/documents"
+        username:
+          type: string
+          example: "homeassistant"
+        password:
+          type: string
+          example: "secret"
+
+    TestEmailRequest:
+      type: object
+      properties:
+        alert_email:
+          type: string
+          format: email
+          example: "alex@family.net"
+        smtp_host:
+          type: string
+          example: "smtp.mailgun.org"
+        smtp_port:
+          type: integer
+          example: 587
+        smtp_username:
+          type: string
+          example: "postmaster@sovereign.local"
+        smtp_password:
+          type: string
+          example: "secret"
+        smtp_from:
+          type: string
+          example: "alerts@sovereign.local"
+
+    AlertTestResponse:
+      type: object
+      required:
+        - status
+        - message
+      properties:
+        status:
+          type: string
+          example: "success"
+        message:
+          type: string
+          example: "Home Assistant webhook notification delivered successfully"
+
+    AlertDispatchResponse:
+      type: object
+      required:
+        - status
+        - dispatched_count
+        - message
+      properties:
+        status:
+          type: string
+          example: "success"
+        dispatched_count:
+          type: integer
+          example: 2
+        message:
+          type: string
+          example: "Alert evaluation and dispatch cycle completed"
 
 
 

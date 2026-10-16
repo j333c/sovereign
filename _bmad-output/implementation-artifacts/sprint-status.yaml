@@ -64,7 +64,7 @@ development_status:
   4-1-centralized-document-management-integration-paperless-ngx: done
   4-2-multi-channel-ingestion-mobile-scanner-automated-imap-email: done
   4-3-deadline-extraction-parser-obligation-scanner: done
-  4-4-home-assistant-webhook-mqtt-email-alert-dispatcher: backlog
+  4-4-home-assistant-webhook-mqtt-email-alert-dispatcher: review
   epic-4-retrospective: optional
 
   epic-5: backlog

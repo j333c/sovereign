@@ -1106,6 +1106,132 @@ describe("SovereignApiClient", () => {
     assert.equal(scanRes.deadlines_found, 1);
     assert.equal(scanRes.deadlines[0].title, "Invoice #482");
   });
+
+  it("successfully calls alert configuration, test endpoints, and manual dispatch", async () => {
+    const calls: { method: string; url: string; body?: unknown }[] = [];
+
+    const mockAlertConfig = {
+      ha_webhook_url: "http://homeassistant.local:8123/api/webhook/sovereign-alerts",
+      mqtt_broker_host: "192.168.1.50",
+      mqtt_broker_port: 1883,
+      mqtt_topic: "sovereign/alerts/documents",
+      mqtt_username: "homeassistant",
+      mqtt_password: "********",
+      alert_email: "alex@family.net",
+      smtp_host: "smtp.mailgun.org",
+      smtp_port: 587,
+      smtp_username: "postmaster@sovereign.local",
+      smtp_password: "********",
+      smtp_from: "alerts@sovereign.local",
+      deadline_alert_threshold: 14,
+    };
+
+    const mockFetch: typeof fetch = async (input, init) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+      const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+      calls.push({ method, url, body });
+
+      if (url.endsWith("/api/v1/alerts/config")) {
+        if (method === "GET") {
+          return new Response(JSON.stringify(mockAlertConfig), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        if (method === "PUT") {
+          return new Response(JSON.stringify({ ...mockAlertConfig, ...body }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+      }
+
+      if (url.endsWith("/api/v1/alerts/test/webhook")) {
+        return new Response(
+          JSON.stringify({
+            status: "success",
+            message: "Home Assistant webhook notification delivered successfully",
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+
+      if (url.endsWith("/api/v1/alerts/test/mqtt")) {
+        return new Response(
+          JSON.stringify({
+            status: "success",
+            message: "MQTT test alert published successfully",
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+
+      if (url.endsWith("/api/v1/alerts/test/email")) {
+        return new Response(
+          JSON.stringify({
+            status: "success",
+            message: "Test email sent successfully",
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+
+      if (url.endsWith("/api/v1/alerts/dispatch")) {
+        return new Response(
+          JSON.stringify({
+            status: "success",
+            dispatched_count: 2,
+            message: "Alert evaluation and dispatch cycle completed",
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+
+      return new Response("Not found", { status: 404 });
+    };
+
+    const client = new SovereignApiClient({
+      baseUrl: "http://localhost:8080",
+      fetchFn: mockFetch,
+    });
+
+    // 1. getAlertConfig
+    const cfg = await client.getAlertConfig();
+    assert.equal(cfg.ha_webhook_url, "http://homeassistant.local:8123/api/webhook/sovereign-alerts");
+    assert.equal(cfg.mqtt_password, "********");
+    assert.equal(cfg.deadline_alert_threshold, 14);
+
+    // 2. updateAlertConfig
+    const updated = await client.updateAlertConfig({
+      ...mockAlertConfig,
+      deadline_alert_threshold: 21,
+    });
+    assert.equal(updated.deadline_alert_threshold, 21);
+
+    // 3. testWebhook
+    const hookRes = await client.testWebhook({
+      webhook_url: "http://homeassistant.local:8123/api/webhook/test",
+    });
+    assert.equal(hookRes.status, "success");
+
+    // 4. testMQTT
+    const mqttRes = await client.testMQTT({
+      broker_host: "192.168.1.50",
+    });
+    assert.equal(mqttRes.status, "success");
+
+    // 5. testEmail
+    const emailRes = await client.testEmail({
+      alert_email: "alex@family.net",
+    });
+    assert.equal(emailRes.status, "success");
+
+    // 6. dispatchAlerts
+    const dispatchRes = await client.dispatchAlerts();
+    assert.equal(dispatchRes.status, "success");
+    assert.equal(dispatchRes.dispatched_count, 2);
+  });
 });
 
 

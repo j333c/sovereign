@@ -44,6 +44,13 @@ export type DocumentDeadline = components["schemas"]["DocumentDeadline"];
 export type ScanDeadlinesRequest = components["schemas"]["ScanDeadlinesRequest"];
 export type ScanDeadlinesResponse = components["schemas"]["ScanDeadlinesResponse"];
 export type DMSDeadlineDetectedEvent = components["schemas"]["DMSDeadlineDetectedEvent"];
+export type AlertConfigResponse = components["schemas"]["AlertConfigResponse"];
+export type UpdateAlertConfigRequest = components["schemas"]["UpdateAlertConfigRequest"];
+export type TestWebhookRequest = components["schemas"]["TestWebhookRequest"];
+export type TestMQTTRequest = components["schemas"]["TestMQTTRequest"];
+export type TestEmailRequest = components["schemas"]["TestEmailRequest"];
+export type AlertTestResponse = components["schemas"]["AlertTestResponse"];
+export type AlertDispatchResponse = components["schemas"]["AlertDispatchResponse"];
 
 /**
  * ProblemDetailsError represents an RFC 7807 problem details error thrown by the daemon API.
@@ -480,6 +487,66 @@ export class SovereignApiClient {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: req ? JSON.stringify(req) : undefined,
+    });
+  }
+
+  /**
+   * Retrieve alert channel configurations with passwords redacted.
+   */
+  async getAlertConfig(): Promise<AlertConfigResponse> {
+    return this.request<AlertConfigResponse>("/api/v1/alerts/config");
+  }
+
+  /**
+   * Update alert channel configurations.
+   */
+  async updateAlertConfig(config: UpdateAlertConfigRequest): Promise<AlertConfigResponse> {
+    return this.request<AlertConfigResponse>("/api/v1/alerts/config", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(config),
+    });
+  }
+
+  /**
+   * Test Home Assistant webhook alert delivery.
+   */
+  async testWebhook(req?: TestWebhookRequest): Promise<AlertTestResponse> {
+    return this.request<AlertTestResponse>("/api/v1/alerts/test/webhook", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: req ? JSON.stringify(req) : JSON.stringify({}),
+    });
+  }
+
+  /**
+   * Test MQTT broker connectivity and test alert publishing.
+   */
+  async testMQTT(req?: TestMQTTRequest): Promise<AlertTestResponse> {
+    return this.request<AlertTestResponse>("/api/v1/alerts/test/mqtt", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: req ? JSON.stringify(req) : JSON.stringify({}),
+    });
+  }
+
+  /**
+   * Test SMTP server connectivity and alert email sending.
+   */
+  async testEmail(req?: TestEmailRequest): Promise<AlertTestResponse> {
+    return this.request<AlertTestResponse>("/api/v1/alerts/test/email", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: req ? JSON.stringify(req) : JSON.stringify({}),
+    });
+  }
+
+  /**
+   * Trigger an immediate deadline evaluation and alert dispatch cycle.
+   */
+  async dispatchAlerts(): Promise<AlertDispatchResponse> {
+    return this.request<AlertDispatchResponse>("/api/v1/alerts/dispatch", {
+      method: "POST",
     });
   }
 

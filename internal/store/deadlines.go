@@ -17,6 +17,7 @@ const (
 	DeadlineStatusPending   = "pending"
 	DeadlineStatusFuture    = "future"
 	DeadlineStatusDismissed = "dismissed"
+	DeadlineStatusNotified  = "notified"
 )
 
 // DocumentDeadline represents an extracted payment or contractual deadline.
@@ -28,7 +29,7 @@ type DocumentDeadline struct {
 	Amount     *float64  `json:"amount,omitempty"`
 	Currency   string    `json:"currency,omitempty"`
 	Snippet    string    `json:"snippet,omitempty"`
-	Status     string    `json:"status"` // pending, future, dismissed
+	Status     string    `json:"status"` // pending, future, dismissed, notified
 	CreatedAt  time.Time `json:"created_at"`
 	UpdatedAt  time.Time `json:"updated_at"`
 }
@@ -77,7 +78,11 @@ func (s *DeadlineStore) Save(ctx context.Context, d *DocumentDeadline) error {
 			amount = COALESCE(excluded.amount, document_deadlines.amount),
 			currency = CASE WHEN excluded.currency != '' THEN excluded.currency ELSE document_deadlines.currency END,
 			snippet = CASE WHEN excluded.snippet != '' THEN excluded.snippet ELSE document_deadlines.snippet END,
-			status = CASE WHEN document_deadlines.status = 'dismissed' THEN 'dismissed' ELSE excluded.status END,
+			status = CASE 
+				WHEN document_deadlines.status = 'dismissed' THEN 'dismissed' 
+				WHEN document_deadlines.status = 'notified' THEN 'notified'
+				ELSE excluded.status 
+			END,
 			updated_at = CURRENT_TIMESTAMP
 	`
 
@@ -219,6 +224,23 @@ func (s *DeadlineStore) Dismiss(ctx context.Context, id string) (*DocumentDeadli
 	}
 
 	return s.Get(ctx, id)
+}
+
+// MarkNotified updates a deadline's status to 'notified'.
+func (s *DeadlineStore) MarkNotified(ctx context.Context, id string) error {
+	res, err := s.db.ExecContext(ctx, `
+		UPDATE document_deadlines
+		SET status = 'notified', updated_at = CURRENT_TIMESTAMP
+		WHERE id = ?
+	`, id)
+	if err != nil {
+		return fmt.Errorf("failed to mark deadline as notified: %w", err)
+	}
+	rowsAffected, _ := res.RowsAffected()
+	if rowsAffected == 0 {
+		return ErrDeadlineNotFound
+	}
+	return nil
 }
 
 // Delete removes a deadline by ID.

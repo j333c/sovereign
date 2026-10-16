@@ -627,6 +627,110 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/alerts/config": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get alert channel configurations
+         * @description Retrieves current alert channel configurations for Home Assistant webhooks, MQTT, and SMTP email digests with passwords redacted.
+         */
+        get: operations["getAlertConfig"];
+        /**
+         * Update alert channel configurations
+         * @description Updates alert channel configurations in SQLite settings. Masked or empty password fields preserve existing stored secrets.
+         */
+        put: operations["updateAlertConfig"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/alerts/test/webhook": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Test Home Assistant webhook delivery
+         * @description Sends a test deadline alert payload to target or configured Home Assistant webhook URL.
+         */
+        post: operations["testWebhook"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/alerts/test/mqtt": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Test MQTT broker connection and publish
+         * @description Connects to target or configured MQTT broker and publishes a QoS 1 test alert packet.
+         */
+        post: operations["testMQTT"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/alerts/test/email": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Test SMTP email sending
+         * @description Transmits a test notification email via target or configured SMTP server.
+         */
+        post: operations["testEmail"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/alerts/dispatch": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Trigger an immediate alert evaluation and dispatch cycle
+         * @description Manually triggers evaluation of pending deadlines and delivers alerts across all configured channels, updating deadline states to notified.
+         */
+        post: operations["dispatchAlerts"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/optical/status": {
         parameters: {
             query?: never;
@@ -1655,7 +1759,7 @@ export interface components {
              * @example pending
              * @enum {string}
              */
-            status: "pending" | "future" | "dismissed";
+            status: "pending" | "future" | "dismissed" | "notified";
             /**
              * Format: date-time
              * @example 2026-10-16T10:00:00Z
@@ -1723,9 +1827,124 @@ export interface components {
              * @example pending
              * @enum {string}
              */
-            status: "pending" | "future" | "dismissed";
+            status: "pending" | "future" | "dismissed" | "notified";
             /** @example 12 */
             days_remaining?: number;
+        };
+        AlertConfigResponse: {
+            /** @example http://homeassistant.local:8123/api/webhook/sovereign-alerts */
+            ha_webhook_url: string;
+            /** @example 192.168.1.50 */
+            mqtt_broker_host: string;
+            /** @example 1883 */
+            mqtt_broker_port: number;
+            /** @example sovereign/alerts/documents */
+            mqtt_topic: string;
+            /** @example homeassistant */
+            mqtt_username: string;
+            /**
+             * @description Sensitive password redacted as asterisks.
+             * @example ********
+             */
+            mqtt_password: string;
+            /**
+             * Format: email
+             * @example alex@family.net
+             */
+            alert_email: string;
+            /** @example smtp.mailgun.org */
+            smtp_host: string;
+            /** @example 587 */
+            smtp_port: number;
+            /** @example postmaster@sovereign.local */
+            smtp_username: string;
+            /**
+             * @description Sensitive password redacted as asterisks.
+             * @example ********
+             */
+            smtp_password: string;
+            /** @example alerts@sovereign.local */
+            smtp_from: string;
+            /** @example 14 */
+            deadline_alert_threshold: number;
+        };
+        UpdateAlertConfigRequest: {
+            /** @example http://homeassistant.local:8123/api/webhook/sovereign-alerts */
+            ha_webhook_url?: string;
+            /** @example 192.168.1.50 */
+            mqtt_broker_host?: string;
+            /** @example 1883 */
+            mqtt_broker_port?: number;
+            /** @example sovereign/alerts/documents */
+            mqtt_topic?: string;
+            /** @example homeassistant */
+            mqtt_username?: string;
+            /** @example secret */
+            mqtt_password?: string;
+            /**
+             * Format: email
+             * @example alex@family.net
+             */
+            alert_email?: string;
+            /** @example smtp.mailgun.org */
+            smtp_host?: string;
+            /** @example 587 */
+            smtp_port?: number;
+            /** @example postmaster@sovereign.local */
+            smtp_username?: string;
+            /** @example secret */
+            smtp_password?: string;
+            /** @example alerts@sovereign.local */
+            smtp_from?: string;
+            /** @example 14 */
+            deadline_alert_threshold?: number;
+        };
+        TestWebhookRequest: {
+            /** @example http://homeassistant.local:8123/api/webhook/sovereign-alerts */
+            webhook_url?: string;
+        };
+        TestMQTTRequest: {
+            /** @example 192.168.1.50 */
+            broker_host?: string;
+            /** @example 1883 */
+            broker_port?: number;
+            /** @example sovereign/alerts/documents */
+            topic?: string;
+            /** @example homeassistant */
+            username?: string;
+            /** @example secret */
+            password?: string;
+        };
+        TestEmailRequest: {
+            /**
+             * Format: email
+             * @example alex@family.net
+             */
+            alert_email?: string;
+            /** @example smtp.mailgun.org */
+            smtp_host?: string;
+            /** @example 587 */
+            smtp_port?: number;
+            /** @example postmaster@sovereign.local */
+            smtp_username?: string;
+            /** @example secret */
+            smtp_password?: string;
+            /** @example alerts@sovereign.local */
+            smtp_from?: string;
+        };
+        AlertTestResponse: {
+            /** @example success */
+            status: string;
+            /** @example Home Assistant webhook notification delivered successfully */
+            message: string;
+        };
+        AlertDispatchResponse: {
+            /** @example success */
+            status: string;
+            /** @example 2 */
+            dispatched_count: number;
+            /** @example Alert evaluation and dispatch cycle completed */
+            message: string;
         };
     };
     responses: never;
@@ -2976,6 +3195,232 @@ export interface operations {
                 };
             };
             /** @description Error executing obligation scan. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    getAlertConfig: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Alert channel configuration with passwords redacted. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AlertConfigResponse"];
+                };
+            };
+            /** @description Error retrieving alert configuration. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    updateAlertConfig: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateAlertConfigRequest"];
+            };
+        };
+        responses: {
+            /** @description Updated alert configuration with passwords redacted. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AlertConfigResponse"];
+                };
+            };
+            /** @description Invalid alert configuration request. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Error saving alert configuration. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    testWebhook: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["TestWebhookRequest"];
+            };
+        };
+        responses: {
+            /** @description Test notification dispatched successfully. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AlertTestResponse"];
+                };
+            };
+            /** @description Webhook URL missing or invalid. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Home Assistant webhook endpoint unreachable or returned an error. */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    testMQTT: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["TestMQTTRequest"];
+            };
+        };
+        responses: {
+            /** @description Test packet published successfully. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AlertTestResponse"];
+                };
+            };
+            /** @description MQTT broker host missing or invalid. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description MQTT broker connection failed or packet rejected. */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    testEmail: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["TestEmailRequest"];
+            };
+        };
+        responses: {
+            /** @description Test email dispatched successfully. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AlertTestResponse"];
+                };
+            };
+            /** @description SMTP host or recipient email missing or invalid. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description SMTP server connection failed or authentication rejected. */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    dispatchAlerts: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Alert cycle completed. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AlertDispatchResponse"];
+                };
+            };
+            /** @description Error executing alert dispatch cycle. */
             500: {
                 headers: {
                     [name: string]: unknown;
