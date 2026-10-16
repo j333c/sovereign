@@ -3,6 +3,7 @@ package ai
 import (
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"syscall"
@@ -35,6 +36,9 @@ func (e *StorageSpaceError) Unwrap() error {
 type DiskFreeFunc func(path string) (int64, error)
 
 func defaultDiskFree(path string) (int64, error) {
+	if abs, err := filepath.Abs(path); err == nil {
+		path = abs
+	}
 	checkPath := path
 	for checkPath != "/" && checkPath != "." {
 		if _, err := os.Stat(checkPath); err == nil {
@@ -74,6 +78,9 @@ func CheckModelStorageSpaceWithFunc(path string, requiredBytes int64, freeFn Dis
 
 // CheckModelStorageSpaceWithFree compares available free bytes directly against requiredBytes + 5.0 GB.
 func CheckModelStorageSpaceWithFree(freeBytes int64, requiredBytes int64) error {
+	if requiredBytes < 0 || requiredBytes > math.MaxInt64-SafetyBufferBytes {
+		return errors.New("invalid required bytes")
+	}
 	totalRequired := requiredBytes + SafetyBufferBytes
 	if freeBytes < totalRequired {
 		return &StorageSpaceError{

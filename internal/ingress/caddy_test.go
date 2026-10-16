@@ -76,12 +76,13 @@ func TestCaddyClient_BuildConfigurationPayload(t *testing.T) {
 	}
 
 	// Route 0: /api and /api/* -> sovereign-daemon:8080
-	// Route 1: /media -> jellyfin:8096
-	// Route 2: /docs -> paperless:8000
-	// Route 3: /admin-api -> caddy-internal:2019
-	// Route 4: fallback -> sovereign-web:3000
-	if len(caddyRoutes) != 5 {
-		t.Fatalf("expected 5 routes in caddy config, got %d", len(caddyRoutes))
+	// Route 1: /v1 and /v1/* -> sovereign-daemon:8080
+	// Route 2: /media -> jellyfin:8096
+	// Route 3: /docs -> paperless:8000
+	// Route 4: /admin-api -> caddy-internal:2019
+	// Route 5: fallback -> sovereign-web:3000
+	if len(caddyRoutes) != 6 {
+		t.Fatalf("expected 6 routes in caddy config, got %d", len(caddyRoutes))
 	}
 
 	// Verify route 0: API
@@ -97,8 +98,21 @@ func TestCaddyClient_BuildConfigurationPayload(t *testing.T) {
 		t.Errorf("expected route-api path match [/api /api/*], got %v", matchList[0]["path"])
 	}
 
-	// Verify route 1: Jellyfin prefix rewrite and upstream
-	jellyfinRoute := caddyRoutes[1]
+	// Verify route 1: AI Inference API (/v1)
+	if caddyRoutes[1]["@id"] != "route-v1" {
+		t.Errorf("expected route 1 to have id route-v1, got %v", caddyRoutes[1]["@id"])
+	}
+	v1MatchList, ok := caddyRoutes[1]["match"].([]map[string]any)
+	if !ok || len(v1MatchList) == 0 {
+		t.Fatalf("expected match block in route-v1")
+	}
+	v1Paths, ok := v1MatchList[0]["path"].([]string)
+	if !ok || len(v1Paths) != 2 || v1Paths[0] != "/v1" || v1Paths[1] != "/v1/*" {
+		t.Errorf("expected route-v1 path match [/v1 /v1/*], got %v", v1MatchList[0]["path"])
+	}
+
+	// Verify route 2: Jellyfin prefix rewrite and upstream
+	jellyfinRoute := caddyRoutes[2]
 	if jellyfinRoute["@id"] != "route-spoke-media" {
 		t.Errorf("expected jellyfin route id route-spoke-media, got %v", jellyfinRoute["@id"])
 	}
@@ -329,15 +343,16 @@ func TestCaddyClient_AudioRoutes_MusicAndAudiobooks(t *testing.T) {
 	}
 
 	// Route 0: /api
-	// Route 1: /music -> sovereign-navidrome:4533
-	// Route 2: /audiobooks -> sovereign-audiobookshelf:13378
-	// Route 3: fallback web
-	if len(caddyRoutes) != 4 {
-		t.Fatalf("expected 4 routes in caddy config, got %d", len(caddyRoutes))
+	// Route 1: /v1
+	// Route 2: /music -> sovereign-navidrome:4533
+	// Route 3: /audiobooks -> sovereign-audiobookshelf:13378
+	// Route 4: fallback web
+	if len(caddyRoutes) != 5 {
+		t.Fatalf("expected 5 routes in caddy config, got %d", len(caddyRoutes))
 	}
 
 	// Verify Navidrome spoke route
-	musicRoute := caddyRoutes[1]
+	musicRoute := caddyRoutes[2]
 	if musicRoute["@id"] != "route-spoke-music" {
 		t.Errorf("expected music route id route-spoke-music, got %v", musicRoute["@id"])
 	}
@@ -354,7 +369,7 @@ func TestCaddyClient_AudioRoutes_MusicAndAudiobooks(t *testing.T) {
 	}
 
 	// Verify Audiobookshelf spoke route
-	absRoute := caddyRoutes[2]
+	absRoute := caddyRoutes[3]
 	if absRoute["@id"] != "route-spoke-audiobooks" {
 		t.Errorf("expected audiobooks route id route-spoke-audiobooks, got %v", absRoute["@id"])
 	}

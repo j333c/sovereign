@@ -975,7 +975,8 @@ func (s *Server) routes() {
 }
 
 // handleAIGateway mediates /v1 inference requests to the internal llama-server spoke,
-// falling back to Safe Stub Mode (HTTP 503 Problem Details) when no models are active or provisioned.
+// falling back to Safe Stub Mode (HTTP 503 Problem Details) when no models are active or provisioned,
+// or returning a 503 Problem Details response when the AI service is stopped/inactive.
 func (s *Server) handleAIGateway(w http.ResponseWriter, r *http.Request) {
 	s.mu.RLock()
 	gw := s.aiGateway
@@ -987,16 +988,22 @@ func (s *Server) handleAIGateway(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	hasModel, err := gw.CheckModelAvailability(r.Context())
-	if err != nil || !hasModel {
-		ai.SafeStubHandler(w, r)
-		return
-	}
-
 	if mgr != nil {
 		st, err := mgr.GetService(r.Context(), supervisor.ServiceLlama)
 		if err == nil && st != nil {
-			if st.Status == supervisor.StatusInactive || st.Status == supervisor.StatusStopped || st.Health == supervisor.HealthDegraded {
+			if st.Status == supervisor.StatusInactive || st.Status == supervisor.StatusStopped {
+				w.Header().Set("Content-Type", "application/problem+json")
+				w.WriteHeader(http.StatusServiceUnavailable)
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"type":     "https://sovereign.local/problems/service-inactive",
+					"title":    "AI Service Inactive",
+					"status":   http.StatusServiceUnavailable,
+					"detail":   "The AI inference service is currently stopped or inactive. Please activate it in Settings to enable local inference.",
+					"instance": r.URL.Path,
+				})
+				return
+			}
+			if st.Health == supervisor.HealthDegraded {
 				ai.SafeStubHandler(w, r)
 				return
 			}

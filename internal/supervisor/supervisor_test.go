@@ -663,3 +663,133 @@ func TestSupervisor_LlamaActivation_SafeStubMode(t *testing.T) {
 	}
 }
 
+func TestSupervisor_LlamaActivation_WithModel(t *testing.T) {
+	mgr, mockEngine, tempDir, _ := setupTestManager(t, nil)
+	defer mgr.Close()
+
+	ctx := context.Background()
+	modelsDir := filepath.Join(tempDir, "models")
+	_ = os.MkdirAll(modelsDir, 0755)
+	createMockGGUFFile(t, modelsDir, "qwen2.5.gguf", 3)
+
+	st, err := mgr.ActivateService(ctx, "ai")
+	if err != nil {
+		t.Fatalf("ActivateService(\"ai\") failed: %v", err)
+	}
+
+	if st.ID != ServiceLlama {
+		t.Errorf("expected service ID %s, got %s", ServiceLlama, st.ID)
+	}
+	if st.Status != StatusRunning {
+		t.Errorf("expected status running, got %s", st.Status)
+	}
+	if st.Health != HealthHealthy {
+		t.Errorf("expected health healthy when model present, got %s", st.Health)
+	}
+
+	started := mockEngine.GetStartedHistory()
+	var llamaSpec *ContainerSpec
+	for _, s := range started {
+		if s.Name == ServiceLlama {
+			specCopy := s
+			llamaSpec = &specCopy
+			break
+		}
+	}
+	if llamaSpec == nil {
+		t.Fatal("expected llama container to be started")
+	}
+	if len(llamaSpec.Networks) != 1 || llamaSpec.Networks[0] != "sovereign-ai" {
+		t.Errorf("expected network sovereign-ai, got %v", llamaSpec.Networks)
+	}
+	if len(llamaSpec.Ports) != 0 {
+		t.Errorf("expected zero host ports, got %v", llamaSpec.Ports)
+	}
+}
+
+func TestSupervisor_Llama_TransitionFromSafeStubToHealthy(t *testing.T) {
+	mgr, mockEngine, tempDir, _ := setupTestManager(t, nil)
+	defer mgr.Close()
+
+	ctx := context.Background()
+	// Step 1: Start in safe stub
+	st, err := mgr.ActivateService(ctx, "ai")
+	if err != nil {
+		t.Fatalf("initial activation failed: %v", err)
+	}
+	if st.Health != HealthDegraded {
+		t.Fatalf("expected initial health degraded, got %s", st.Health)
+	}
+
+	// Step 2: Add model to /data/models
+	modelsDir := filepath.Join(tempDir, "models")
+	createMockGGUFFile(t, modelsDir, "new-model.gguf", 3)
+
+	// Step 3: Reactivate / restart service
+	reSt, err := mgr.ActivateService(ctx, "ai")
+	if err != nil {
+		t.Fatalf("reactivation failed: %v", err)
+	}
+	if reSt.Health != HealthHealthy {
+		t.Errorf("expected health healthy after adding model, got %s", reSt.Health)
+	}
+	if reSt.Status != StatusRunning {
+		t.Errorf("expected status running after adding model, got %s", reSt.Status)
+	}
+
+	// Verify container is now started
+	started := mockEngine.GetStartedHistory()
+	found := false
+	for _, s := range started {
+		if s.Name == ServiceLlama {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("expected llama container to be started after reactivation with model")
+	}
+}
+
+func TestSupervisor_Llama_WatchdogAutoTransition(t *testing.T) {
+	mgr, mockEngine, tempDir, _ := setupTestManager(t, nil)
+	defer mgr.Close()
+
+	ctx := context.Background()
+	// Start in safe stub
+	st, err := mgr.ActivateService(ctx, "ai")
+	if err != nil {
+		t.Fatalf("initial activation failed: %v", err)
+	}
+	if st.Health != HealthDegraded {
+		t.Fatalf("expected initial health degraded, got %s", st.Health)
+	}
+
+	// Place model on disk
+	modelsDir := filepath.Join(tempDir, "models")
+	createMockGGUFFile(t, modelsDir, "auto-detect.gguf", 3)
+
+	// Trigger watchdog probe cycle
+	mgr.probeActiveServices(ctx)
+
+	curSt, err := mgr.GetService(ctx, "ai")
+	if err != nil {
+		t.Fatalf("GetService failed: %v", err)
+	}
+	if curSt.Health != HealthHealthy {
+		t.Errorf("expected watchdog to auto-transition service to healthy, got %s", curSt.Health)
+	}
+
+	started := mockEngine.GetStartedHistory()
+	found := false
+	for _, s := range started {
+		if s.Name == ServiceLlama {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("expected watchdog to start container when model detected")
+	}
+}
+

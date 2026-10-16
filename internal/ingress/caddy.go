@@ -78,7 +78,35 @@ func (c *CaddyClient) BuildCaddyConfig(routes []RouteConfig) map[string]any {
 		},
 	})
 
-	// 2. Dynamic spoke routes: guard against empty subpaths or duplicates, subpath prefix trimming
+	// 2. AI Inference API route: reverse proxy /v1 and /v1/* to sovereign-daemon:8080
+	caddyRoutes = append(caddyRoutes, map[string]any{
+		"@id": "route-v1",
+		"match": []map[string]any{
+			{"path": []string{"/v1", "/v1/*"}},
+		},
+		"handle": []map[string]any{
+			{
+				"handler": "reverse_proxy",
+				"upstreams": []map[string]any{
+					{"dial": "sovereign-daemon:8080"},
+				},
+				"headers": map[string]any{
+					"request": map[string]any{
+						"set": map[string][]string{
+							"Host":               {"{http.request.host}"},
+							"X-Real-IP":          {"{http.request.remote.host}"},
+							"X-Forwarded-For":    {"{http.request.remote.host}"},
+							"X-Forwarded-Proto":  {"{http.request.scheme}"},
+							"X-Forwarded-Host":   {"{http.request.host}"},
+							"X-Forwarded-Prefix": {"/v1"},
+						},
+					},
+				},
+			},
+		},
+	})
+
+	// 3. Dynamic spoke routes: guard against empty subpaths or duplicates, subpath prefix trimming
 	seenSubpaths := make(map[string]bool)
 	for _, r := range routes {
 		if r.Service == "" || r.Port == 0 {

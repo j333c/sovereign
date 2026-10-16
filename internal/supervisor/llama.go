@@ -235,30 +235,41 @@ func (p *LlamaProvisioner) Provision(ctx context.Context) (*LlamaProvisionResult
 		}
 	}
 
-	targetModel := activeSymlink
-	if targetModel == "" {
-		if len(candidateFiles) == 0 {
-			// No GGUF files in /data/models: enter Safe Stub Mode gracefully
-			p.logger.Info("no GGUF models provisioned in /data/models; entering safe stub mode")
-			return &LlamaProvisionResult{
-				HWAccel:    hw,
-				Devices:    hw.Devices,
-				Threads:    threads,
-				IsGPU:      isGPU,
-				InSafeStub: true,
-			}, nil
+	var targetModel string
+	if activeSymlink != "" {
+		if _, err := ai.ValidateGGUFHeader(activeSymlink); err == nil {
+			targetModel = activeSymlink
 		}
+	}
+
+	if targetModel == "" {
 		sort.Strings(candidateFiles)
-		targetModel = candidateFiles[0]
+		for _, cand := range candidateFiles {
+			if _, err := ai.ValidateGGUFHeader(cand); err == nil {
+				targetModel = cand
+				break
+			}
+		}
 	}
 
-	// 4. Pre-flight GGUF Magic Header Verification
-	if _, err := ai.ValidateGGUFHeader(targetModel); err != nil {
-		p.logger.Error("pre-flight GGUF header verification failed for model", "path", targetModel, "error", err)
-		return nil, fmt.Errorf("pre-flight GGUF check failed for %s: %w", targetModel, err)
+	if targetModel == "" {
+		// No valid GGUF models provisioned in /data/models: enter Safe Stub Mode gracefully
+		p.logger.Info("no valid GGUF models provisioned in /data/models; entering safe stub mode")
+		return &LlamaProvisionResult{
+			HWAccel:    hw,
+			Devices:    hw.Devices,
+			Threads:    threads,
+			IsGPU:      isGPU,
+			InSafeStub: true,
+		}, nil
 	}
 
-	modelFilename := filepath.Base(targetModel)
+	// Resolve symlinks to avoid container mount path mismatch
+	resolvedModel, err := filepath.EvalSymlinks(targetModel)
+	if err != nil {
+		resolvedModel = targetModel
+	}
+	modelFilename := filepath.Base(resolvedModel)
 	containerModelPath := "/models/" + modelFilename
 
 	// 5. Build standardized command line arguments
@@ -284,6 +295,10 @@ func (p *LlamaProvisioner) Provision(ctx context.Context) (*LlamaProvisionResult
 	if isGPU {
 		cmd = append(cmd, "-ngl", "99")
 		env["LLAMA_ARG_N_GPU_LAYERS"] = "99"
+		if hw.Type == HWAccelNVENC {
+			env["NVIDIA_VISIBLE_DEVICES"] = "all"
+			env["NVIDIA_DRIVER_CAPABILITIES"] = "compute,utility"
+		}
 	} else {
 		cmd = append(cmd, "-t", strconv.Itoa(threads))
 		env["LLAMA_ARG_THREADS"] = strconv.Itoa(threads)

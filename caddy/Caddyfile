@@ -22,6 +22,19 @@
 		}
 	}
 
+	# Route AI API endpoints directly to daemon supervisor preserving path (/v1 and /v1/*)
+	@v1 path /v1 /v1/*
+	handle @v1 {
+		reverse_proxy sovereign-daemon:8080 {
+			header_up Host {host}
+			header_up X-Real-IP {remote_host}
+			header_up X-Forwarded-For {remote_host}
+			header_up X-Forwarded-Proto {scheme}
+			header_up X-Forwarded-Host {host}
+			header_up X-Forwarded-Prefix /v1
+		}
+	}
+
 	# Route /drop explicit entrypoint to web frontend
 	@drop path /drop /drop/*
 	handle @drop {

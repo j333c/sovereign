@@ -92,8 +92,16 @@ func ValidateGGUF(r io.Reader) (*GGUFHeader, error) {
 }
 
 // ValidateGGUFHeader opens the file at path and inspects its binary header.
-// Returns ErrInvalidGGUFMagic if the file lacks GGUF magic bytes.
+// Returns ErrInvalidGGUFMagic if the file lacks GGUF magic bytes or is truncated.
 func ValidateGGUFHeader(path string) (*GGUFHeader, error) {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open model file %q: %w", path, err)
+	}
+	if fi.Size() < 24 {
+		return nil, ErrInvalidGGUFMagic
+	}
+
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open model file %q: %w", path, err)
@@ -106,6 +114,7 @@ func ValidateGGUFHeader(path string) (*GGUFHeader, error) {
 // ScanModels inspects dir for .gguf model files, verifies their headers, and returns verified metadata.
 // Incomplete or downloading files (.downloading) and hidden files are ignored.
 // Corrupted files failing ValidateGGUFHeader are rejected and omitted from the returned slice.
+// Duplicate symlinks referencing the same underlying model file are deduplicated.
 func ScanModels(dir string) ([]ModelMetadata, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -116,6 +125,8 @@ func ScanModels(dir string) ([]ModelMetadata, error) {
 	}
 
 	var models []ModelMetadata
+	seenCanonical := make(map[string]bool)
+
 	for _, entry := range entries {
 		if entry.IsDir() {
 			continue
@@ -129,6 +140,14 @@ func ScanModels(dir string) ([]ModelMetadata, error) {
 		}
 
 		fullPath := filepath.Join(dir, name)
+		canonicalPath, err := filepath.EvalSymlinks(fullPath)
+		if err == nil {
+			if seenCanonical[canonicalPath] {
+				continue
+			}
+			seenCanonical[canonicalPath] = true
+		}
+
 		info, err := os.Stat(fullPath)
 		if err != nil {
 			continue

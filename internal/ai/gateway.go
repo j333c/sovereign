@@ -95,7 +95,15 @@ func (g *DefaultGateway) SetLlamaURL(rawURL string) {
 	defer g.mu.Unlock()
 	g.llamaURL = strings.TrimRight(rawURL, "/")
 	if u, err := url.Parse(g.llamaURL); err == nil {
-		g.proxy = httputil.NewSingleHostReverseProxy(u)
+		proxy := httputil.NewSingleHostReverseProxy(u)
+		if g.proxy != nil && g.proxy.Transport != nil {
+			proxy.Transport = g.proxy.Transport
+		}
+		proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
+			g.logger.Warn("ai gateway proxy error, falling back to safe stub", "error", err, "path", r.URL.Path)
+			SafeStubHandler(w, r)
+		}
+		g.proxy = proxy
 	}
 }
 

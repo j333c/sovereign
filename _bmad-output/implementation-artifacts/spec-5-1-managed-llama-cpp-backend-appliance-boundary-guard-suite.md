@@ -2,10 +2,10 @@
 title: 'Story 5.1: Managed llama.cpp Backend & Appliance Boundary Guard Suite'
 type: 'feature'
 created: '2026-10-16'
-status: 'review'
+status: 'done'
 route: 'dispatch'
 baseline_commit: 'e23e1b936012f49360d49dc9dad63a485361a6e5'
-review_loop_iteration: 0
+review_loop_iteration: 1
 context:
   - '_bmad-output/planning-artifacts/architecture/architecture-sovereign-2026-10-15/ARCHITECTURE-SPINE.md'
   - '_bmad-output/planning-artifacts/ux-designs/ux-sovereign-2026-10-15/DESIGN.md'
@@ -87,3 +87,52 @@ context:
 5. **Testing & Verification**:
    - Unit tests for GGUF magic verification, storage guard, and Llama provisioner.
    - Run `go test ./...` and `npm --prefix web test`.
+
+## Review Triage Log
+
+### Review Loop 1 (3-Layer Parallel Reviews: Blind Hunter, Edge Case Hunter, Verification Gap)
+
+1. **Ingress routing for `/v1` and `/v1/*` in Caddy (`caddy/Caddyfile` and `internal/ingress/caddy.go`)**:
+   - *Finding*: Caddy reverse proxy only matched `/api` and `/api/*`, causing external consumer requests on `/v1/*` to drop through to web UI port 3000 (HTTP 404).
+   - *Fix*: Added `@v1 path /v1 /v1/*` proxying to `sovereign-daemon:8080` in `caddy/Caddyfile` and `route-v1` in `BuildCaddyConfig`, verified in `internal/ingress/caddy_test.go`.
+
+2. **On-demand image pull before model verification (`internal/supervisor/supervisor.go`)**:
+   - *Finding*: `ActivateService` called `PullImage` before `Provision`. In offline environments or when `/data/models` was empty, this failed or pulled multi-GB images unnecessarily instead of entering Safe Stub Mode.
+   - *Fix*: In `ActivateService`, probe models via `Provision(ctx)` first. If `InSafeStub: true`, transition status to `StatusRunning` + `HealthDegraded` immediately without pulling images.
+
+3. **Safe Stub Mode transitions & watchdog probe loops (`internal/supervisor/supervisor.go`)**:
+   - *Finding*: If activated without a model, `ActivateService` returned early on subsequent calls without starting a container when a model was added. Calling `RestartService` failed because no container existed. Watchdog probed health on non-existent container.
+   - *Fix*: Permitted re-activation from degraded safe stub mode; `RestartService` starts container if not previously created; watchdog automatically detects models placed on disk and auto-transitions the service to running + healthy.
+
+4. **Corrupted model candidates and safe stub fallback (`internal/supervisor/llama.go`)**:
+   - *Finding*: `Provision` took candidate 0 and failed on corrupt files without trying other models, and threw an error instead of entering Safe Stub Mode when all candidates were corrupt.
+   - *Fix*: Iterate through candidate files, test `ai.ValidateGGUFHeader(path)`, pick first valid candidate. If no candidate is valid or all corrupt, return `LlamaProvisionResult{InSafeStub: true}, nil` without error or crash loops.
+
+5. **Symlink resolution and container path alignment (`internal/supervisor/llama.go`)**:
+   - *Finding*: `active.gguf` symlinks pointing to absolute paths failed to map cleanly inside container mount.
+   - *Fix*: Evaluated symlinks using `filepath.EvalSymlinks` to determine canonical model filename.
+
+6. **NVIDIA CUDA passthrough environment variables (`internal/supervisor/llama.go`)**:
+   - *Finding*: Passing character devices `/dev/nvidia*` alone lacked runtime environment variables for container libraries.
+   - *Fix*: Set `NVIDIA_VISIBLE_DEVICES=all` and `NVIDIA_DRIVER_CAPABILITIES=compute,utility` when NVIDIA GPU is detected.
+
+7. **Proxy error handler and transport preservation (`internal/ai/gateway.go`)**:
+   - *Finding*: `SetLlamaURL` recreated `ReverseProxy` without preserving transport or custom `ErrorHandler`.
+   - *Fix*: Retained `Transport` and wired `ErrorHandler` to `SafeStubHandler`.
+
+8. **Storage reservation overflow checks and absolute pathing (`internal/ai/storage.go`)**:
+   - *Finding*: Potential overflow with negative or extreme values; relative non-existent paths terminated early in `defaultDiskFree`.
+   - *Fix*: Added bounds check `requiredBytes < 0 || requiredBytes > math.MaxInt64 - SafetyBufferBytes` and converted path to `filepath.Abs`.
+
+9. **OpenAPI specification completeness (`api/openapi.yaml`)**:
+   - *Finding*: Missing `/v1/models` and `/v1/chat/completions` paths and RFC 7807 problem details references.
+   - *Fix*: Added definitions for `/v1/models` and `/v1/chat/completions` with 503 Safe Stub problem details schema.
+
+10. **Verification Gap Additions**:
+    - Added `TestServer_AIGateway_ProxyWhenRunning` and `TestServer_AIGateway_ServiceInactiveProblem` in `cmd/sovereign-daemon/server_test.go`.
+    - Added `TestSupervisor_LlamaActivation_WithModel`, `TestSupervisor_Llama_TransitionFromSafeStubToHealthy`, and `TestSupervisor_Llama_WatchdogAutoTransition` in `internal/supervisor/supervisor_test.go`.
+    - Added `TestLlamaProvisioner_CorruptCandidateHandling`, `TestLlamaProvisioner_AllCorrupt_EntersSafeStub`, `TestLlamaProvisioner_SymlinkResolution`, and `TestLlamaProvisioner_SynthesizeComposeSpec` in `internal/supervisor/llama_test.go`.
+
+### Automated Verification
+- `go test ./...`: PASS (all 13 packages)
+- `npm --prefix web test`: PASS (all 92 tests across 11 test suites)

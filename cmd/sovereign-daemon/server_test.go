@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -5232,6 +5233,13 @@ func TestServer_AIGateway_SafeStubMode(t *testing.T) {
 	srv, _ := setupTestServer(t)
 	defer srv.Close()
 
+	// Activate AI service without models: enters Safe Stub Mode (running + degraded)
+	ctx := context.Background()
+	_, err := srv.serviceMgr.ActivateService(ctx, "ai")
+	if err != nil {
+		t.Fatalf("ActivateService failed: %v", err)
+	}
+
 	// Queries to /v1/chat/completions without a model must return HTTP 503 RFC 7807 Problem Details
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"qwen2.5","messages":[{"role":"user","content":"hello"}]}`))
 	req.Header.Set("Content-Type", "application/json")
@@ -5309,6 +5317,100 @@ func TestServer_Services_LlamaAliasesAndActivation(t *testing.T) {
 	srv.router.ServeHTTP(wRef, reqRef)
 	if wRef.Code != http.StatusBadRequest {
 		t.Errorf("expected 400 Bad Request on AI library refresh, got %d: %s", wRef.Code, wRef.Body.String())
+	}
+}
+
+func TestServer_AIGateway_ServiceInactiveProblem(t *testing.T) {
+	srv, _ := setupTestServer(t)
+	defer srv.Close()
+
+	// Ensure Llama is inactive
+	ctx := context.Background()
+	_, _ = srv.serviceMgr.DeactivateService(ctx, supervisor.ServiceLlama)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"default","messages":[{"role":"user","content":"hello"}]}`))
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503 Service Unavailable, got %d", w.Code)
+	}
+
+	var prob map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &prob); err != nil {
+		t.Fatalf("failed to parse problem json: %v", err)
+	}
+	if prob["type"] != "https://sovereign.local/problems/service-inactive" {
+		t.Errorf("expected type https://sovereign.local/problems/service-inactive, got %v", prob["type"])
+	}
+	if prob["title"] != "AI Service Inactive" {
+		t.Errorf("expected title 'AI Service Inactive', got %v", prob["title"])
+	}
+}
+
+func createMockGGUFFile(t *testing.T, dir, filename string, version uint32) string {
+	t.Helper()
+	buf := new(bytes.Buffer)
+	buf.Write([]byte{0x47, 0x47, 0x55, 0x46}) // "GGUF"
+	_ = binary.Write(buf, binary.LittleEndian, version)
+	_ = binary.Write(buf, binary.LittleEndian, uint64(100))
+	_ = binary.Write(buf, binary.LittleEndian, uint64(10))
+
+	fullPath := filepath.Join(dir, filename)
+	if err := os.WriteFile(fullPath, buf.Bytes(), 0644); err != nil {
+		t.Fatalf("failed to create mock GGUF file: %v", err)
+	}
+	return fullPath
+}
+
+func TestServer_AIGateway_ProxyWhenRunning(t *testing.T) {
+	srv, dataDir := setupTestServer(t)
+	defer srv.Close()
+
+	// 1. Create mock upstream llama-server
+	upstreamCalled := false
+	mockLlama := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamCalled = true
+		if r.URL.Path != "/v1/chat/completions" {
+			t.Errorf("expected proxy path /v1/chat/completions, got %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"id":"chatcmpl-123","object":"chat.completion","choices":[{"message":{"role":"assistant","content":"Hello from mock llama"}}]}`))
+	}))
+	defer mockLlama.Close()
+
+	// 2. Point gateway to mock upstream and create model in modelsDir
+	if defGw, ok := srv.aiGateway.(*ai.DefaultGateway); ok {
+		defGw.SetLlamaURL(mockLlama.URL)
+	}
+	modelsDir := filepath.Join(dataDir, "models")
+	_ = os.MkdirAll(modelsDir, 0755)
+	createMockGGUFFile(t, modelsDir, "qwen2.5.gguf", 3)
+
+	// 3. Activate Llama so it's running and healthy
+	ctx := context.Background()
+	st, err := srv.serviceMgr.ActivateService(ctx, supervisor.ServiceLlama)
+	if err != nil {
+		t.Fatalf("ActivateService failed: %v", err)
+	}
+	if st.Status != supervisor.StatusRunning || st.Health != supervisor.HealthHealthy {
+		t.Fatalf("expected running+healthy, got %s/%s", st.Status, st.Health)
+	}
+
+	// 4. Send request through router to /v1/chat/completions
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"qwen2.5","messages":[{"role":"user","content":"hi"}]}`))
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK from proxy, got %d: %s", w.Code, w.Body.String())
+	}
+	if !upstreamCalled {
+		t.Fatal("expected mock upstream to be called")
+	}
+	if !strings.Contains(w.Body.String(), "Hello from mock llama") {
+		t.Errorf("expected response from mock llama, got: %s", w.Body.String())
 	}
 }
 

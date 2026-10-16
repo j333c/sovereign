@@ -147,16 +147,23 @@ func TestLlamaProvisioner_RejectCorruptGGUF(t *testing.T) {
 	corruptPath := filepath.Join(modelsDir, "bad.gguf")
 	_ = os.WriteFile(corruptPath, []byte("NOT_A_VALID_GGUF_HEADER"), 0644)
 
+	// ValidateGGUFHeader itself directly rejects corrupt headers with ErrInvalidGGUFMagic
+	_, err := ai.ValidateGGUFHeader(corruptPath)
+	if err == nil || !errors.Is(err, ai.ErrInvalidGGUFMagic) {
+		t.Fatalf("expected ValidateGGUFHeader to return ErrInvalidGGUFMagic, got: %v", err)
+	}
+
 	prov := NewLlamaProvisioner(tmpDir, nil, LlamaProvisionerOptions{
 		NumCPU: func() int { return 4 },
 	})
 
-	_, err := prov.Provision(context.Background())
-	if err == nil {
-		t.Fatal("expected error on corrupt GGUF file, got nil")
+	// When only corrupt models are present, Provision gracefully falls back to Safe Stub Mode without failing
+	res, err := prov.Provision(context.Background())
+	if err != nil {
+		t.Fatalf("Provision must not return an error when corrupt models exist; it must enter safe stub: %v", err)
 	}
-	if !errors.Is(err, ai.ErrInvalidGGUFMagic) {
-		t.Errorf("expected errors.Is(err, ai.ErrInvalidGGUFMagic), got: %v", err)
+	if !res.InSafeStub {
+		t.Fatal("expected InSafeStub=true on corrupt model fallback")
 	}
 }
 
@@ -262,5 +269,117 @@ func TestLlamaProvisioner_SuccessGPU(t *testing.T) {
 	}
 	if len(res.ContainerSpec.Devices) == 0 {
 		t.Fatal("expected devices mounted into container spec for GPU host")
+	}
+	if res.ContainerSpec.Env["NVIDIA_VISIBLE_DEVICES"] != "all" {
+		t.Errorf("expected NVIDIA_VISIBLE_DEVICES=all, got %s", res.ContainerSpec.Env["NVIDIA_VISIBLE_DEVICES"])
+	}
+	if res.ContainerSpec.Env["NVIDIA_DRIVER_CAPABILITIES"] != "compute,utility" {
+		t.Errorf("expected NVIDIA_DRIVER_CAPABILITIES=compute,utility, got %s", res.ContainerSpec.Env["NVIDIA_DRIVER_CAPABILITIES"])
+	}
+}
+
+func TestLlamaProvisioner_CorruptCandidateHandling(t *testing.T) {
+	tmpDir := t.TempDir()
+	modelsDir := filepath.Join(tmpDir, "models")
+	_ = os.MkdirAll(modelsDir, 0755)
+
+	// a_bad.gguf is alphabetically first but corrupt
+	_ = os.WriteFile(filepath.Join(modelsDir, "a_bad.gguf"), []byte("not-a-gguf-file"), 0644)
+	// b_good.gguf is valid
+	createMockGGUFFile(t, modelsDir, "b_good.gguf", 3)
+
+	prov := NewLlamaProvisioner(tmpDir, nil)
+	res, err := prov.Provision(context.Background())
+	if err != nil {
+		t.Fatalf("Provision should not fail when valid candidate exists: %v", err)
+	}
+	if res.InSafeStub {
+		t.Fatal("expected InSafeStub to be false when a valid candidate exists")
+	}
+	if !strings.HasSuffix(res.ModelPath, "b_good.gguf") {
+		t.Errorf("expected selected model to be b_good.gguf, got %s", res.ModelPath)
+	}
+}
+
+func TestLlamaProvisioner_AllCorrupt_EntersSafeStub(t *testing.T) {
+	tmpDir := t.TempDir()
+	modelsDir := filepath.Join(tmpDir, "models")
+	_ = os.MkdirAll(modelsDir, 0755)
+
+	_ = os.WriteFile(filepath.Join(modelsDir, "corrupt1.gguf"), []byte("garbage"), 0644)
+	_ = os.WriteFile(filepath.Join(modelsDir, "corrupt2.gguf"), []byte("corrupt"), 0644)
+
+	prov := NewLlamaProvisioner(tmpDir, nil)
+	res, err := prov.Provision(context.Background())
+	if err != nil {
+		t.Fatalf("Provision should not fail when models are corrupt; it must enter safe stub: %v", err)
+	}
+	if !res.InSafeStub {
+		t.Fatal("expected InSafeStub=true when all candidate models are corrupt")
+	}
+}
+
+func TestLlamaProvisioner_SymlinkResolution(t *testing.T) {
+	tmpDir := t.TempDir()
+	modelsDir := filepath.Join(tmpDir, "models")
+	_ = os.MkdirAll(modelsDir, 0755)
+
+	realModel := createMockGGUFFile(t, modelsDir, "qwen2.5-7b.gguf", 3)
+	symlinkPath := filepath.Join(modelsDir, "active.gguf")
+	if err := os.Symlink(realModel, symlinkPath); err != nil {
+		t.Fatalf("failed to create symlink: %v", err)
+	}
+
+	prov := NewLlamaProvisioner(tmpDir, nil)
+	res, err := prov.Provision(context.Background())
+	if err != nil {
+		t.Fatalf("Provision failed: %v", err)
+	}
+	if res.InSafeStub {
+		t.Fatal("expected InSafeStub=false")
+	}
+
+	// The container path should resolve to /models/qwen2.5-7b.gguf
+	expectedContainerPath := "/models/qwen2.5-7b.gguf"
+	cmdStr := strings.Join(res.ContainerSpec.Command, " ")
+	if !strings.Contains(cmdStr, expectedContainerPath) {
+		t.Errorf("expected container command to reference %s, got: %s", expectedContainerPath, cmdStr)
+	}
+}
+
+func TestLlamaProvisioner_SynthesizeComposeSpec(t *testing.T) {
+	tmpDir := t.TempDir()
+	modelsDir := filepath.Join(tmpDir, "models")
+	_ = os.MkdirAll(modelsDir, 0755)
+	createMockGGUFFile(t, modelsDir, "test.gguf", 3)
+
+	prov := NewLlamaProvisioner(tmpDir, nil)
+	res, err := prov.Provision(context.Background())
+	if err != nil {
+		t.Fatalf("Provision failed: %v", err)
+	}
+
+	composePath, err := SynthesizeComposeSpec(tmpDir, res.ContainerSpec)
+	if err != nil {
+		t.Fatalf("SynthesizeComposeSpec failed: %v", err)
+	}
+
+	content, err := os.ReadFile(composePath)
+	if err != nil {
+		t.Fatalf("failed to read synthesized compose spec: %v", err)
+	}
+
+	specStr := string(content)
+	if !strings.Contains(specStr, "sovereign-ai") {
+		t.Errorf("expected compose spec to include sovereign-ai network: %s", specStr)
+	}
+	if !strings.Contains(specStr, "external: true") {
+		t.Errorf("expected external: true for sovereign-ai network: %s", specStr)
+	}
+	if !strings.Contains(specStr, "/models/test.gguf") {
+		t.Errorf("expected container model path in command: %s", specStr)
+	}
+	if strings.Contains(specStr, "ports:") && strings.Contains(specStr, "8080:8080") {
+		t.Errorf("llama container must not publish host ports: %s", specStr)
 	}
 }

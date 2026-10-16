@@ -1479,6 +1479,71 @@ paths:
               schema:
                 $ref: '#/components/schemas/ProblemDetails'
 
+  /v1/models:
+    get:
+      summary: List available AI models
+      description: Returns OpenAI-compatible list of provisioned GGUF models, or 503 Problem Details in Safe Stub Mode.
+      operationId: listAIModels
+      responses:
+        '200':
+          description: List of available models.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  object:
+                    type: string
+                    example: list
+                  data:
+                    type: array
+                    items:
+                      type: object
+        '503':
+          description: Safe stub mode (no model provisioned) or service inactive.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /v1/chat/completions:
+    post:
+      summary: OpenAI-compatible chat completion
+      description: Mediates inference requests to the internal llama-server backend spoke, falling back to RFC 7807 Safe Stub Mode when no models exist.
+      operationId: createChatCompletion
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - messages
+              properties:
+                model:
+                  type: string
+                  description: Model identifier or default
+                messages:
+                  type: array
+                  items:
+                    type: object
+                stream:
+                  type: boolean
+                  default: false
+      responses:
+        '200':
+          description: Successful chat completion response.
+          content:
+            application/json:
+              schema:
+                type: object
+        '503':
+          description: Safe stub mode (no model provisioned) or service inactive.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
 components:
   schemas:
     HealthResponse:

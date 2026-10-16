@@ -553,7 +553,7 @@ func (m *ServiceManager) ActivateService(ctx context.Context, id string) (*Servi
 	}
 
 	st := m.statuses[id]
-	if st.Status == StatusRunning {
+	if st.Status == StatusRunning && !(id == ServiceLlama && st.Health == HealthDegraded) {
 		stCopy := *st
 		m.mu.Unlock()
 		return &stCopy, nil
@@ -583,6 +583,42 @@ func (m *ServiceManager) ActivateService(ctx context.Context, id string) (*Servi
 				Message:   errMsg,
 				Timestamp: m.timeNow().UTC().Format(time.RFC3339),
 			})
+		}
+	}
+
+	// For Llama, probe models before image pull to gracefully enter Safe Stub Mode without pulling multi-GB image
+	var preLlamaRes *LlamaProvisionResult
+	if id == ServiceLlama && m.llamaProvisioner != nil {
+		var err error
+		preLlamaRes, err = m.llamaProvisioner.Provision(ctx)
+		if err != nil {
+			m.logger.Error("failed to provision llama specialized environment", "service", id, "error", err)
+			emitError(fmt.Sprintf("Failed to provision %s: %v", id, err))
+			return nil, fmt.Errorf("failed to provision %s: %w", id, err)
+		}
+		if preLlamaRes.InSafeStub {
+			m.mu.Lock()
+			st.Status = StatusRunning
+			st.Health = HealthDegraded
+			st.ImageDownloaded = false
+			st.UpdatedAt = m.timeNow().UTC().Format(time.RFC3339)
+			stCopy := *st
+			m.mu.Unlock()
+
+			m.debouncer.Reset(id)
+
+			if m.broadcaster != nil {
+				m.broadcaster("service.health_changed", ServiceHealthChanged{
+					ServiceID: id,
+					Status:    StatusRunning,
+					Health:    HealthDegraded,
+					Detail:    "Safe Stub Mode: No AI model provisioned in /data/models",
+					Timestamp: m.timeNow().UTC().Format(time.RFC3339),
+				})
+			}
+
+			m.logger.Info("service activated in safe stub mode (no model provisioned)", "service", id)
+			return &stCopy, nil
 		}
 	}
 
@@ -668,17 +704,21 @@ func (m *ServiceManager) ActivateService(ctx context.Context, id string) (*Servi
 	var containerSpec ContainerSpec
 
 	if id == ServiceLlama && m.llamaProvisioner != nil {
-		llamaRes, err := m.llamaProvisioner.Provision(ctx)
-		if err != nil {
-			m.logger.Error("failed to provision llama specialized environment", "service", id, "error", err)
-			emitError(fmt.Sprintf("Failed to provision %s: %v", id, err))
-			return nil, fmt.Errorf("failed to provision %s: %w", id, err)
+		llamaRes := preLlamaRes
+		if llamaRes == nil {
+			var err error
+			llamaRes, err = m.llamaProvisioner.Provision(ctx)
+			if err != nil {
+				m.logger.Error("failed to provision llama specialized environment", "service", id, "error", err)
+				emitError(fmt.Sprintf("Failed to provision %s: %v", id, err))
+				return nil, fmt.Errorf("failed to provision %s: %w", id, err)
+			}
 		}
 		if llamaRes.InSafeStub {
 			m.mu.Lock()
 			st.Status = StatusRunning
 			st.Health = HealthDegraded
-			st.ImageDownloaded = true
+			st.ImageDownloaded = false
 			st.UpdatedAt = m.timeNow().UTC().Format(time.RFC3339)
 			stCopy := *st
 			m.mu.Unlock()
@@ -857,6 +897,34 @@ func (m *ServiceManager) RestartService(ctx context.Context, id string) (*Servic
 			m.mu.Unlock()
 			return &stCopy, nil
 		}
+		if err == nil && llamaRes != nil && !llamaRes.InSafeStub {
+			if present, _ := m.engine.IsImagePresent(ctx, llamaRes.ContainerSpec.Image); !present {
+				_ = m.engine.PullImage(ctx, llamaRes.ContainerSpec.Image, nil)
+			}
+			if err := m.engine.RestartContainer(ctx, id); err != nil {
+				if startErr := m.engine.StartContainer(ctx, llamaRes.ContainerSpec); startErr != nil {
+					m.logger.Error("failed to start container on restart", "service", id, "error", startErr)
+					return nil, fmt.Errorf("failed to restart service: %w", startErr)
+				}
+			}
+			m.debouncer.Reset(id)
+			m.mu.Lock()
+			st.Status = StatusRunning
+			st.Health = HealthHealthy
+			st.UpdatedAt = m.timeNow().UTC().Format(time.RFC3339)
+			stCopy := *st
+			m.mu.Unlock()
+			if m.broadcaster != nil {
+				m.broadcaster("service.health_changed", ServiceHealthChanged{
+					ServiceID: id,
+					Status:    StatusRunning,
+					Health:    HealthHealthy,
+					Detail:    "Service restarted",
+					Timestamp: m.timeNow().UTC().Format(time.RFC3339),
+				})
+			}
+			return &stCopy, nil
+		}
 	}
 
 	if err := m.engine.RestartContainer(ctx, id); err != nil {
@@ -930,8 +998,38 @@ func (m *ServiceManager) probeActiveServices(ctx context.Context) {
 		m.mu.RUnlock()
 
 		if id == ServiceLlama && m.llamaProvisioner != nil {
-			if res, err := m.llamaProvisioner.Provision(ctx); err == nil && res != nil && res.InSafeStub {
+			res, err := m.llamaProvisioner.Provision(ctx)
+			if err == nil && res != nil && res.InSafeStub {
 				continue
+			}
+			if err == nil && res != nil && !res.InSafeStub {
+				m.mu.RLock()
+				isDegraded := (st.Health == HealthDegraded)
+				m.mu.RUnlock()
+				if isDegraded {
+					// Model was placed on disk while in safe stub: auto-transition
+					if present, _ := m.engine.IsImagePresent(ctx, res.ContainerSpec.Image); !present {
+						_ = m.engine.PullImage(ctx, res.ContainerSpec.Image, nil)
+					}
+					if err := m.engine.StartContainer(ctx, res.ContainerSpec); err == nil {
+						m.mu.Lock()
+						st.Health = HealthHealthy
+						st.Status = StatusRunning
+						st.UpdatedAt = m.timeNow().UTC().Format(time.RFC3339)
+						m.mu.Unlock()
+						m.debouncer.Reset(id)
+						if m.broadcaster != nil {
+							m.broadcaster("service.health_changed", ServiceHealthChanged{
+								ServiceID: id,
+								Status:    StatusRunning,
+								Health:    HealthHealthy,
+								Detail:    "Model detected; AI service started",
+								Timestamp: m.timeNow().UTC().Format(time.RFC3339),
+							})
+						}
+					}
+					continue
+				}
 			}
 		}
 
