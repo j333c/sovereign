@@ -110,7 +110,20 @@ func (p *PaperlessProvisioner) SetHTTPClient(client *http.Client) {
 func (p *PaperlessProvisioner) SetNumCPUFunc(fn func() int) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	p.numCPU = fn
+	if fn == nil {
+		p.numCPU = runtime.NumCPU
+	} else {
+		p.numCPU = fn
+	}
+}
+
+func (p *PaperlessProvisioner) resolveBaseURL() string {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	if p.baseURL != "" {
+		return p.baseURL
+	}
+	return resolvePaperlessBaseURL("SOVEREIGN_PAPERLESS_URL", DefaultPaperlessContainerURL, DefaultPaperlessLocalURL)
 }
 
 // CalculateOCRWorkers calculates the capped OCR and task worker concurrency using max(1, physical_cores / 2).
@@ -128,6 +141,10 @@ func CalculateOCRWorkers(numCores int) int {
 // EnsureSQLiteWAL ensures that the SQLite database file at dbPath exists and operates in WAL mode
 // with NORMAL synchronous pragma, strictly preserving existing tables and document data.
 func EnsureSQLiteWAL(dbPath string) error {
+	if strings.TrimSpace(dbPath) == "" {
+		return fmt.Errorf("database path cannot be empty")
+	}
+
 	dir := filepath.Dir(dbPath)
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return fmt.Errorf("failed to create directory for sqlite db: %w", err)
@@ -165,6 +182,10 @@ func EnsureSQLiteWAL(dbPath string) error {
 // Provision prepares the storage directory layout with 0755 permissions, verifies SQLite WAL durability,
 // calculates capped OCR worker concurrency, and returns container environment variables.
 func (p *PaperlessProvisioner) Provision(ctx context.Context) (*PaperlessProvisionResult, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
 	p.mu.RLock()
 	cpuFn := p.numCPU
 	p.mu.RUnlock()
@@ -204,18 +225,22 @@ func (p *PaperlessProvisioner) Provision(ctx context.Context) (*PaperlessProvisi
 	}
 
 	env := map[string]string{
-		"PAPERLESS_OCR_WORKERS":       strconv.Itoa(workers),
-		"PAPERLESS_TASK_WORKERS":      strconv.Itoa(workers),
-		"PAPERLESS_OCR_PROCESSES":     "1",
-		"PAPERLESS_OCR_USER_ARGS":     `{"nice": 10}`,
-		"PAPERLESS_FORCE_SCRIPT_NAME": "/docs",
-		"PAPERLESS_URL":               "http://localhost:8000/docs",
-		"PAPERLESS_DATA_DIR":          "/usr/src/paperless/data",
-		"PAPERLESS_MEDIA_ROOT":        "/usr/src/paperless/media",
-		"PAPERLESS_CONSUMPTION_DIR":   "/usr/src/paperless/consume",
-		"PAPERLESS_EXPORT_DIR":        "/usr/src/paperless/export",
-		"PAPERLESS_PORT":              "8000",
-		"PAPERLESS_REDIS":             redisURL,
+		"PAPERLESS_OCR_WORKERS":        strconv.Itoa(workers),
+		"PAPERLESS_TASK_WORKERS":       strconv.Itoa(workers),
+		"PAPERLESS_OCR_PROCESSES":      "1",
+		"PAPERLESS_THREADS_PER_WORKER": "1",
+		"PAPERLESS_FORCE_SCRIPT_NAME":  DefaultPaperlessSubpath,
+		"PAPERLESS_URL":                fmt.Sprintf("%s%s", strings.TrimRight(p.resolveBaseURL(), "/"), DefaultPaperlessSubpath),
+		"PAPERLESS_DATA_DIR":           "/usr/src/paperless/data",
+		"PAPERLESS_MEDIA_ROOT":         "/usr/src/paperless/media",
+		"PAPERLESS_CONSUMPTION_DIR":    "/usr/src/paperless/consume",
+		"PAPERLESS_EXPORT_DIR":         "/usr/src/paperless/export",
+		"PAPERLESS_PORT":               "8000",
+		"PAPERLESS_REDIS":              redisURL,
+		"USERMAP_UID":                  "1000",
+		"USERMAP_GID":                  "1000",
+		"PAPERLESS_OCR_LANGUAGES":      "deu eng",
+		"PAPERLESS_OCR_LANGUAGE":       "eng",
 	}
 
 	p.logger.Info("provisioned paperless-ngx environment successfully",

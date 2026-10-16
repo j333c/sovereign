@@ -605,7 +605,7 @@ paths:
   /api/v1/services/{id}/refresh:
     post:
       summary: Refresh media service library
-      description: Triggers immediate library refresh webhook in the specified media service (e.g. Jellyfin, Navidrome, Audiobookshelf).
+      description: Triggers immediate library refresh webhook in the specified media service (e.g. Jellyfin, Navidrome, Audiobookshelf). Non-media services such as Paperless (`paperless`, `dms`, `documents`) do not support library refresh and return 400 Bad Request.
       operationId: refreshService
       parameters:
         - name: id
@@ -632,7 +632,7 @@ paths:
                     type: boolean
                     example: true
         '400':
-          description: Service does not support library refresh.
+          description: Service does not support library refresh (e.g. Paperless).
           content:
             application/problem+json:
               schema:

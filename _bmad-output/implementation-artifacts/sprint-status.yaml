@@ -61,7 +61,7 @@ development_status:
   epic-3-retrospective: optional
 
   epic-4: in-progress
-  4-1-centralized-document-management-integration-paperless-ngx: review
+  4-1-centralized-document-management-integration-paperless-ngx: done
   4-2-multi-channel-ingestion-mobile-scanner-automated-imap-email: backlog
   4-3-deadline-extraction-parser-obligation-scanner: backlog
   4-4-home-assistant-webhook-mqtt-email-alert-dispatcher: backlog

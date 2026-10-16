@@ -376,17 +376,28 @@ func TestServer_UnwritableDirectory(t *testing.T) {
 }
 
 type mockIngressManager struct {
-	status    map[string]any
-	err       error
-	syncCalls int
-	mu        sync.Mutex
+	status     map[string]any
+	err        error
+	syncCalls  int
+	lastRoutes []ingress.RouteConfig
+	mu         sync.Mutex
 }
 
 func (m *mockIngressManager) SyncRoutes(ctx context.Context, routes []ingress.RouteConfig) error {
 	m.mu.Lock()
 	m.syncCalls++
+	m.lastRoutes = make([]ingress.RouteConfig, len(routes))
+	copy(m.lastRoutes, routes)
 	m.mu.Unlock()
 	return m.err
+}
+
+func (m *mockIngressManager) LastRoutes() []ingress.RouteConfig {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	routes := make([]ingress.RouteConfig, len(m.lastRoutes))
+	copy(routes, m.lastRoutes)
+	return routes
 }
 
 func (m *mockIngressManager) SyncCalls() int {
@@ -2512,6 +2523,17 @@ func TestServer_Paperless_Activation_LifecycleAndIngressRouting(t *testing.T) {
 	// 6. Verify Caddy Ingress was synchronized with route /docs and dedicated port 8000
 	if mockIngress.SyncCalls() == 0 {
 		t.Errorf("expected Caddy route sync calls > 0 on Paperless activation")
+	}
+
+	foundSyncRoute := false
+	for _, r := range mockIngress.LastRoutes() {
+		if r.Service == "paperless" && r.Port == 8000 && r.Subpath == "/docs" {
+			foundSyncRoute = true
+			break
+		}
+	}
+	if !foundSyncRoute {
+		t.Errorf("expected SyncRoutes to receive route for paperless port 8000, got: %+v", mockIngress.LastRoutes())
 	}
 
 	reqIngressActive := httptest.NewRequest(http.MethodGet, "/api/v1/system/ingress", nil)

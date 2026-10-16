@@ -206,11 +206,32 @@ func TestPaperless_EnvironmentVariables(t *testing.T) {
 		if env["PAPERLESS_TASK_WORKERS"] != "1" {
 			t.Errorf("expected PAPERLESS_TASK_WORKERS=1, got %s", env["PAPERLESS_TASK_WORKERS"])
 		}
-		if env["PAPERLESS_OCR_USER_ARGS"] != `{"nice": 10}` {
-			t.Errorf("expected PAPERLESS_OCR_USER_ARGS='{\"nice\": 10}', got %s", env["PAPERLESS_OCR_USER_ARGS"])
+		if env["PAPERLESS_OCR_PROCESSES"] != "1" {
+			t.Errorf("expected PAPERLESS_OCR_PROCESSES='1', got %s", env["PAPERLESS_OCR_PROCESSES"])
+		}
+		if env["PAPERLESS_THREADS_PER_WORKER"] != "1" {
+			t.Errorf("expected PAPERLESS_THREADS_PER_WORKER='1', got %s", env["PAPERLESS_THREADS_PER_WORKER"])
 		}
 		if env["PAPERLESS_FORCE_SCRIPT_NAME"] != "/docs" {
 			t.Errorf("expected PAPERLESS_FORCE_SCRIPT_NAME='/docs', got %s", env["PAPERLESS_FORCE_SCRIPT_NAME"])
+		}
+		if env["PAPERLESS_URL"] != "http://127.0.0.1:8000/docs" {
+			t.Errorf("expected PAPERLESS_URL='http://127.0.0.1:8000/docs', got %s", env["PAPERLESS_URL"])
+		}
+		if env["PAPERLESS_REDIS"] != "redis://sovereign-redis:6379" {
+			t.Errorf("expected PAPERLESS_REDIS='redis://sovereign-redis:6379', got %s", env["PAPERLESS_REDIS"])
+		}
+		if env["USERMAP_UID"] != "1000" {
+			t.Errorf("expected USERMAP_UID='1000', got %s", env["USERMAP_UID"])
+		}
+		if env["USERMAP_GID"] != "1000" {
+			t.Errorf("expected USERMAP_GID='1000', got %s", env["USERMAP_GID"])
+		}
+		if env["PAPERLESS_OCR_LANGUAGES"] != "deu eng" {
+			t.Errorf("expected PAPERLESS_OCR_LANGUAGES='deu eng', got %s", env["PAPERLESS_OCR_LANGUAGES"])
+		}
+		if env["PAPERLESS_OCR_LANGUAGE"] != "eng" {
+			t.Errorf("expected PAPERLESS_OCR_LANGUAGE='eng', got %s", env["PAPERLESS_OCR_LANGUAGE"])
 		}
 		if env["PAPERLESS_PORT"] != "8000" {
 			t.Errorf("expected PAPERLESS_PORT='8000', got %s", env["PAPERLESS_PORT"])
@@ -244,6 +265,19 @@ func TestPaperless_EnvironmentVariables(t *testing.T) {
 		}
 		if env["PAPERLESS_TASK_WORKERS"] != "4" {
 			t.Errorf("expected PAPERLESS_TASK_WORKERS=4 for 8 cores, got %s", env["PAPERLESS_TASK_WORKERS"])
+		}
+	})
+
+	t.Run("Custom BaseURL Resolution", func(t *testing.T) {
+		prov := NewPaperlessProvisioner(tempDir, nil, PaperlessProvisionerOptions{
+			BaseURL: "https://sovereign.lan:8443/",
+		})
+		res, err := prov.Provision(ctx)
+		if err != nil {
+			t.Fatalf("Provision failed: %v", err)
+		}
+		if res.Env["PAPERLESS_URL"] != "https://sovereign.lan:8443/docs" {
+			t.Errorf("expected PAPERLESS_URL='https://sovereign.lan:8443/docs', got %s", res.Env["PAPERLESS_URL"])
 		}
 	})
 }
@@ -327,11 +361,20 @@ func TestPaperless_ComposeSynthesis_AndSecurityBoundaries(t *testing.T) {
 	if spec.Environment["PAPERLESS_OCR_WORKERS"] != "4" {
 		t.Errorf("expected PAPERLESS_OCR_WORKERS=4 in compose env, got %s", spec.Environment["PAPERLESS_OCR_WORKERS"])
 	}
+	if spec.Environment["PAPERLESS_OCR_PROCESSES"] != "1" {
+		t.Errorf("expected PAPERLESS_OCR_PROCESSES=1 in compose env, got %s", spec.Environment["PAPERLESS_OCR_PROCESSES"])
+	}
+	if spec.Environment["PAPERLESS_THREADS_PER_WORKER"] != "1" {
+		t.Errorf("expected PAPERLESS_THREADS_PER_WORKER=1 in compose env, got %s", spec.Environment["PAPERLESS_THREADS_PER_WORKER"])
+	}
 	if spec.Environment["PAPERLESS_FORCE_SCRIPT_NAME"] != "/docs" {
 		t.Errorf("expected PAPERLESS_FORCE_SCRIPT_NAME=/docs in compose env, got %s", spec.Environment["PAPERLESS_FORCE_SCRIPT_NAME"])
 	}
-	if spec.Environment["PAPERLESS_OCR_USER_ARGS"] != `{"nice": 10}` {
-		t.Errorf("expected PAPERLESS_OCR_USER_ARGS='{\"nice\": 10}', got %s", spec.Environment["PAPERLESS_OCR_USER_ARGS"])
+	if spec.Environment["PAPERLESS_URL"] != "http://127.0.0.1:8000/docs" {
+		t.Errorf("expected PAPERLESS_URL=http://127.0.0.1:8000/docs in compose env, got %s", spec.Environment["PAPERLESS_URL"])
+	}
+	if spec.Environment["PAPERLESS_REDIS"] != "redis://sovereign-redis:6379" {
+		t.Errorf("expected PAPERLESS_REDIS=redis://sovereign-redis:6379 in compose env, got %s", spec.Environment["PAPERLESS_REDIS"])
 	}
 
 	// Verify ports: bound to 127.0.0.1:8000:8000
@@ -421,5 +464,43 @@ func TestPaperless_AliasResolution(t *testing.T) {
 		if svc.Subpath != "/docs" {
 			t.Errorf("GetService(%q) returned Subpath %s, expected /docs", alias, svc.Subpath)
 		}
+	}
+}
+
+func TestEnsureSQLiteWAL_EmptyPath(t *testing.T) {
+	err := EnsureSQLiteWAL("")
+	if err == nil {
+		t.Fatalf("expected error when passing empty db path to EnsureSQLiteWAL, got nil")
+	}
+}
+
+func TestPaperless_SetNumCPUFuncSafety(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "paperless-cpu-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	prov := NewPaperlessProvisioner(tempDir, nil, PaperlessProvisionerOptions{
+		NumCPU: nil, // should safely fallback to runtime.NumCPU
+	})
+	prov.SetNumCPUFunc(nil) // setting nil explicitly should not panic or corrupt
+	res, err := prov.Provision(context.Background())
+	if err != nil {
+		t.Fatalf("Provision failed with nil NumCPU func: %v", err)
+	}
+	if res.OCRWorkers < 1 {
+		t.Errorf("expected at least 1 OCR worker, got %d", res.OCRWorkers)
+	}
+}
+
+func TestPaperless_ProvisionContextCanceled(t *testing.T) {
+	tempDir := t.TempDir()
+	prov := NewPaperlessProvisioner(tempDir, nil, PaperlessProvisionerOptions{})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := prov.Provision(ctx)
+	if err == nil {
+		t.Fatalf("expected error on canceled context, got nil")
 	}
 }

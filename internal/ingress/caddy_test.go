@@ -156,6 +156,31 @@ func TestCaddyClient_BuildConfigurationPayload(t *testing.T) {
 		t.Errorf("expected upstream dial sovereign-jellyfin:8096, got %v", directHandles[0]["upstreams"])
 	}
 
+	// Verify dedicated spoke listener srv_8000 for Paperless
+	srv8000, ok := servers["srv_8000"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected servers to contain srv_8000 for direct Paperless listener")
+	}
+	listen8000, ok := srv8000["listen"].([]string)
+	if !ok || len(listen8000) != 1 || listen8000[0] != ":8000" {
+		t.Errorf("expected srv_8000 listen [:8000], got %v", srv8000["listen"])
+	}
+	directRoutes8000, ok := srv8000["routes"].([]map[string]any)
+	if !ok || len(directRoutes8000) == 0 {
+		t.Fatalf("expected routes in srv_8000")
+	}
+	directHandles8000, ok := directRoutes8000[0]["handle"].([]map[string]any)
+	if !ok || len(directHandles8000) == 0 {
+		t.Fatalf("expected handle in srv_8000 route")
+	}
+	if directHandles8000[0]["handler"] != "reverse_proxy" {
+		t.Errorf("expected reverse_proxy handler in srv_8000 listener, got %v", directHandles8000[0]["handler"])
+	}
+	directUpstreams8000, ok := directHandles8000[0]["upstreams"].([]map[string]any)
+	if !ok || len(directUpstreams8000) == 0 || directUpstreams8000[0]["dial"] != "sovereign-paperless:8000" {
+		t.Errorf("expected upstream dial sovereign-paperless:8000, got %v", directHandles8000[0]["upstreams"])
+	}
+
 	// Verify port 2019 is strictly excluded from spoke servers
 	if _, exists := servers["srv_2019"]; exists {
 		t.Errorf("port 2019 must not have a dedicated spoke listener because it is the Caddy admin port")

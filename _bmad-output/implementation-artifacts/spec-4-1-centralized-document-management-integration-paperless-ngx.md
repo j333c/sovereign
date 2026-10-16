@@ -2,7 +2,7 @@
 title: 'Story 4.1: Centralized Document Management Integration (Paperless-ngx)'
 type: 'feature'
 created: '2026-10-16'
-status: 'review'
+status: 'done'
 route: 'dispatch'
 baseline_commit: 'dea5dad94581d9d9bfbc5cddcc067174051364d8'
 review_loop_iteration: 0
@@ -105,4 +105,19 @@ context:
 
 ## Review Triage Log
 
-*(To be populated during code review)*
+- **Layer 1-3 Code Review Feedback**:
+  1. `internal/supervisor/paperless.go`:
+     - Applied robust URL construction using `fmt.Sprintf("%s%s", strings.TrimRight(p.resolveBaseURL(), "/"), DefaultPaperlessSubpath)` for `PAPERLESS_URL`.
+     - Added `PAPERLESS_THREADS_PER_WORKER: "1"` to prevent thread explosion within single-process OCR workers.
+     - Removed invalid `"nice"` keyword argument from `PAPERLESS_OCR_USER_ARGS` (preventing ocrmypdf syntax errors; CPU scheduling handled via container resource bounds and concurrency caps).
+     - Added `USERMAP_UID: "1000"` and `USERMAP_GID: "1000"` to guarantee file ownership consistency with Sovereign storage conventions.
+     - Added `PAPERLESS_OCR_LANGUAGES: "deu eng"` and `PAPERLESS_OCR_LANGUAGE: "eng"` defaults for bilingual OCR support.
+     - Added defensive guards: check `ctx.Err()` in `Provision(ctx)`, validate empty database path in `EnsureSQLiteWAL`, and guard against `nil` functions in `SetNumCPUFunc`.
+  2. `internal/ingress/caddy_test.go` & `cmd/sovereign-daemon/server_test.go`:
+     - Added dedicated Caddy ingress unit test assertions verifying `:8000` dedicated server block `srv_8000` reverse proxies to `sovereign-paperless:8000`.
+     - Recorded synchronized routes in daemon `mockIngressManager` and asserted `SyncRoutes` receives route for Paperless on port 8000 with subpath `/docs`.
+  3. `internal/supervisor/paperless_test.go`:
+     - Added assertions verifying `PAPERLESS_OCR_PROCESSES`, `PAPERLESS_THREADS_PER_WORKER`, `PAPERLESS_URL`, and `PAPERLESS_REDIS`.
+     - Added unit tests for empty SQLite WAL database path rejection, `SetNumCPUFunc(nil)` fallback safety, and context cancellation handling in `Provision`.
+  4. `api/openapi.yaml`:
+     - Documented in `/api/v1/services/{id}/refresh` description and 400 response that Paperless does not support media library refresh and returns 400 Bad Request.
