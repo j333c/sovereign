@@ -5508,6 +5508,48 @@ func TestServer_AIPresets_And_GovernorStatus(t *testing.T) {
 	}
 }
 
+func TestServer_AIStatusEndpoint(t *testing.T) {
+	srv, _ := setupTestServer(t)
+	defer srv.Close()
+
+	// 1. Query GET /api/v1/ai/status
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/ai/status", nil)
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected HTTP 200 from /api/v1/ai/status, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var status ai.ArbitratorStatus
+	if err := json.Unmarshal(w.Body.Bytes(), &status); err != nil {
+		t.Fatalf("failed to decode ai status: %v", err)
+	}
+
+	if status.State != ai.ArbitratorStateReady && status.State != ai.ArbitratorStateSafeStub {
+		t.Errorf("unexpected initial state: %s", status.State)
+	}
+	if status.IdleTimeoutSeconds != 300 {
+		t.Errorf("expected 300s idle timeout, got %d", status.IdleTimeoutSeconds)
+	}
+
+	// 2. Surrender VRAM and verify status reflects idle_surrendered
+	if srv.aiGateway != nil {
+		_ = srv.aiGateway.SurrenderIdleVRAM(context.Background())
+		wAfter := httptest.NewRecorder()
+		srv.router.ServeHTTP(wAfter, req)
+		if wAfter.Code != http.StatusOK {
+			t.Fatalf("expected HTTP 200 after surrender, got %d", wAfter.Code)
+		}
+		var statusAfter ai.ArbitratorStatus
+		_ = json.Unmarshal(wAfter.Body.Bytes(), &statusAfter)
+		if statusAfter.State != ai.ArbitratorStateIdleSurrendered {
+			t.Errorf("expected state idle_surrendered, got %s", statusAfter.State)
+		}
+	}
+}
+
+
 
 
 

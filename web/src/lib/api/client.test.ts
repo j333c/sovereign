@@ -1298,6 +1298,51 @@ describe("SovereignApiClient", () => {
     assert.equal(govRes.total_slots, 2);
     assert.equal(govRes.total_served, 42);
   });
+
+  it("successfully calls getAIStatus and returns typed status response", async () => {
+    const mockFetch: typeof fetch = async (input) => {
+      const url = String(input);
+      if (url.includes("/api/v1/ai/status")) {
+        return new Response(
+          JSON.stringify({
+            state: "warming_up",
+            hardware_mode: "nvenc",
+            is_gpu: true,
+            is_hybrid: true,
+            cpu_optimized: false,
+            is_daytime: true,
+            idle_seconds: 35,
+            idle_timeout_seconds: 300,
+            reassurance_message: "Waking up private AI (ready in 5s)...",
+            hybrid_assignments: {
+              jellyfin: "igpu",
+              llama: "dgpu",
+            },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      return new Response("Not found", { status: 404 });
+    };
+
+    const client = new SovereignApiClient({
+      baseUrl: "http://localhost:8080",
+      fetchFn: mockFetch,
+    });
+
+    const status = await client.getAIStatus();
+    assert.equal(status.state, "warming_up");
+    assert.equal(status.hardware_mode, "nvenc");
+    assert.equal(status.is_gpu, true);
+    assert.equal(status.is_hybrid, true);
+    assert.equal(status.cpu_optimized, false);
+    assert.equal(status.is_daytime, true);
+    assert.equal(status.idle_seconds, 35);
+    assert.equal(status.idle_timeout_seconds, 300);
+    assert.equal(status.reassurance_message, "Waking up private AI (ready in 5s)...");
+    assert.equal(status.hybrid_assignments?.jellyfin, "igpu");
+    assert.equal(status.hybrid_assignments?.llama, "dgpu");
+  });
 });
 
 

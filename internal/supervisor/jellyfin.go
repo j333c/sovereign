@@ -30,9 +30,11 @@ type HardwareProbeOptions struct {
 
 // HardwareDetectResult describes detected hardware acceleration capabilities.
 type HardwareDetectResult struct {
-	Type        string   // HWAccelNone, HWAccelQSV, HWAccelVAAPI, HWAccelNVENC
-	Devices     []string // e.g. ["/dev/dri:/dev/dri"] or ["/dev/nvidia0:/dev/nvidia0", ...]
-	VaapiDevice string   // e.g. "/dev/dri/renderD128"
+	Type         string   `json:"type"`                   // HWAccelNone, HWAccelQSV, HWAccelVAAPI, HWAccelNVENC
+	Devices      []string `json:"devices,omitempty"`      // e.g. ["/dev/dri:/dev/dri"] or ["/dev/nvidia0:/dev/nvidia0", ...]
+	VaapiDevice  string   `json:"vaapi_device,omitempty"` // e.g. "/dev/dri/renderD128"
+	IsHybrid     bool     `json:"is_hybrid,omitempty"`
+	CPUOptimized bool     `json:"cpu_optimized,omitempty"`
 }
 
 // JellyfinProvisionResult contains provisioning parameters for starting Jellyfin.
@@ -95,7 +97,56 @@ func (p *JellyfinProvisioner) SetHTTPClient(client *http.Client) {
 	p.httpClient = client
 }
 
+// IsHybridGPU returns true if both discrete NVIDIA GPU and integrated DRI render devices are detected.
+func IsHybridGPU(opts HardwareProbeOptions) bool {
+	if opts.DevRoot == "" {
+		opts.DevRoot = "/dev"
+	}
+	if opts.SysfsRoot == "" {
+		opts.SysfsRoot = "/sys"
+	}
+	if opts.ProcRoot == "" {
+		opts.ProcRoot = "/proc"
+	}
+
+	nvidia0 := filepath.Join(opts.DevRoot, "nvidia0")
+	nvidiactl := filepath.Join(opts.DevRoot, "nvidiactl")
+	nvidiaProc := filepath.Join(opts.ProcRoot, "driver/nvidia/version")
+	nvidiaProcDir := filepath.Join(opts.ProcRoot, "driver/nvidia")
+
+	nvidiaFound := false
+	if _, err := os.Stat(nvidia0); err == nil {
+		nvidiaFound = true
+	} else if _, err := os.Stat(nvidiactl); err == nil {
+		nvidiaFound = true
+	} else if _, err := os.Stat(nvidiaProc); err == nil {
+		nvidiaFound = true
+	} else if fi, err := os.Stat(nvidiaProcDir); err == nil && fi.IsDir() {
+		nvidiaFound = true
+	}
+
+	renderPath := filepath.Join(opts.DevRoot, "dri", "renderD128")
+	driFound := false
+	if _, err := os.Stat(renderPath); err == nil {
+		driFound = true
+	}
+
+	if !nvidiaFound || !driFound {
+		return false
+	}
+
+	// If DRM vendor of renderD128 is 10de (Nvidia DRM), then renderD128 is not an integrated GPU
+	drmVendor := probeDRMVendor(opts.SysfsRoot)
+	if strings.Contains(drmVendor, "10de") {
+		return false
+	}
+
+	return true
+}
+
 // DetectHardwareAcceleration inspects host devices to detect Intel QSV, AMD VAAPI, or Nvidia NVENC.
+// In hybrid GPU mode (both dGPU and iGPU present), pins Jellyfin to iGPU (QSV/VAAPI).
+// On CPU-only systems without acceleration, sets CPUOptimized to true.
 func DetectHardwareAcceleration(opts HardwareProbeOptions) HardwareDetectResult {
 	if opts.DevRoot == "" {
 		opts.DevRoot = "/dev"
@@ -107,12 +158,36 @@ func DetectHardwareAcceleration(opts HardwareProbeOptions) HardwareDetectResult 
 		opts.ProcRoot = "/proc"
 	}
 
+	drmVendor := probeDRMVendor(opts.SysfsRoot)
+
+	// In hybrid GPU mode, automatically pin video transcoding to the iGPU (QSV/VAAPI)
+	if IsHybridGPU(opts) {
+		renderPath := filepath.Join(opts.DevRoot, "dri", "renderD128")
+		cardPath := filepath.Join(opts.DevRoot, "dri", "card0")
+		driDevices := []string{fmt.Sprintf("%s:%s", renderPath, renderPath)}
+		if _, err := os.Stat(cardPath); err == nil {
+			driDevices = append(driDevices, fmt.Sprintf("%s:%s", cardPath, cardPath))
+		}
+		sort.Strings(driDevices)
+
+		accelType := HWAccelVAAPI
+		if strings.Contains(drmVendor, "8086") {
+			accelType = HWAccelQSV
+		}
+
+		return HardwareDetectResult{
+			Type:        accelType,
+			Devices:     driDevices,
+			VaapiDevice: renderPath,
+			IsHybrid:    true,
+		}
+	}
+
 	// 1. Check for Nvidia GPU presence first (via /proc/driver/nvidia, /dev/nvidia*, or DRM vendor 10de)
 	nvidia0 := filepath.Join(opts.DevRoot, "nvidia0")
 	nvidiactl := filepath.Join(opts.DevRoot, "nvidiactl")
 	nvidiaProc := filepath.Join(opts.ProcRoot, "driver/nvidia/version")
 	nvidiaProcDir := filepath.Join(opts.ProcRoot, "driver/nvidia")
-	drmVendor := probeDRMVendor(opts.SysfsRoot)
 
 	nvidiaFound := false
 	if _, err := os.Stat(nvidia0); err == nil {
@@ -185,9 +260,10 @@ func DetectHardwareAcceleration(opts HardwareProbeOptions) HardwareDetectResult 
 
 	// 3. No acceleration devices detected (or /dev/dri empty without render nodes)
 	return HardwareDetectResult{
-		Type:        HWAccelNone,
-		Devices:     nil,
-		VaapiDevice: "",
+		Type:         HWAccelNone,
+		Devices:      nil,
+		VaapiDevice:  "",
+		CPUOptimized: true,
 	}
 }
 

@@ -348,6 +348,49 @@ func TestJellyfin_HardwareDetection_None(t *testing.T) {
 	if hw.VaapiDevice != "" {
 		t.Errorf("expected empty VaapiDevice, got %s", hw.VaapiDevice)
 	}
+	if !hw.CPUOptimized {
+		t.Errorf("expected CPUOptimized to be true on system without acceleration")
+	}
+}
+
+func TestJellyfin_HardwareDetection_HybridGPU(t *testing.T) {
+	tempDir := t.TempDir()
+	devDir := filepath.Join(tempDir, "dev")
+	sysDir := filepath.Join(tempDir, "sys")
+	driDir := filepath.Join(devDir, "dri")
+	_ = os.MkdirAll(driDir, 0755)
+
+	// Discrete NVIDIA GPU device nodes
+	_ = os.WriteFile(filepath.Join(devDir, "nvidia0"), []byte("mock-nvidia0"), 0644)
+	_ = os.WriteFile(filepath.Join(devDir, "nvidiactl"), []byte("mock-nvidiactl"), 0644)
+
+	// Integrated DRI render node (Intel QSV 0x8086)
+	_ = os.WriteFile(filepath.Join(driDir, "renderD128"), []byte("mock-renderD128"), 0644)
+	vendorDir := filepath.Join(sysDir, "class", "drm", "renderD128", "device")
+	_ = os.MkdirAll(vendorDir, 0755)
+	_ = os.WriteFile(filepath.Join(vendorDir, "vendor"), []byte("0x8086\n"), 0644)
+
+	opts := HardwareProbeOptions{
+		DevRoot:   devDir,
+		SysfsRoot: sysDir,
+		ProcRoot:  filepath.Join(tempDir, "proc"),
+	}
+
+	if !IsHybridGPU(opts) {
+		t.Fatalf("expected IsHybridGPU to return true for hybrid setup")
+	}
+
+	hw := DetectHardwareAcceleration(opts)
+	if !hw.IsHybrid {
+		t.Errorf("expected IsHybrid to be true")
+	}
+	// In hybrid mode, Jellyfin must be pinned to the iGPU (QSV/VAAPI), not NVENC
+	if hw.Type != HWAccelQSV {
+		t.Errorf("expected Jellyfin to be pinned to HWAccelQSV (iGPU) in hybrid mode, got %s", hw.Type)
+	}
+	if hw.VaapiDevice != filepath.Join(driDir, "renderD128") {
+		t.Errorf("expected VaapiDevice to be iGPU %s, got %s", filepath.Join(driDir, "renderD128"), hw.VaapiDevice)
+	}
 }
 
 func TestJellyfin_ComposeGeneration_PortsAndDevices(t *testing.T) {

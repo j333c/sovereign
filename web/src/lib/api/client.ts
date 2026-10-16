@@ -54,6 +54,7 @@ export type AlertDispatchResponse = components["schemas"]["AlertDispatchResponse
 export type AIPreset = components["schemas"]["AIPreset"];
 export type AIPresetsResponse = components["schemas"]["AIPresetsResponse"];
 export type AIGovernorStatusResponse = components["schemas"]["AIGovernorStatusResponse"];
+export type AIStatusResponse = components["schemas"]["AIStatusResponse"];
 
 /**
  * ProblemDetailsError represents an RFC 7807 problem details error thrown by the daemon API.
@@ -565,6 +566,13 @@ export class SovereignApiClient {
    */
   async getAIGovernorStatus(): Promise<AIGovernorStatusResponse> {
     return this.request<AIGovernorStatusResponse>("/api/v1/ai/governor/status");
+  }
+
+  /**
+   * Retrieve real-time GPU arbitration state, idle surrender countdown, and hybrid GPU assignments.
+   */
+  async getAIStatus(): Promise<AIStatusResponse> {
+    return this.request<AIStatusResponse>("/api/v1/ai/status");
   }
 
   /**

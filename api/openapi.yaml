@@ -1610,6 +1610,19 @@ paths:
               schema:
                 $ref: '#/components/schemas/AIGovernorStatusResponse'
 
+  /api/v1/ai/status:
+    get:
+      summary: AI subsystem and GPU arbitration status
+      description: Returns real-time GPU arbitration state, idle surrender countdown, day/night habit mode, and hybrid GPU hardware assignments.
+      operationId: getAIStatus
+      responses:
+        '200':
+          description: AI status and GPU arbitration metrics.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AIStatusResponse'
+
 components:
   schemas:
     HealthResponse:
@@ -3334,6 +3347,57 @@ components:
         total_timed_out:
           type: integer
           example: 0
+
+    AIStatusResponse:
+      type: object
+      required:
+        - state
+        - hardware_mode
+        - is_gpu
+        - is_hybrid
+        - cpu_optimized
+        - is_daytime
+        - idle_seconds
+        - idle_timeout_seconds
+      properties:
+        state:
+          type: string
+          enum: [ready, warming_up, idle_surrendered, safe_stub]
+          example: ready
+        hardware_mode:
+          type: string
+          example: nvenc
+        is_gpu:
+          type: boolean
+          example: true
+        is_hybrid:
+          type: boolean
+          example: false
+        cpu_optimized:
+          type: boolean
+          example: false
+        is_daytime:
+          type: boolean
+          example: true
+        idle_seconds:
+          type: integer
+          example: 42
+        idle_timeout_seconds:
+          type: integer
+          example: 300
+        reassurance_message:
+          type: string
+          example: "Waking up private AI (ready in 5s)..."
+        hybrid_assignments:
+          type: object
+          properties:
+            jellyfin:
+              type: string
+              example: igpu
+            llama:
+              type: string
+              example: dgpu
+
 
 
 

@@ -18,21 +18,23 @@ import (
 
 // GatewayConfig provides construction parameters for DefaultGateway.
 type GatewayConfig struct {
-	ModelsDir string
-	LlamaURL  string
-	Logger    *slog.Logger
-	Client    *http.Client
-	Governor  *RequestGovernor
+	ModelsDir  string
+	LlamaURL   string
+	Logger     *slog.Logger
+	Client     *http.Client
+	Governor   *RequestGovernor
+	Arbitrator *GPUArbitrator
 }
 
 // DefaultGateway implements Gateway mediating OpenAI-compatible /v1 requests to llama-server.
 type DefaultGateway struct {
-	mu        sync.RWMutex
-	modelsDir string
-	llamaURL  string
-	logger    *slog.Logger
-	proxy     *httputil.ReverseProxy
-	governor  *RequestGovernor
+	mu         sync.RWMutex
+	modelsDir  string
+	llamaURL   string
+	logger     *slog.Logger
+	proxy      *httputil.ReverseProxy
+	governor   *RequestGovernor
+	arbitrator *GPUArbitrator
 }
 
 // NewGateway creates and initializes a DefaultGateway.
@@ -47,6 +49,12 @@ func NewGateway(cfg GatewayConfig) *DefaultGateway {
 
 	if cfg.Governor == nil {
 		cfg.Governor = NewRequestGovernor(DefaultGovernorConfig())
+	}
+
+	if cfg.Arbitrator == nil {
+		cfg.Arbitrator = NewGPUArbitrator(ArbitratorConfig{
+			Logger: cfg.Logger,
+		})
 	}
 
 	targetURL, _ := url.Parse(cfg.LlamaURL)
@@ -68,11 +76,12 @@ func NewGateway(cfg GatewayConfig) *DefaultGateway {
 	}
 
 	return &DefaultGateway{
-		modelsDir: cfg.ModelsDir,
-		llamaURL:  cfg.LlamaURL,
-		logger:    cfg.Logger,
-		proxy:     proxy,
-		governor:  cfg.Governor,
+		modelsDir:  cfg.ModelsDir,
+		llamaURL:   cfg.LlamaURL,
+		logger:     cfg.Logger,
+		proxy:      proxy,
+		governor:   cfg.Governor,
+		arbitrator: cfg.Arbitrator,
 	}
 }
 
@@ -81,6 +90,13 @@ func (g *DefaultGateway) Governor() *RequestGovernor {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
 	return g.governor
+}
+
+// Arbitrator returns the active GPUArbitrator.
+func (g *DefaultGateway) Arbitrator() *GPUArbitrator {
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+	return g.arbitrator
 }
 
 // CheckModelAvailability checks if at least one verified GGUF model is provisioned in the models directory.
@@ -162,6 +178,12 @@ func ClassifyPriority(r *http.Request) InferencePriority {
 func (g *DefaultGateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	hasModel, err := g.CheckModelAvailability(r.Context())
 	if err != nil || !hasModel {
+		g.mu.RLock()
+		arb := g.arbitrator
+		g.mu.RUnlock()
+		if arb != nil {
+			arb.SetState(ArbitratorStateSafeStub)
+		}
 		SafeStubHandler(w, r)
 		return
 	}
@@ -169,6 +191,7 @@ func (g *DefaultGateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	g.mu.RLock()
 	proxy := g.proxy
 	gov := g.governor
+	arb := g.arbitrator
 	g.mu.RUnlock()
 
 	if proxy == nil {
@@ -177,10 +200,29 @@ func (g *DefaultGateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// For read-only endpoints like GET /v1/models or preflight OPTIONS that do not perform inference,
-	// proxy directly without acquiring an inference execution slot.
+	// proxy directly without acquiring an inference execution slot or waking dormant GPU models.
 	if r.Method == http.MethodGet || r.Method == http.MethodHead || r.Method == http.MethodOptions {
 		proxy.ServeHTTP(w, r)
 		return
+	}
+
+	// Ensure arbitrator has woken model if idle_surrendered
+	if arb != nil {
+		if err := arb.EnsureReady(r.Context()); err != nil {
+			if errors.Is(err, ErrSafeStub) {
+				SafeStubHandler(w, r)
+				return
+			}
+			if errors.Is(err, ErrWakeTimeout) || errors.Is(err, context.DeadlineExceeded) {
+				writeGatewayProblem(w, http.StatusGatewayTimeout, "Gateway Timeout", "AI inference warm-up timeout expired.", r.URL.Path)
+				return
+			}
+			if errors.Is(err, context.Canceled) {
+				return
+			}
+			writeGatewayProblem(w, http.StatusInternalServerError, "Internal Server Error", fmt.Sprintf("Failed to wake AI model: %v", err), r.URL.Path)
+			return
+		}
 	}
 
 	priority := ClassifyPriority(r)
@@ -234,6 +276,9 @@ func (g *DefaultGateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	proxy.ServeHTTP(w, r)
+	if arb != nil {
+		arb.RecordActivity()
+	}
 }
 
 func writeGatewayProblem(w http.ResponseWriter, status int, title, detail, instance string) {
@@ -253,6 +298,11 @@ func writeGatewayProblem(w http.ResponseWriter, status int, title, detail, insta
 
 // SurrenderIdleVRAM releases inference resources when idle.
 func (g *DefaultGateway) SurrenderIdleVRAM(ctx context.Context) error {
-	// Baseline idle surrender hook (expanded in Story 5.3)
+	g.mu.RLock()
+	arb := g.arbitrator
+	g.mu.RUnlock()
+	if arb != nil {
+		return arb.SurrenderVRAM(ctx)
+	}
 	return nil
 }

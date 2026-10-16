@@ -27,4 +27,5 @@ type Gateway interface {
 	CheckModelAvailability(ctx context.Context) (bool, error)
 	SurrenderIdleVRAM(ctx context.Context) error
 	Governor() *RequestGovernor
+	Arbitrator() *GPUArbitrator
 }

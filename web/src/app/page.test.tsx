@@ -1216,4 +1216,65 @@ describe("Central Admin Dashboard Integration & i18n", () => {
       )
     );
   });
+
+  it("displays CPU-Optimized Mode indicator across EN, DE, ES, and FR on AI ServiceCard", () => {
+    const langs: Array<{ lang: "en" | "de" | "es" | "fr"; expected: string }> = [
+      { lang: "en", expected: "CPU-Optimized Mode" },
+      { lang: "de", expected: "CPU-optimierter Modus" },
+      { lang: "es", expected: "Modo optimizado para CPU" },
+      { lang: "fr", expected: "Mode optimisé pour CPU" },
+    ];
+
+    for (const { lang, expected } of langs) {
+      const html = renderToStaticMarkup(
+        <HomeScreen
+          initialReady={true}
+          initialLanguage={lang}
+          routerOverride={{ replace: () => {} }}
+          initialAIStatus={{
+            state: "ready",
+            hardware_mode: "cpu",
+            is_gpu: false,
+            is_hybrid: false,
+            cpu_optimized: true,
+            is_daytime: true,
+            idle_seconds: 10,
+            idle_timeout_seconds: 300,
+          }}
+        />
+      );
+
+      assert.ok(html.includes("data-testid=\"service-card-ai\""));
+      assert.ok(
+        html.includes(expected),
+        `expected AI ServiceCard to include localized "${expected}" in ${lang}`
+      );
+    }
+  });
+
+  it("displays warming up reassurance banner and starting state on AI ServiceCard when warming up", () => {
+    const html = renderToStaticMarkup(
+      <HomeScreen
+        initialReady={true}
+        initialLanguage="en"
+        routerOverride={{ replace: () => {} }}
+        initialAIStatus={{
+          state: "warming_up",
+          hardware_mode: "nvenc",
+          is_gpu: true,
+          is_hybrid: false,
+          cpu_optimized: false,
+          is_daytime: true,
+          idle_seconds: 0,
+          idle_timeout_seconds: 300,
+          reassurance_message: "Waking up private AI (ready in 5s)...",
+        }}
+      />
+    );
+
+    assert.ok(html.includes("data-testid=\"service-card-ai\""));
+    assert.ok(html.includes("data-testid=\"reassurance-banner-ai\""));
+    assert.ok(html.includes("Waking up private AI (ready in 5s)..."));
+  });
 });
+

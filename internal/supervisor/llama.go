@@ -35,6 +35,7 @@ type LlamaProvisionResult struct {
 	IsGPU         bool
 	ModelPath     string
 	InSafeStub    bool
+	CPUOptimized  bool
 }
 
 // LlamaProvisionerOptions allows dependency injection for hardware and core detection during testing.
@@ -116,6 +117,8 @@ func CalculateLlamaThreads(numCores int) int {
 }
 
 // DetectLlamaHardware probes for NVIDIA CUDA (/dev/nvidia*) and Vulkan/DRI (/dev/dri/renderD128) devices.
+// In hybrid GPU mode, pins Llama to dGPU (NVIDIA CUDA).
+// On CPU-only hosts, sets CPUOptimized to true and returns isGPU = false.
 func DetectLlamaHardware(opts HardwareProbeOptions) (HardwareDetectResult, bool) {
 	if opts.DevRoot == "" {
 		opts.DevRoot = "/dev"
@@ -125,6 +128,27 @@ func DetectLlamaHardware(opts HardwareProbeOptions) (HardwareDetectResult, bool)
 	}
 	if opts.ProcRoot == "" {
 		opts.ProcRoot = "/proc"
+	}
+
+	// In hybrid mode, pin Llama to dGPU (NVIDIA CUDA)
+	if IsHybridGPU(opts) {
+		var nvidiaDevices []string
+		candidates := []string{"nvidia0", "nvidiactl", "nvidia-uvm", "nvidia-modeset"}
+		for _, c := range candidates {
+			devPath := filepath.Join(opts.DevRoot, c)
+			if _, err := os.Stat(devPath); err == nil {
+				nvidiaDevices = append(nvidiaDevices, fmt.Sprintf("%s:%s", devPath, devPath))
+			}
+		}
+		if len(nvidiaDevices) == 0 {
+			nvidiaDevices = []string{"/dev/nvidia0:/dev/nvidia0"}
+		}
+		sort.Strings(nvidiaDevices)
+		return HardwareDetectResult{
+			Type:     HWAccelNVENC,
+			Devices:  nvidiaDevices,
+			IsHybrid: true,
+		}, true
 	}
 
 	// 1. Probe NVIDIA CUDA
@@ -181,8 +205,9 @@ func DetectLlamaHardware(opts HardwareProbeOptions) (HardwareDetectResult, bool)
 
 	// 3. CPU fallback
 	return HardwareDetectResult{
-		Type:    HWAccelNone,
-		Devices: nil,
+		Type:         HWAccelNone,
+		Devices:      nil,
+		CPUOptimized: true,
 	}, false
 }
 
@@ -256,11 +281,12 @@ func (p *LlamaProvisioner) Provision(ctx context.Context) (*LlamaProvisionResult
 		// No valid GGUF models provisioned in /data/models: enter Safe Stub Mode gracefully
 		p.logger.Info("no valid GGUF models provisioned in /data/models; entering safe stub mode")
 		return &LlamaProvisionResult{
-			HWAccel:    hw,
-			Devices:    hw.Devices,
-			Threads:    threads,
-			IsGPU:      isGPU,
-			InSafeStub: true,
+			HWAccel:      hw,
+			Devices:      hw.Devices,
+			Threads:      threads,
+			IsGPU:        isGPU,
+			InSafeStub:   true,
+			CPUOptimized: !isGPU,
 		}, nil
 	}
 
@@ -331,5 +357,6 @@ func (p *LlamaProvisioner) Provision(ctx context.Context) (*LlamaProvisionResult
 		IsGPU:         isGPU,
 		ModelPath:     targetModel,
 		InSafeStub:    false,
+		CPUOptimized:  !isGPU,
 	}, nil
 }

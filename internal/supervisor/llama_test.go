@@ -73,6 +73,41 @@ func TestDetectLlamaHardware_CPUFallback(t *testing.T) {
 	if len(hw.Devices) != 0 {
 		t.Errorf("expected 0 devices on CPU fallback, got %v", hw.Devices)
 	}
+	if !hw.CPUOptimized {
+		t.Errorf("expected CPUOptimized to be true on CPU fallback")
+	}
+}
+
+func TestDetectLlamaHardware_HybridGPUDetection(t *testing.T) {
+	tmpDir := t.TempDir()
+	devDir := filepath.Join(tmpDir, "dev")
+	driDir := filepath.Join(devDir, "dri")
+	_ = os.MkdirAll(driDir, 0755)
+	_ = os.WriteFile(filepath.Join(devDir, "nvidia0"), []byte{}, 0644)
+	_ = os.WriteFile(filepath.Join(devDir, "nvidiactl"), []byte{}, 0644)
+	_ = os.WriteFile(filepath.Join(driDir, "renderD128"), []byte{}, 0644)
+
+	opts := HardwareProbeOptions{
+		DevRoot:   devDir,
+		SysfsRoot: filepath.Join(tmpDir, "sys"),
+		ProcRoot:  filepath.Join(tmpDir, "proc"),
+	}
+
+	if !IsHybridGPU(opts) {
+		t.Fatalf("expected IsHybridGPU to be true")
+	}
+
+	hw, isGPU := DetectLlamaHardware(opts)
+	if !isGPU {
+		t.Fatal("expected isGPU to be true for hybrid setup")
+	}
+	if !hw.IsHybrid {
+		t.Errorf("expected IsHybrid to be true on HardwareDetectResult")
+	}
+	// In hybrid mode, Llama must be pinned to the dGPU (NVIDIA CUDA), not iGPU
+	if hw.Type != HWAccelNVENC {
+		t.Errorf("expected HWAccelNVENC for dGPU pinning in hybrid mode, got %s", hw.Type)
+	}
 }
 
 func TestDetectLlamaHardware_CUDADetection(t *testing.T) {

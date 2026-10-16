@@ -10,6 +10,7 @@ import {
   ServiceHealthChangedEvent,
   ServiceErrorEvent,
   DMSMailboxStatusEvent,
+  AIStatusResponse,
 } from "@/lib/api";
 import { Language, translations } from "@/lib/i18n";
 import { useTelemetry } from "@/lib/useTelemetry";
@@ -35,6 +36,7 @@ export interface HomePageProps {
   initialReady?: boolean;
   initialServices?: Record<string, ServiceStateOverride>;
   initialPendingAction?: string | null;
+  initialAIStatus?: AIStatusResponse | null;
 }
 
 export function HomeScreen(props: HomePageProps) {
@@ -137,6 +139,7 @@ function HomeScreenContent({
   initialReady = false,
   initialServices = {},
   initialPendingAction = null,
+  initialAIStatus = null,
 }: HomePageProps & { router?: { replace: (url: string) => void } }) {
   const client = apiClientOverride ?? defaultApiClient;
   const [isReady, setIsReady] = useState(initialReady);
@@ -159,6 +162,7 @@ function HomeScreenContent({
   const [serviceStates, setServiceStates] = useState<
     Record<string, ServiceStateOverride>
   >(initialServices);
+  const [aiStatus, setAIStatus] = useState<AIStatusResponse | null>(initialAIStatus);
   const [restartError, setRestartError] = useState<{
     title: string;
     detail: string;
@@ -292,6 +296,18 @@ function HomeScreenContent({
       })
       .catch(() => {
         // Fallback to telemetry/default state
+      });
+
+    // Attempt to load AI status for CPU-optimized mode and warming up states
+    void client
+      .getAIStatus()
+      .then((status) => {
+        if (isMounted && status) {
+          setAIStatus(status);
+        }
+      })
+      .catch(() => {
+        // Fallback to default
       });
 
     return () => {
@@ -517,13 +533,19 @@ function HomeScreenContent({
       name: t.aiTitle,
       techSubtitle: t.aiSubtitle,
       icon: "⚡",
-      status: (serviceStates.ai?.status ?? "healthy") as StatusLevel,
+      status: (serviceStates.ai?.status ?? (aiStatus?.state === "warming_up" ? "starting" : "healthy")) as StatusLevel,
       metric: t.aiMetric,
-      secondaryDescriptor: t.aiDesc,
+      secondaryDescriptor: aiStatus?.cpu_optimized
+        ? t.aiCpuOptimized
+        : t.aiDesc,
       actionUrl: "/chat",
       actionLabel: t.aiAction,
       isRestarting: Boolean(serviceStates.ai?.isRestarting),
-      reassuranceMessage: serviceStates.ai?.reassuranceMessage,
+      reassuranceMessage:
+        serviceStates.ai?.reassuranceMessage ||
+        (aiStatus?.state === "warming_up"
+          ? (aiStatus.reassurance_message || t.aiWarmingUpReassurance)
+          : undefined),
     },
   ];
 

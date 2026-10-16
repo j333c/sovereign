@@ -1101,3 +1101,398 @@ func TestRequestGovernor_CancellationTracksTotalCanceled(t *testing.T) {
 	}
 }
 
+func TestGPUArbitrator_IdleSurrender_300s(t *testing.T) {
+	currTime := time.Date(2026, 10, 16, 14, 0, 0, 0, time.UTC)
+	var mu sync.Mutex
+	getTime := func() time.Time {
+		mu.Lock()
+		defer mu.Unlock()
+		return currTime
+	}
+	advanceTime := func(d time.Duration) {
+		mu.Lock()
+		defer mu.Unlock()
+		currTime = currTime.Add(d)
+	}
+
+	unloaded := false
+	unloadMu := sync.Mutex{}
+	unloadFunc := func(ctx context.Context) error {
+		unloadMu.Lock()
+		defer unloadMu.Unlock()
+		unloaded = true
+		return nil
+	}
+
+	arb := NewGPUArbitrator(ArbitratorConfig{
+		IdleTimeout:  300 * time.Second,
+		TickInterval: 10 * time.Millisecond,
+		NowFunc:      getTime,
+		UnloadFunc:   unloadFunc,
+		IsGPU:        true,
+	})
+	defer arb.Close()
+
+	if arb.State() != ArbitratorStateReady {
+		t.Fatalf("expected initial state ready, got %s", arb.State())
+	}
+
+	// Advance time by 200s (below 300s threshold)
+	advanceTime(200 * time.Second)
+	time.Sleep(50 * time.Millisecond)
+
+	if arb.State() != ArbitratorStateReady {
+		t.Fatalf("expected state ready after 200s, got %s", arb.State())
+	}
+	unloadMu.Lock()
+	if unloaded {
+		t.Fatalf("expected model not unloaded before 300s")
+	}
+	unloadMu.Unlock()
+
+	// Advance time past 300s threshold (another 101s -> total 301s)
+	advanceTime(101 * time.Second)
+	time.Sleep(50 * time.Millisecond)
+
+	if arb.State() != ArbitratorStateIdleSurrendered {
+		t.Fatalf("expected state idle_surrendered after 301s, got %s", arb.State())
+	}
+	unloadMu.Lock()
+	if !unloaded {
+		t.Fatalf("expected unloadFunc to be called after 300s inactivity")
+	}
+	unloadMu.Unlock()
+
+	// Calling SurrenderVRAM again should be resilient and idempotent
+	err := arb.SurrenderVRAM(context.Background())
+	if err != nil {
+		t.Fatalf("expected SurrenderVRAM to be resilient when already surrendered, got: %v", err)
+	}
+}
+
+func TestGPUArbitrator_ActivityReset(t *testing.T) {
+	currTime := time.Date(2026, 10, 16, 14, 0, 0, 0, time.UTC)
+	var mu sync.Mutex
+	getTime := func() time.Time {
+		mu.Lock()
+		defer mu.Unlock()
+		return currTime
+	}
+	advanceTime := func(d time.Duration) {
+		mu.Lock()
+		defer mu.Unlock()
+		currTime = currTime.Add(d)
+	}
+
+	arb := NewGPUArbitrator(ArbitratorConfig{
+		IdleTimeout:  300 * time.Second,
+		TickInterval: 10 * time.Millisecond,
+		NowFunc:      getTime,
+	})
+	defer arb.Close()
+
+	advanceTime(200 * time.Second)
+	arb.RecordActivity() // reset countdown
+
+	advanceTime(200 * time.Second) // total 400s elapsed, but only 200s since last activity
+	time.Sleep(50 * time.Millisecond)
+
+	if arb.State() != ArbitratorStateReady {
+		t.Fatalf("expected state ready after activity reset, got %s", arb.State())
+	}
+
+	advanceTime(101 * time.Second) // 301s since last activity
+	time.Sleep(50 * time.Millisecond)
+
+	if arb.State() != ArbitratorStateIdleSurrendered {
+		t.Fatalf("expected state idle_surrendered after 301s since activity reset, got %s", arb.State())
+	}
+}
+
+func TestGPUArbitrator_DayNightSchedule(t *testing.T) {
+	tests := []struct {
+		name      string
+		time      time.Time
+		isDaytime bool
+	}{
+		{"07:00 daytime start", time.Date(2026, 10, 16, 7, 0, 0, 0, time.UTC), true},
+		{"12:00 noon daytime", time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC), true},
+		{"23:59 evening daytime", time.Date(2026, 10, 16, 23, 59, 0, 0, time.UTC), true},
+		{"00:30 night-owl daytime", time.Date(2026, 10, 16, 0, 30, 0, 0, time.UTC), true},
+		{"01:00 off-peak night start", time.Date(2026, 10, 16, 1, 0, 0, 0, time.UTC), false},
+		{"03:00 deep off-peak night", time.Date(2026, 10, 16, 3, 0, 0, 0, time.UTC), false},
+		{"06:59 night end", time.Date(2026, 10, 16, 6, 59, 59, 0, time.UTC), false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := IsDaytime(tc.time)
+			if got != tc.isDaytime {
+				t.Errorf("IsDaytime(%v) = %v; expected %v", tc.time, got, tc.isDaytime)
+			}
+		})
+	}
+}
+
+func TestGPUArbitrator_DaytimeWakeup_BufferAndMicrocopy(t *testing.T) {
+	currTime := time.Date(2026, 10, 16, 10, 0, 0, 0, time.UTC) // 10:00 AM (Daytime)
+	var stateHistory []string
+	var historyMu sync.Mutex
+
+	wakeCalled := false
+	wakeFunc := func(ctx context.Context) error {
+		wakeCalled = true
+		// Verify timeout buffer is at least 60s
+		deadline, ok := ctx.Deadline()
+		if !ok {
+			t.Errorf("expected deadline on wake context")
+		} else {
+			remaining := time.Until(deadline)
+			if remaining < 50*time.Second {
+				t.Errorf("expected wake timeout buffer >= 60s, got remaining %v", remaining)
+			}
+		}
+		time.Sleep(20 * time.Millisecond)
+		return nil
+	}
+
+	arb := NewGPUArbitrator(ArbitratorConfig{
+		IdleTimeout:  300 * time.Second,
+		WakeTimeout:  90 * time.Second,
+		TickInterval: 10 * time.Millisecond,
+		NowFunc: func() time.Time {
+			return currTime
+		},
+		InitialState: ArbitratorStateIdleSurrendered,
+		WakeFunc:     wakeFunc,
+		OnStateChange: func(oldState, newState string) {
+			historyMu.Lock()
+			stateHistory = append(stateHistory, newState)
+			historyMu.Unlock()
+		},
+	})
+	defer arb.Close()
+
+	if arb.State() != ArbitratorStateIdleSurrendered {
+		t.Fatalf("expected initial state idle_surrendered")
+	}
+
+	// Trigger wake-up via EnsureReady
+	err := arb.EnsureReady(context.Background())
+	if err != nil {
+		t.Fatalf("EnsureReady failed: %v", err)
+	}
+
+	if !wakeCalled {
+		t.Fatal("expected wakeFunc to have been called")
+	}
+	if arb.State() != ArbitratorStateReady {
+		t.Fatalf("expected state ready after successful wake, got %s", arb.State())
+	}
+
+	historyMu.Lock()
+	defer historyMu.Unlock()
+	if len(stateHistory) < 2 {
+		t.Fatalf("expected transitions to warming_up and ready, got: %v", stateHistory)
+	}
+	if stateHistory[0] != ArbitratorStateWarmingUp || stateHistory[1] != ArbitratorStateReady {
+		t.Errorf("unexpected state transition sequence: %v", stateHistory)
+	}
+}
+
+func TestGPUArbitrator_ImmediateRequestWhileWarmingUp(t *testing.T) {
+	wakeBlock := make(chan struct{})
+	wakeCount := 0
+	var wakeMu sync.Mutex
+
+	wakeFunc := func(ctx context.Context) error {
+		wakeMu.Lock()
+		wakeCount++
+		wakeMu.Unlock()
+		<-wakeBlock
+		return nil
+	}
+
+	arb := NewGPUArbitrator(ArbitratorConfig{
+		IdleTimeout:  300 * time.Second,
+		WakeTimeout:  90 * time.Second,
+		TickInterval: 10 * time.Millisecond,
+		InitialState: ArbitratorStateIdleSurrendered,
+		WakeFunc:     wakeFunc,
+	})
+	defer arb.Close()
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	var err1, err2 error
+
+	// Request 1 arrives
+	go func() {
+		defer wg.Done()
+		err1 = arb.EnsureReady(context.Background())
+	}()
+
+	// Wait until state transitions to warming_up
+	for i := 0; i < 50; i++ {
+		if arb.State() == ArbitratorStateWarmingUp {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	if arb.State() != ArbitratorStateWarmingUp {
+		t.Fatalf("expected state warming_up")
+	}
+
+	// Microcopy reassurance check during warm-up
+	st := arb.Status()
+	if st.ReassuranceMessage != ReassuranceWarmingUp {
+		t.Errorf("expected reassurance microcopy %q during warm-up, got %q", ReassuranceWarmingUp, st.ReassuranceMessage)
+	}
+
+	// Request 2 arrives while warming_up
+	go func() {
+		defer wg.Done()
+		err2 = arb.EnsureReady(context.Background())
+	}()
+
+	time.Sleep(30 * time.Millisecond)
+	close(wakeBlock) // complete wake
+	wg.Wait()
+
+	if err1 != nil {
+		t.Errorf("request 1 error: %v", err1)
+	}
+	if err2 != nil {
+		t.Errorf("request 2 error: %v", err2)
+	}
+
+	wakeMu.Lock()
+	if wakeCount != 1 {
+		t.Errorf("expected exactly 1 wakeFunc invocation for coalesced requests, got %d", wakeCount)
+	}
+	wakeMu.Unlock()
+
+	if arb.State() != ArbitratorStateReady {
+		t.Errorf("expected state ready after completion, got %s", arb.State())
+	}
+}
+
+func TestGPUArbitrator_WakeTimeout_504(t *testing.T) {
+	hangingWake := func(ctx context.Context) error {
+		<-ctx.Done()
+		return ctx.Err()
+	}
+
+	arb := NewGPUArbitrator(ArbitratorConfig{
+		IdleTimeout:  300 * time.Second,
+		WakeTimeout:  50 * time.Millisecond,
+		TickInterval: 10 * time.Millisecond,
+		InitialState: ArbitratorStateIdleSurrendered,
+		WakeFunc:     hangingWake,
+	})
+	defer arb.Close()
+
+	// Wait for wake timeout buffer to expire
+	err := arb.EnsureReady(context.Background())
+	if err == nil {
+		t.Fatal("expected error on timeout")
+	}
+	if !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, ErrWakeTimeout) {
+		t.Errorf("expected context.DeadlineExceeded or ErrWakeTimeout, got: %v", err)
+	}
+	if arb.State() != ArbitratorStateIdleSurrendered {
+		t.Errorf("expected state to revert to idle_surrendered, got %s", arb.State())
+	}
+}
+
+func TestGPUArbitrator_CPUOptimizedStatus(t *testing.T) {
+	arb := NewGPUArbitrator(ArbitratorConfig{
+		CPUOptimized: true,
+		IsGPU:        false,
+		HardwareMode: "cpu",
+	})
+	defer arb.Close()
+
+	st := arb.Status()
+	if !st.CPUOptimized {
+		t.Error("expected CPUOptimized to be true")
+	}
+	if st.HardwareMode != "cpu" {
+		t.Errorf("expected HardwareMode 'cpu', got %s", st.HardwareMode)
+	}
+	if st.ReassuranceMessage != ReassuranceCPUOptimized {
+		t.Errorf("expected reassurance microcopy %q, got %q", ReassuranceCPUOptimized, st.ReassuranceMessage)
+	}
+}
+
+func TestGateway_IdleSurrenderAndWakeIntegration(t *testing.T) {
+	tmpDir := t.TempDir()
+	validGGUF := createMockGGUFBytes(3, 128, 42)
+	if err := os.WriteFile(filepath.Join(tmpDir, "qwen2.5-coder-7b.gguf"), validGGUF, 0o644); err != nil {
+		t.Fatalf("failed to write dummy model: %v", err)
+	}
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"choices": [{"message": {"role": "assistant", "content": "Woken up successfully"}}]}`))
+	}))
+	defer upstream.Close()
+
+	wakeCalled := false
+	unloadCalled := false
+
+	arb := NewGPUArbitrator(ArbitratorConfig{
+		IdleTimeout:  300 * time.Second,
+		WakeTimeout:  90 * time.Second,
+		TickInterval: 10 * time.Millisecond,
+		InitialState: ArbitratorStateReady,
+		UnloadFunc: func(ctx context.Context) error {
+			unloadCalled = true
+			return nil
+		},
+		WakeFunc: func(ctx context.Context) error {
+			wakeCalled = true
+			return nil
+		},
+	})
+	defer arb.Close()
+
+	gw := NewGateway(GatewayConfig{
+		ModelsDir:  tmpDir,
+		LlamaURL:   upstream.URL,
+		Arbitrator: arb,
+	})
+
+	// 1. Manually surrender VRAM
+	if err := gw.SurrenderIdleVRAM(context.Background()); err != nil {
+		t.Fatalf("SurrenderIdleVRAM failed: %v", err)
+	}
+	if !unloadCalled {
+		t.Fatal("expected unloadFunc to be called on SurrenderIdleVRAM")
+	}
+	if arb.State() != ArbitratorStateIdleSurrendered {
+		t.Fatalf("expected state idle_surrendered, got %s", arb.State())
+	}
+
+	// 2. Inference request should wake model automatically
+	body := `{"model": "qwen2.5-coder-7b.gguf", "messages": [{"role": "user", "content": "hello"}]}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader([]byte(body)))
+	rec := httptest.NewRecorder()
+
+	gw.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected HTTP 200 after waking, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !wakeCalled {
+		t.Fatal("expected wakeFunc to have been triggered by incoming inference request")
+	}
+	if arb.State() != ArbitratorStateReady {
+		t.Fatalf("expected arbitrator to transition back to ready, got %s", arb.State())
+	}
+}
+
+

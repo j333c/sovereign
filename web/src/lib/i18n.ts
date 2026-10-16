@@ -56,6 +56,8 @@ export interface DashboardTranslations {
   aiMetric: string;
   aiDesc: string;
   aiAction: string;
+  aiWarmingUpReassurance: string;
+  aiCpuOptimized: string;
   connectingTelemetry: string;
   liveTelemetry: string;
   reconnecting: string;
@@ -148,6 +150,8 @@ export const translations: Record<Language, DashboardTranslations> = {
     aiMetric: "Private Family Search",
     aiDesc: "100% On-Device",
     aiAction: "Open Chat UI",
+    aiWarmingUpReassurance: "Waking up private AI (ready in 5s)...",
+    aiCpuOptimized: "CPU-Optimized Mode",
     connectingTelemetry: "Connecting to telemetry stream...",
     liveTelemetry: "Live telemetry stream active",
     reconnecting: "Reconnecting to telemetry...",
@@ -238,6 +242,8 @@ export const translations: Record<Language, DashboardTranslations> = {
     aiMetric: "Private Familiensuche",
     aiDesc: "100% Lokal",
     aiAction: "Chat-UI öffnen",
+    aiWarmingUpReassurance: "Privates KI-Modell wird gestartet (bereit in 5s)...",
+    aiCpuOptimized: "CPU-optimierter Modus",
     connectingTelemetry: "Verbinde mit Telemetriestrom...",
     liveTelemetry: "Live-Telemetriestrom aktiv",
     reconnecting: "Verbindung wird wiederhergestellt...",
@@ -328,6 +334,8 @@ export const translations: Record<Language, DashboardTranslations> = {
     aiMetric: "Búsqueda privada familiar",
     aiDesc: "100% en el dispositivo",
     aiAction: "Abrir interfaz de chat",
+    aiWarmingUpReassurance: "Iniciando IA privada (lista en 5s)...",
+    aiCpuOptimized: "Modo optimizado para CPU",
     connectingTelemetry: "Conectando al flujo de telemetría...",
     liveTelemetry: "Flujo de telemetría en vivo activo",
     reconnecting: "Reconectando a telemetría...",
@@ -418,6 +426,8 @@ export const translations: Record<Language, DashboardTranslations> = {
     aiMetric: "Recherche familiale privée",
     aiDesc: "100% sur l'appareil",
     aiAction: "Ouvrir l'interface de chat",
+    aiWarmingUpReassurance: "Réveil de l'IA privée (prêt dans 5s)...",
+    aiCpuOptimized: "Mode optimisé pour CPU",
     connectingTelemetry: "Connexion au flux de télémétrie...",
     liveTelemetry: "Flux de télémétrie en direct actif",
     reconnecting: "Reconnexion à la télémétrie...",

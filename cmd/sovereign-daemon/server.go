@@ -389,10 +389,43 @@ func NewServer(cfg Config) (*Server, error) {
 	}
 
 	if cfg.AIGateway == nil {
+		hw, isGPU := supervisor.DetectLlamaHardware(supervisor.HardwareProbeOptions{DevRoot: "/dev", SysfsRoot: "/sys", ProcRoot: "/proc"})
+		isHybrid := supervisor.IsHybridGPU(supervisor.HardwareProbeOptions{DevRoot: "/dev", SysfsRoot: "/sys", ProcRoot: "/proc"})
+		cpuOptimized := !isGPU
+		hwMode := hw.Type
+		if hwMode == "" || hwMode == "none" {
+			hwMode = "cpu"
+		}
+		var hybridAssignments map[string]string
+		if isHybrid {
+			hybridAssignments = map[string]string{
+				"jellyfin": "igpu",
+				"llama":    "dgpu",
+			}
+		}
+
+		arbitrator := ai.NewGPUArbitrator(ai.ArbitratorConfig{
+			HardwareMode:      hwMode,
+			IsGPU:             isGPU,
+			IsHybrid:          isHybrid,
+			CPUOptimized:      cpuOptimized,
+			HybridAssignments: hybridAssignments,
+			Logger:            cfg.Logger,
+			OnStateChange: func(oldState, newState string) {
+				if newState == ai.ArbitratorStateIdleSurrendered {
+					s.BroadcastEvent("gpu.idle_surrender", map[string]any{
+						"state":   newState,
+						"message": "AI model surrendered VRAM due to idle inactivity",
+					})
+				}
+			},
+		})
+
 		s.aiGateway = ai.NewGateway(ai.GatewayConfig{
-			ModelsDir: filepath.Join(cfg.DataDir, "models"),
-			LlamaURL:  s.llamaURL,
-			Logger:    cfg.Logger,
+			ModelsDir:  filepath.Join(cfg.DataDir, "models"),
+			LlamaURL:   s.llamaURL,
+			Logger:     cfg.Logger,
+			Arbitrator: arbitrator,
 		})
 	} else {
 		s.aiGateway = cfg.AIGateway
@@ -972,6 +1005,7 @@ func (s *Server) routes() {
 	// AI Gateway mediated inference endpoints, presets, and governor status
 	s.router.HandleFunc("GET /api/v1/ai/presets", s.handleAIPresets)
 	s.router.HandleFunc("GET /api/v1/ai/governor/status", s.handleAIGovernorStatus)
+	s.router.HandleFunc("GET /api/v1/ai/status", s.handleAIStatus)
 	s.router.HandleFunc("/v1", s.handleAIGateway)
 	s.router.HandleFunc("/v1/{path...}", s.handleAIGateway)
 }
@@ -1038,6 +1072,34 @@ func (s *Server) handleAIGovernorStatus(w http.ResponseWriter, r *http.Request) 
 		status = ai.GovernorStatus{
 			TotalSlots:          2,
 			ReservedInteractive: 1,
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(status)
+}
+
+// handleAIStatus reports real-time GPU arbitration state, idle countdown, day/night habit mode, and hybrid GPU assignments.
+func (s *Server) handleAIStatus(w http.ResponseWriter, r *http.Request) {
+	s.mu.RLock()
+	gw := s.aiGateway
+	s.mu.RUnlock()
+
+	var status ai.ArbitratorStatus
+	if gw != nil && gw.Arbitrator() != nil {
+		status = gw.Arbitrator().Status()
+	} else {
+		status = ai.ArbitratorStatus{
+			State:              ai.ArbitratorStateSafeStub,
+			HardwareMode:       "cpu",
+			IsGPU:              false,
+			IsHybrid:           false,
+			CPUOptimized:       true,
+			IsDaytime:          ai.IsDaytime(time.Now()),
+			IdleSeconds:        0,
+			IdleTimeoutSeconds: 300,
+			ReassuranceMessage: ai.ReassuranceCPUOptimized,
 		}
 	}
 
