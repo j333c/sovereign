@@ -83,22 +83,30 @@ func NormalizeInferencePayload(body []byte, defaultPreset string) ([]byte, error
 	if err := json.Unmarshal(trimmed, &payload); err != nil {
 		return nil, fmt.Errorf("invalid json inference payload: %w", err)
 	}
+	if payload == nil {
+		return nil, fmt.Errorf("invalid json inference payload: expected json object")
+	}
 
-	// Detect requested preset/intent
+	// Detect requested preset/intent from body
 	var requestedPreset string
 	if p, ok := payload["preset"].(string); ok && strings.TrimSpace(p) != "" {
 		requestedPreset = strings.TrimSpace(p)
 	} else if intent, ok := payload["intent"].(string); ok && strings.TrimSpace(intent) != "" {
 		requestedPreset = strings.TrimSpace(intent)
-	} else if strings.TrimSpace(defaultPreset) != "" {
-		requestedPreset = strings.TrimSpace(defaultPreset)
 	}
 
-	// Look up preset; if invalid or omitted, fall back to balanced
+	// Look up preset; if invalid or omitted from body, fall back to defaultPreset then balanced
 	preset, ok := GetPreset(requestedPreset)
+	if !ok && strings.TrimSpace(defaultPreset) != "" {
+		preset, ok = GetPreset(defaultPreset)
+	}
 	if !ok {
 		preset = PresetBalanced
 	}
+
+	// Remove non-standard extension keys before forwarding to upstream OpenAI-compatible backend
+	delete(payload, "preset")
+	delete(payload, "intent")
 
 	// Inject calibrated temperature unless explicitly specified by power user
 	if _, exists := payload["temperature"]; !exists || payload["temperature"] == nil {

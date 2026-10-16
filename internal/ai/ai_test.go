@@ -936,5 +936,168 @@ func TestDefaultGateway_ClientCancellationReleasesSlot(t *testing.T) {
 	if st.ActiveInteractive != 0 {
 		t.Errorf("expected 0 active slots after client cancellation, got %d", st.ActiveInteractive)
 	}
+	if st.TotalCanceled != 1 {
+		t.Errorf("expected 1 total canceled, got %d", st.TotalCanceled)
+	}
+}
+
+func TestDefaultGateway_QueueTimeout_504(t *testing.T) {
+	tmpDir := t.TempDir()
+	validGGUF := createMockGGUFBytes(3, 128, 42)
+	if err := os.WriteFile(filepath.Join(tmpDir, "model.gguf"), validGGUF, 0o644); err != nil {
+		t.Fatalf("failed to write dummy model: %v", err)
+	}
+
+	gov := NewRequestGovernor(GovernorConfig{
+		TotalSlots:          1,
+		ReservedInteractive: 1,
+		QueueTimeout:        20 * time.Millisecond,
+	})
+
+	// Manually hold the only slot
+	ctx := context.Background()
+	release, err := gov.Acquire(ctx, PriorityInteractive)
+	if err != nil {
+		t.Fatalf("failed to acquire first slot: %v", err)
+	}
+	defer release()
+
+	gw := NewGateway(GatewayConfig{
+		ModelsDir: tmpDir,
+		LlamaURL:  "http://127.0.0.1:9", // unreachable, shouldn't be reached anyway
+		Governor:  gov,
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"messages":[]}`))
+	rec := httptest.NewRecorder()
+
+	gw.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusGatewayTimeout {
+		t.Fatalf("expected HTTP 504 Gateway Timeout, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Header().Get("Content-Type"), "application/problem+json") {
+		t.Errorf("expected application/problem+json content type, got: %s", rec.Header().Get("Content-Type"))
+	}
+}
+
+func TestDefaultGateway_ReadonlyModelsBypassesSaturatedGovernor(t *testing.T) {
+	tmpDir := t.TempDir()
+	validGGUF := createMockGGUFBytes(3, 128, 42)
+	if err := os.WriteFile(filepath.Join(tmpDir, "qwen2.5-coder-7b.gguf"), validGGUF, 0o644); err != nil {
+		t.Fatalf("failed to write dummy model: %v", err)
+	}
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"data": [{"id": "qwen2.5-coder-7b.gguf"}]}`))
+	}))
+	defer upstream.Close()
+
+	gov := NewRequestGovernor(GovernorConfig{
+		TotalSlots:          1,
+		ReservedInteractive: 1,
+	})
+
+	// Saturate the only slot
+	release, err := gov.Acquire(context.Background(), PriorityInteractive)
+	if err != nil {
+		t.Fatalf("failed to acquire slot: %v", err)
+	}
+	defer release()
+
+	gw := NewGateway(GatewayConfig{
+		ModelsDir: tmpDir,
+		LlamaURL:  upstream.URL,
+		Governor:  gov,
+	})
+
+	// GET /v1/models should bypass governor and respond immediately 200 OK
+	reqModels := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	recModels := httptest.NewRecorder()
+	gw.ServeHTTP(recModels, reqModels)
+
+	if recModels.Code != http.StatusOK {
+		t.Fatalf("expected GET /v1/models to bypass governor with HTTP 200, got %d", recModels.Code)
+	}
+
+	// OPTIONS /v1/chat/completions should also bypass governor and respond immediately without blocking
+	reqOptions := httptest.NewRequest(http.MethodOptions, "/v1/chat/completions", nil)
+	recOptions := httptest.NewRecorder()
+	gw.ServeHTTP(recOptions, reqOptions)
+
+	if recOptions.Code != http.StatusOK && recOptions.Code != http.StatusNoContent {
+		t.Fatalf("expected OPTIONS to bypass governor with HTTP 200 or 204, got %d", recOptions.Code)
+	}
+}
+
+func TestNormalizeInferencePayload_NilAndStripKeys(t *testing.T) {
+	// Nil payload should return nil without error or panic
+	emptyNorm, err := NormalizeInferencePayload(nil, "balanced")
+	if err != nil {
+		t.Errorf("unexpected error for nil payload: %v", err)
+	}
+	if len(emptyNorm) != 0 {
+		t.Errorf("expected empty payload for nil input, got %s", string(emptyNorm))
+	}
+
+	// "null" JSON payload should error
+	_, err = NormalizeInferencePayload([]byte("null"), "balanced")
+	if err == nil {
+		t.Error("expected error for 'null' payload")
+	}
+
+	// Preset and intent keys should be stripped from raw payload before sending upstream
+	input := `{"preset": "creative", "intent": "creative", "model": "test-model", "messages": []}`
+	norm, err := NormalizeInferencePayload([]byte(input), "")
+	if err != nil {
+		t.Fatalf("failed to normalize: %v", err)
+	}
+
+	var m map[string]interface{}
+	if err := json.Unmarshal(norm, &m); err != nil {
+		t.Fatalf("failed to unmarshal normalized payload: %v", err)
+	}
+
+	if _, exists := m["preset"]; exists {
+		t.Error("expected 'preset' field to be stripped from payload")
+	}
+	if _, exists := m["intent"]; exists {
+		t.Error("expected 'intent' field to be stripped from payload")
+	}
+	if m["temperature"] != 0.85 {
+		t.Errorf("expected temperature 0.85, got %v", m["temperature"])
+	}
+}
+
+func TestRequestGovernor_CancellationTracksTotalCanceled(t *testing.T) {
+	gov := NewRequestGovernor(GovernorConfig{
+		TotalSlots:          2,
+		ReservedInteractive: 1,
+	})
+
+	ctx1 := context.Background()
+	release1, err := gov.Acquire(ctx1, PriorityInteractive)
+	if err != nil {
+		t.Fatalf("unexpected acquire error: %v", err)
+	}
+	release1() // completed successfully
+
+	ctx2, cancel2 := context.WithCancel(context.Background())
+	release2, err := gov.Acquire(ctx2, PriorityBackground)
+	if err != nil {
+		t.Fatalf("unexpected acquire error: %v", err)
+	}
+	cancel2()  // cancel context before release
+	release2() // release after cancellation
+
+	st := gov.Status()
+	if st.TotalServed != 1 {
+		t.Errorf("expected totalServed=1, got %d", st.TotalServed)
+	}
+	if st.TotalCanceled != 1 {
+		t.Errorf("expected totalCanceled=1, got %d", st.TotalCanceled)
+	}
 }
 

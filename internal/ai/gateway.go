@@ -127,7 +127,7 @@ func (g *DefaultGateway) SetLlamaURL(rawURL string) {
 }
 
 // ClassifyPriority determines whether the request belongs to PriorityInteractive or PriorityBackground.
-// Checks headers (X-Inference-Priority, X-Priority, X-Lane) and query parameters, defaulting
+// Checks headers (X-Inference-Priority, X-Priority, X-Lane), query parameters, and paths, defaulting
 // to PriorityInteractive for human chat / Open WebUI traffic.
 func ClassifyPriority(r *http.Request) InferencePriority {
 	p := strings.ToLower(strings.TrimSpace(r.Header.Get("X-Inference-Priority")))
@@ -145,6 +145,12 @@ func ClassifyPriority(r *http.Request) InferencePriority {
 	}
 
 	if qp := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("priority"))); qp == "background" {
+		return PriorityBackground
+	}
+
+	// Path-based classification for automated background endpoints
+	path := strings.ToLower(r.URL.Path)
+	if strings.Contains(path, "/batch") || strings.Contains(path, "/scan") {
 		return PriorityBackground
 	}
 
@@ -170,17 +176,18 @@ func (g *DefaultGateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// For read-only endpoints like GET /v1/models that do not perform inference,
+	// For read-only endpoints like GET /v1/models or preflight OPTIONS that do not perform inference,
 	// proxy directly without acquiring an inference execution slot.
-	if r.Method == http.MethodGet || r.Method == http.MethodHead {
+	if r.Method == http.MethodGet || r.Method == http.MethodHead || r.Method == http.MethodOptions {
 		proxy.ServeHTTP(w, r)
 		return
 	}
 
 	priority := ClassifyPriority(r)
 
-	// Normalize payload and inject generation intent preset if JSON body exists
-	if r.Body != nil {
+	// Normalize payload and inject generation intent preset for completion endpoints if JSON body exists
+	isCompletion := strings.HasSuffix(r.URL.Path, "/chat/completions") || strings.HasSuffix(r.URL.Path, "/completions")
+	if isCompletion && r.Body != nil {
 		bodyBytes, readErr := io.ReadAll(io.LimitReader(r.Body, 10<<20)) // 10MB limit
 		_ = r.Body.Close()
 		if readErr != nil {

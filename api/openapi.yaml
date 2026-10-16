@@ -1511,6 +1511,21 @@ paths:
       summary: OpenAI-compatible chat completion
       description: Mediates inference requests to the internal llama-server backend spoke, falling back to RFC 7807 Safe Stub Mode when no models exist.
       operationId: createChatCompletion
+      parameters:
+        - name: X-Inference-Priority
+          in: header
+          required: false
+          schema:
+            type: string
+            enum: [interactive, background]
+          description: Priority lane for inference request (default interactive)
+        - name: X-Generation-Intent
+          in: header
+          required: false
+          schema:
+            type: string
+            enum: [precise, balanced, creative]
+          description: Pre-calibrated generation intent preset
       requestBody:
         required: true
         content:
@@ -1523,10 +1538,23 @@ paths:
                 model:
                   type: string
                   description: Model identifier or default
+                preset:
+                  type: string
+                  enum: [precise, balanced, creative]
+                  description: Pre-calibrated generation preset
+                intent:
+                  type: string
+                  description: Alias for preset
                 messages:
                   type: array
                   items:
                     type: object
+                temperature:
+                  type: number
+                  description: Optional explicit temperature override
+                top_p:
+                  type: number
+                  description: Optional explicit top_p override
                 stream:
                   type: boolean
                   default: false
@@ -3272,6 +3300,9 @@ components:
         - total_slots
         - reserved_interactive
         - total_served
+        - total_canceled
+        - total_rejected
+        - total_timed_out
       properties:
         active_interactive:
           type: integer
@@ -3294,6 +3325,9 @@ components:
         total_served:
           type: integer
           example: 142
+        total_canceled:
+          type: integer
+          example: 0
         total_rejected:
           type: integer
           example: 0

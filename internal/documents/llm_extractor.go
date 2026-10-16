@@ -38,10 +38,10 @@ func NewGatewayLLMExtractor(baseURL string, logger *slog.Logger) *GatewayLLMExtr
 	return &GatewayLLMExtractor{
 		baseURL: strings.TrimRight(baseURL, "/"),
 		client: &http.Client{
-			Timeout: 20 * time.Second,
+			Timeout: 90 * time.Second,
 		},
 		logger:  logger,
-		timeout: 20 * time.Second,
+		timeout: 90 * time.Second,
 	}
 }
 
@@ -115,7 +115,7 @@ If no deadlines or obligations exist, return: {"obligations": []}.`
 			{Role: "user", Content: fmt.Sprintf("Extract obligations from this document text:\n\n%s", text)},
 		},
 		Preset:      "precise",
-		Temperature: 0.1, // Precise & Factual preset
+		Temperature: 0.1,
 	}
 
 	bodyBytes, err := json.Marshal(reqBody)

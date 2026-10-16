@@ -2066,9 +2066,11 @@ export interface components {
             /** @example 142 */
             total_served: number;
             /** @example 0 */
-            total_rejected?: number;
+            total_canceled: number;
             /** @example 0 */
-            total_timed_out?: number;
+            total_rejected: number;
+            /** @example 0 */
+            total_timed_out: number;
         };
     };
     responses: never;
@@ -4079,7 +4081,12 @@ export interface operations {
     createChatCompletion: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description Priority lane for inference request (default interactive) */
+                "X-Inference-Priority"?: "interactive" | "background";
+                /** @description Pre-calibrated generation intent preset */
+                "X-Generation-Intent"?: "precise" | "balanced" | "creative";
+            };
             path?: never;
             cookie?: never;
         };
@@ -4088,7 +4095,18 @@ export interface operations {
                 "application/json": {
                     /** @description Model identifier or default */
                     model?: string;
+                    /**
+                     * @description Pre-calibrated generation preset
+                     * @enum {string}
+                     */
+                    preset?: "precise" | "balanced" | "creative";
+                    /** @description Alias for preset */
+                    intent?: string;
                     messages: Record<string, never>[];
+                    /** @description Optional explicit temperature override */
+                    temperature?: number;
+                    /** @description Optional explicit top_p override */
+                    top_p?: number;
                     /** @default false */
                     stream?: boolean;
                 };

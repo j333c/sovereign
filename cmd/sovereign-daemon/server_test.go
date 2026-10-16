@@ -5416,6 +5416,7 @@ func TestServer_AIGateway_ProxyWhenRunning(t *testing.T) {
 
 func TestServer_AIPresets_And_GovernorStatus(t *testing.T) {
 	srv, dataDir := setupTestServer(t)
+	defer srv.Close()
 
 	// 1. Test GET /api/v1/ai/presets
 	reqPresets := httptest.NewRequest(http.MethodGet, "/api/v1/ai/presets", nil)

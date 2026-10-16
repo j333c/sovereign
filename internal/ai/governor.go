@@ -44,6 +44,7 @@ type GovernorStatus struct {
 	TotalSlots          int   `json:"total_slots"`
 	ReservedInteractive int   `json:"reserved_interactive"`
 	TotalServed         int64 `json:"total_served"`
+	TotalCanceled       int64 `json:"total_canceled"`
 	TotalRejected       int64 `json:"total_rejected"`
 	TotalTimedOut       int64 `json:"total_timed_out"`
 }
@@ -68,6 +69,7 @@ type RequestGovernor struct {
 	backgroundWaiters  []chan struct{}
 
 	totalServed   int64
+	totalCanceled int64
 	totalRejected int64
 	totalTimedOut int64
 }
@@ -110,6 +112,10 @@ func NewRequestGovernor(cfg GovernorConfig) *RequestGovernor {
 // priority (interactive requests jump ahead of background requests).
 // Returns a release function that MUST be invoked when inference completes.
 func (g *RequestGovernor) Acquire(ctx context.Context, priority InferencePriority) (func(), error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
 	g.mu.Lock()
 
 	if priority == PriorityInteractive {
@@ -118,7 +124,7 @@ func (g *RequestGovernor) Acquire(ctx context.Context, priority InferencePriorit
 		if g.activeInteractive+g.activeBackground < g.totalSlots && len(g.interactiveWaiters) == 0 {
 			g.activeInteractive++
 			g.mu.Unlock()
-			return g.makeReleaseFunc(PriorityInteractive), nil
+			return g.makeReleaseFunc(ctx, PriorityInteractive), nil
 		}
 
 		// Check interactive queue capacity
@@ -146,7 +152,7 @@ func (g *RequestGovernor) Acquire(ctx context.Context, priority InferencePriorit
 		len(g.backgroundWaiters) == 0 {
 		g.activeBackground++
 		g.mu.Unlock()
-		return g.makeReleaseFunc(PriorityBackground), nil
+		return g.makeReleaseFunc(ctx, PriorityBackground), nil
 	}
 
 	// Check background queue capacity
@@ -175,7 +181,7 @@ func (g *RequestGovernor) waitForSlot(ctx context.Context, priority InferencePri
 	select {
 	case <-waitCh:
 		// Slot was granted by scheduleNext (active count was already incremented)
-		return g.makeReleaseFunc(priority), nil
+		return g.makeReleaseFunc(ctx, priority), nil
 
 	case <-ctx.Done():
 		g.mu.Lock()
@@ -187,9 +193,11 @@ func (g *RequestGovernor) waitForSlot(ctx context.Context, priority InferencePri
 			} else {
 				g.activeBackground--
 			}
+			g.totalCanceled++
 			g.scheduleNext()
 		default:
 			g.removeWaiter(priority, waitCh)
+			g.scheduleNext()
 		}
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			g.totalTimedOut++
@@ -208,17 +216,19 @@ func (g *RequestGovernor) waitForSlot(ctx context.Context, priority InferencePri
 			} else {
 				g.activeBackground--
 			}
+			g.totalTimedOut++
 			g.scheduleNext()
 		default:
 			g.removeWaiter(priority, waitCh)
 			g.totalTimedOut++
+			g.scheduleNext()
 		}
 		g.mu.Unlock()
 		return nil, ErrQueueTimeout
 	}
 }
 
-func (g *RequestGovernor) makeReleaseFunc(priority InferencePriority) func() {
+func (g *RequestGovernor) makeReleaseFunc(ctx context.Context, priority InferencePriority) func() {
 	var once sync.Once
 	return func() {
 		once.Do(func() {
@@ -230,7 +240,11 @@ func (g *RequestGovernor) makeReleaseFunc(priority InferencePriority) func() {
 			} else {
 				g.activeBackground--
 			}
-			g.totalServed++
+			if ctx != nil && ctx.Err() != nil {
+				g.totalCanceled++
+			} else {
+				g.totalServed++
+			}
 			g.scheduleNext()
 		})
 	}
@@ -302,6 +316,7 @@ func (g *RequestGovernor) Status() GovernorStatus {
 		TotalSlots:          g.totalSlots,
 		ReservedInteractive: g.reservedInteractive,
 		TotalServed:         g.totalServed,
+		TotalCanceled:       g.totalCanceled,
 		TotalRejected:       g.totalRejected,
 		TotalTimedOut:       g.totalTimedOut,
 	}

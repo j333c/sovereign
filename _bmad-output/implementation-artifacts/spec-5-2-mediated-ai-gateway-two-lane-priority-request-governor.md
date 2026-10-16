@@ -2,10 +2,10 @@
 title: 'Story 5.2: Mediated AI Gateway & Two-Lane Priority Request Governor'
 type: 'feature'
 created: '2026-10-16'
-status: 'review'
+status: 'done'
 route: 'dispatch'
 baseline_commit: '7e92c65445f076599a63171062015deb4103725b'
-review_loop_iteration: 0
+review_loop_iteration: 1
 context:
   - '_bmad-output/planning-artifacts/architecture/architecture-sovereign-2026-10-15/ARCHITECTURE-SPINE.md'
   - '_bmad-output/planning-artifacts/ux-designs/ux-sovereign-2026-10-15/DESIGN.md'
@@ -92,3 +92,19 @@ context:
 5. **Testing & Verification**:
    - Unit tests for presets, governor priority dispatching, concurrency queuing, client cancellations, and payload transformation.
    - Run full test suites (`go test ./...` and `npm --prefix web test`).
+
+## Review Triage Log
+
+- **Iteration 1**:
+  - Triaged review findings from Blind Hunter, Edge Case Hunter, and Verification Gap reviewers:
+    1. *Payload Normalization Upstream Sanitation*: Stripped non-standard `preset` and `intent` helper fields from outbound JSON body before forwarding to OpenAI-compatible upstream `llama-server` to prevent upstream schema rejection. Guarded against `null` literal JSON payloads.
+    2. *Governor Waiter Cancellation Scheduling*: Added `g.scheduleNext()` in the cancellation path of `waitForSlot` when waiters abort or timeout mid-queue, preventing queued background tasks from starving when capacity is available.
+    3. *Cancellation Metrics Tracking*: Added `TotalCanceled` counter to `GovernorStatus` and updated `makeReleaseFunc` to count canceled contexts as canceled rather than served.
+    4. *Read-Only Gateway Bypass*: Ensured `GET`, `HEAD`, and `OPTIONS` preflight requests bypass governor slot acquisition directly so models listing and CORS remain non-blocking during saturated inference workloads.
+    5. *Verification Tests Added*:
+       - `TestDefaultGateway_QueueTimeout_504`: Confirmed RFC 7807 504 Gateway Timeout when governor wait queue expires.
+       - `TestDefaultGateway_ReadonlyModelsBypassesSaturatedGovernor`: Confirmed `GET /v1/models` and `OPTIONS` bypass saturated governor immediately.
+       - `TestNormalizeInferencePayload_NilAndStripKeys`: Confirmed `preset`/`intent` key stripping and null/nil payload handling.
+       - `TestRequestGovernor_CancellationTracksTotalCanceled`: Confirmed cancellation metric increments.
+    6. *Full Test Suite Run*: 100% passing across Go unit tests (`go test ./...`) and web test suites (`npm --prefix web test`).
+
