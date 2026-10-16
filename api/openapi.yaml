@@ -1537,12 +1537,50 @@ paths:
             application/json:
               schema:
                 type: object
+        '429':
+          description: Inference queue capacity exceeded.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
         '503':
           description: Safe stub mode (no model provisioned) or service inactive.
           content:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/ProblemDetails'
+        '504':
+          description: Inference queue wait timeout expired.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/v1/ai/presets:
+    get:
+      summary: List generation intent presets
+      description: Returns pre-calibrated generation intent presets (precise, balanced, creative) with sampling parameters and recommended use cases.
+      operationId: listAIPresets
+      responses:
+        '200':
+          description: List of available presets.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AIPresetsResponse'
+
+  /api/v1/ai/governor/status:
+    get:
+      summary: Live request governor metrics
+      description: Returns real-time concurrency metrics, active slots, and queue depths for the Two-Lane Priority Request Governor.
+      operationId: getAIGovernorStatus
+      responses:
+        '200':
+          description: Governor queue and slot metrics.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AIGovernorStatusResponse'
 
 components:
   schemas:
@@ -3182,6 +3220,87 @@ components:
         message:
           type: string
           example: "Alert evaluation and dispatch cycle completed"
+
+    AIPreset:
+      type: object
+      required:
+        - id
+        - name
+        - description
+        - temperature
+        - top_p
+        - recommended_use_cases
+      properties:
+        id:
+          type: string
+          example: "precise"
+        name:
+          type: string
+          example: "Precise & Factual"
+        description:
+          type: string
+          example: "Calibrated for factual extraction, document analysis, and invoice parsing with minimal hallucinations."
+        temperature:
+          type: number
+          example: 0.1
+        top_p:
+          type: number
+          example: 0.9
+        recommended_use_cases:
+          type: array
+          items:
+            type: string
+          example: ["document analysis", "deadline extraction", "invoice parsing", "fact retrieval"]
+
+    AIPresetsResponse:
+      type: object
+      required:
+        - presets
+      properties:
+        presets:
+          type: array
+          items:
+            $ref: '#/components/schemas/AIPreset'
+
+    AIGovernorStatusResponse:
+      type: object
+      required:
+        - active_interactive
+        - active_background
+        - queued_interactive
+        - queued_background
+        - total_slots
+        - reserved_interactive
+        - total_served
+      properties:
+        active_interactive:
+          type: integer
+          example: 1
+        active_background:
+          type: integer
+          example: 0
+        queued_interactive:
+          type: integer
+          example: 0
+        queued_background:
+          type: integer
+          example: 2
+        total_slots:
+          type: integer
+          example: 2
+        reserved_interactive:
+          type: integer
+          example: 1
+        total_served:
+          type: integer
+          example: 142
+        total_rejected:
+          type: integer
+          example: 0
+        total_timed_out:
+          type: integer
+          example: 0
+
 
 
 

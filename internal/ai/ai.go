@@ -26,4 +26,5 @@ type Gateway interface {
 	ServeHTTP(w http.ResponseWriter, r *http.Request)
 	CheckModelAvailability(ctx context.Context) (bool, error)
 	SurrenderIdleVRAM(ctx context.Context) error
+	Governor() *RequestGovernor
 }

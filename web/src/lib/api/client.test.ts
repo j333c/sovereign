@@ -1232,6 +1232,73 @@ describe("SovereignApiClient", () => {
     assert.equal(dispatchRes.status, "success");
     assert.equal(dispatchRes.dispatched_count, 2);
   });
+
+  it("successfully calls getAIPresets and getAIGovernorStatus", async () => {
+    const mockFetch: typeof fetch = async (input, init) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+
+      if (url.includes("/api/v1/ai/presets")) {
+        return new Response(
+          JSON.stringify({
+            presets: [
+              {
+                id: "precise",
+                name: "Precise & Factual",
+                description: "Calibrated for factual extraction",
+                temperature: 0.1,
+                top_p: 0.9,
+                recommended_use_cases: ["document analysis"],
+              },
+              {
+                id: "balanced",
+                name: "Balanced Assistant",
+                description: "Calibrated for conversational assistant",
+                temperature: 0.7,
+                top_p: 0.95,
+                recommended_use_cases: ["conversational assistant"],
+              },
+            ],
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+
+      if (url.includes("/api/v1/ai/governor/status")) {
+        return new Response(
+          JSON.stringify({
+            active_interactive: 1,
+            active_background: 0,
+            queued_interactive: 0,
+            queued_background: 2,
+            total_slots: 2,
+            reserved_interactive: 1,
+            total_served: 42,
+            total_rejected: 0,
+            total_timed_out: 0,
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+
+      return new Response("Not found", { status: 404 });
+    };
+
+    const client = new SovereignApiClient({
+      baseUrl: "http://localhost:8080",
+      fetchFn: mockFetch,
+    });
+
+    const presetsRes = await client.getAIPresets();
+    assert.equal(presetsRes.presets.length, 2);
+    assert.equal(presetsRes.presets[0].id, "precise");
+    assert.equal(presetsRes.presets[0].temperature, 0.1);
+
+    const govRes = await client.getAIGovernorStatus();
+    assert.equal(govRes.active_interactive, 1);
+    assert.equal(govRes.total_slots, 2);
+    assert.equal(govRes.total_served, 42);
+  });
 });
+
 
 

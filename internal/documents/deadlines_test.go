@@ -142,15 +142,20 @@ func TestRegexParser_InvalidCalendarDates(t *testing.T) {
 
 func TestGatewayLLMExtractor_SuccessAndHeaders(t *testing.T) {
 	var receivedPriority, receivedLane string
+	var receivedInferencePriority, receivedIntent string
 	var receivedTemp float64
+	var receivedPreset string
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		receivedPriority = r.Header.Get("X-Priority")
 		receivedLane = r.Header.Get("X-Lane")
+		receivedInferencePriority = r.Header.Get("X-Inference-Priority")
+		receivedIntent = r.Header.Get("X-Generation-Intent")
 
 		var req chatCompletionRequest
 		_ = json.NewDecoder(r.Body).Decode(&req)
 		receivedTemp = req.Temperature
+		receivedPreset = req.Preset
 
 		resp := chatCompletionResponse{
 			Choices: []chatCompletionChoice{
@@ -193,7 +198,16 @@ func TestGatewayLLMExtractor_SuccessAndHeaders(t *testing.T) {
 		t.Errorf("expected amount 250.00, got %v", obls[0].Amount)
 	}
 
-	// Verify required background lane headers and temperature
+	// Verify required background lane headers and preset
+	if receivedInferencePriority != "background" {
+		t.Errorf("expected X-Inference-Priority 'background', got %q", receivedInferencePriority)
+	}
+	if receivedIntent != "precise" {
+		t.Errorf("expected X-Generation-Intent 'precise', got %q", receivedIntent)
+	}
+	if receivedPreset != "precise" {
+		t.Errorf("expected preset 'precise' in request body, got %q", receivedPreset)
+	}
 	if receivedPriority != "background" {
 		t.Errorf("expected X-Priority 'background', got %q", receivedPriority)
 	}

@@ -442,7 +442,7 @@ export interface paths {
         put?: never;
         /**
          * Refresh media service library
-         * @description Triggers immediate library refresh webhook in the specified media service (e.g. Jellyfin, Navidrome, Audiobookshelf). Non-media services such as Paperless (`paperless`, `dms`, `documents`) do not support library refresh and return 400 Bad Request.
+         * @description Triggers immediate library refresh webhook in the specified media service (e.g. Jellyfin, Navidrome, Audiobookshelf). Non-media services such as Paperless (`paperless`, `dms`, `documents`) and Llama (`llama`, `ai`, `llm`) do not support library refresh and return 400 Bad Request.
          */
         post: operations["refreshService"];
         delete?: never;
@@ -916,6 +916,86 @@ export interface paths {
          * @description Manually enables or disables daytime batch transcoding, bypassing GPU arbitration.
          */
         post: operations["setTranscodeOverride"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/models": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List available AI models
+         * @description Returns OpenAI-compatible list of provisioned GGUF models, or 503 Problem Details in Safe Stub Mode.
+         */
+        get: operations["listAIModels"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/chat/completions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * OpenAI-compatible chat completion
+         * @description Mediates inference requests to the internal llama-server backend spoke, falling back to RFC 7807 Safe Stub Mode when no models exist.
+         */
+        post: operations["createChatCompletion"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/ai/presets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List generation intent presets
+         * @description Returns pre-calibrated generation intent presets (precise, balanced, creative) with sampling parameters and recommended use cases.
+         */
+        get: operations["listAIPresets"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/ai/governor/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Live request governor metrics
+         * @description Returns real-time concurrency metrics, active slots, and queue depths for the Two-Lane Priority Request Governor.
+         */
+        get: operations["getAIGovernorStatus"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -1946,6 +2026,50 @@ export interface components {
             /** @example Alert evaluation and dispatch cycle completed */
             message: string;
         };
+        AIPreset: {
+            /** @example precise */
+            id: string;
+            /** @example Precise & Factual */
+            name: string;
+            /** @example Calibrated for factual extraction, document analysis, and invoice parsing with minimal hallucinations. */
+            description: string;
+            /** @example 0.1 */
+            temperature: number;
+            /** @example 0.9 */
+            top_p: number;
+            /**
+             * @example [
+             *       "document analysis",
+             *       "deadline extraction",
+             *       "invoice parsing",
+             *       "fact retrieval"
+             *     ]
+             */
+            recommended_use_cases: string[];
+        };
+        AIPresetsResponse: {
+            presets: components["schemas"]["AIPreset"][];
+        };
+        AIGovernorStatusResponse: {
+            /** @example 1 */
+            active_interactive: number;
+            /** @example 0 */
+            active_background: number;
+            /** @example 0 */
+            queued_interactive: number;
+            /** @example 2 */
+            queued_background: number;
+            /** @example 2 */
+            total_slots: number;
+            /** @example 1 */
+            reserved_interactive: number;
+            /** @example 142 */
+            total_served: number;
+            /** @example 0 */
+            total_rejected?: number;
+            /** @example 0 */
+            total_timed_out?: number;
+        };
     };
     responses: never;
     parameters: never;
@@ -2576,7 +2700,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                /** @description Unique service identifier or alias (e.g. jellyfin, navidrome, audiobookshelf, paperless, dms, documents, audio, video). */
+                /** @description Unique service identifier or alias (e.g. jellyfin, navidrome, audiobookshelf, paperless, llama, ai, llm, llama-server, dms, documents, audio, video). */
                 id: string;
             };
             cookie?: never;
@@ -2617,7 +2741,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                /** @description Unique service identifier or alias (e.g. jellyfin, navidrome, audiobookshelf, paperless, dms, documents, audio). */
+                /** @description Unique service identifier or alias (e.g. jellyfin, navidrome, audiobookshelf, paperless, llama, ai, llm, llama-server, dms, documents, audio). */
                 id: string;
             };
             cookie?: never;
@@ -2676,7 +2800,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                /** @description Unique service identifier or alias (e.g. jellyfin, navidrome, audiobookshelf, paperless, dms, documents, audio). */
+                /** @description Unique service identifier or alias (e.g. jellyfin, navidrome, audiobookshelf, paperless, llama, ai, llm, llama-server, dms, documents, audio). */
                 id: string;
             };
             cookie?: never;
@@ -2717,7 +2841,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                /** @description Unique service identifier or alias (e.g. jellyfin, navidrome, audiobookshelf, paperless, dms, documents, audio). */
+                /** @description Unique service identifier or alias (e.g. jellyfin, navidrome, audiobookshelf, paperless, llama, ai, llm, llama-server, dms, documents, audio). */
                 id: string;
             };
             cookie?: never;
@@ -3915,6 +4039,136 @@ export interface operations {
                 };
                 content: {
                     "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    listAIModels: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description List of available models. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @example list */
+                        object?: string;
+                        data?: Record<string, never>[];
+                    };
+                };
+            };
+            /** @description Safe stub mode (no model provisioned) or service inactive. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    createChatCompletion: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description Model identifier or default */
+                    model?: string;
+                    messages: Record<string, never>[];
+                    /** @default false */
+                    stream?: boolean;
+                };
+            };
+        };
+        responses: {
+            /** @description Successful chat completion response. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": Record<string, never>;
+                };
+            };
+            /** @description Inference queue capacity exceeded. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Safe stub mode (no model provisioned) or service inactive. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Inference queue wait timeout expired. */
+            504: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    listAIPresets: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description List of available presets. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AIPresetsResponse"];
+                };
+            };
+        };
+    };
+    getAIGovernorStatus: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Governor queue and slot metrics. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AIGovernorStatusResponse"];
                 };
             };
         };

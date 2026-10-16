@@ -5414,6 +5414,100 @@ func TestServer_AIGateway_ProxyWhenRunning(t *testing.T) {
 	}
 }
 
+func TestServer_AIPresets_And_GovernorStatus(t *testing.T) {
+	srv, dataDir := setupTestServer(t)
+
+	// 1. Test GET /api/v1/ai/presets
+	reqPresets := httptest.NewRequest(http.MethodGet, "/api/v1/ai/presets", nil)
+	wPresets := httptest.NewRecorder()
+	srv.router.ServeHTTP(wPresets, reqPresets)
+
+	if wPresets.Code != http.StatusOK {
+		t.Fatalf("expected HTTP 200 from /api/v1/ai/presets, got %d: %s", wPresets.Code, wPresets.Body.String())
+	}
+
+	var presetsResp struct {
+		Presets []ai.Preset `json:"presets"`
+	}
+	if err := json.Unmarshal(wPresets.Body.Bytes(), &presetsResp); err != nil {
+		t.Fatalf("failed to decode presets json: %v", err)
+	}
+
+	if len(presetsResp.Presets) != 3 {
+		t.Fatalf("expected 3 presets, got %d", len(presetsResp.Presets))
+	}
+	if presetsResp.Presets[0].ID != "precise" || presetsResp.Presets[0].Temperature != 0.1 {
+		t.Errorf("unexpected first preset: %+v", presetsResp.Presets[0])
+	}
+
+	// 2. Test GET /api/v1/ai/governor/status
+	reqGov := httptest.NewRequest(http.MethodGet, "/api/v1/ai/governor/status", nil)
+	wGov := httptest.NewRecorder()
+	srv.router.ServeHTTP(wGov, reqGov)
+
+	if wGov.Code != http.StatusOK {
+		t.Fatalf("expected HTTP 200 from /api/v1/ai/governor/status, got %d: %s", wGov.Code, wGov.Body.String())
+	}
+
+	var govStatus ai.GovernorStatus
+	if err := json.Unmarshal(wGov.Body.Bytes(), &govStatus); err != nil {
+		t.Fatalf("failed to decode governor status: %v", err)
+	}
+
+	if govStatus.TotalSlots != 2 || govStatus.ReservedInteractive != 1 {
+		t.Errorf("unexpected governor slots: %+v", govStatus)
+	}
+
+	// 3. Mock upstream llama-server to verify presets injection through daemon /v1/chat/completions
+	var upstreamReceivedBody []byte
+	mockLlama := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamReceivedBody, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"choices": [{"message": {"content": "ok"}}]}`))
+	}))
+	defer mockLlama.Close()
+
+	if defGw, ok := srv.aiGateway.(*ai.DefaultGateway); ok {
+		defGw.SetLlamaURL(mockLlama.URL)
+	}
+	modelsDir := filepath.Join(dataDir, "models")
+	_ = os.MkdirAll(modelsDir, 0755)
+	createMockGGUFFile(t, modelsDir, "qwen2.5.gguf", 3)
+
+	// Activate Llama
+	_, err := srv.serviceMgr.ActivateService(context.Background(), supervisor.ServiceLlama)
+	if err != nil {
+		t.Fatalf("ActivateService failed: %v", err)
+	}
+
+	reqChat := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"preset": "creative", "messages": [{"role": "user", "content": "draft a story"}]}`))
+	wChat := httptest.NewRecorder()
+	srv.router.ServeHTTP(wChat, reqChat)
+
+	if wChat.Code != http.StatusOK {
+		t.Fatalf("expected HTTP 200 from /v1/chat/completions, got %d: %s", wChat.Code, wChat.Body.String())
+	}
+
+	var upstreamJSON map[string]any
+	if err := json.Unmarshal(upstreamReceivedBody, &upstreamJSON); err != nil {
+		t.Fatalf("failed to parse upstream body: %v", err)
+	}
+	if upstreamJSON["temperature"] != 0.85 || upstreamJSON["top_p"] != 0.98 {
+		t.Errorf("expected injected temp 0.85 and top_p 0.98, got temp=%v top_p=%v", upstreamJSON["temperature"], upstreamJSON["top_p"])
+	}
+
+	// Verify governor status updated
+	wGovAfter := httptest.NewRecorder()
+	srv.router.ServeHTTP(wGovAfter, reqGov)
+	var govStatusAfter ai.GovernorStatus
+	_ = json.Unmarshal(wGovAfter.Body.Bytes(), &govStatusAfter)
+	if govStatusAfter.TotalServed != 1 {
+		t.Errorf("expected 1 total served, got %d", govStatusAfter.TotalServed)
+	}
+}
+
+
 
 
 

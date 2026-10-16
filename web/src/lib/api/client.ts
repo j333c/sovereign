@@ -51,6 +51,9 @@ export type TestMQTTRequest = components["schemas"]["TestMQTTRequest"];
 export type TestEmailRequest = components["schemas"]["TestEmailRequest"];
 export type AlertTestResponse = components["schemas"]["AlertTestResponse"];
 export type AlertDispatchResponse = components["schemas"]["AlertDispatchResponse"];
+export type AIPreset = components["schemas"]["AIPreset"];
+export type AIPresetsResponse = components["schemas"]["AIPresetsResponse"];
+export type AIGovernorStatusResponse = components["schemas"]["AIGovernorStatusResponse"];
 
 /**
  * ProblemDetailsError represents an RFC 7807 problem details error thrown by the daemon API.
@@ -548,6 +551,20 @@ export class SovereignApiClient {
     return this.request<AlertDispatchResponse>("/api/v1/alerts/dispatch", {
       method: "POST",
     });
+  }
+
+  /**
+   * Retrieve list of generation intent presets.
+   */
+  async getAIPresets(): Promise<AIPresetsResponse> {
+    return this.request<AIPresetsResponse>("/api/v1/ai/presets");
+  }
+
+  /**
+   * Retrieve live Request Governor concurrency and queue metrics.
+   */
+  async getAIGovernorStatus(): Promise<AIGovernorStatusResponse> {
+    return this.request<AIGovernorStatusResponse>("/api/v1/ai/governor/status");
   }
 
   /**

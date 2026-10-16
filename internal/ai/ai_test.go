@@ -6,11 +6,16 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
+	"time"
 )
 
 func createMockGGUFBytes(version uint32, tensorCount, metadataCount uint64) []byte {
@@ -304,3 +309,632 @@ func TestDefaultGateway_ProxyWhenModelPresent(t *testing.T) {
 		t.Fatalf("expected HTTP 200, got %d: %s", rec.Code, rec.Body.String())
 	}
 }
+
+func TestPresets_CatalogueAndList(t *testing.T) {
+	presets := ListPresets()
+	if len(presets) != 3 {
+		t.Fatalf("expected 3 presets, got %d", len(presets))
+	}
+
+	expected := map[string]struct {
+		name string
+		temp float64
+		topP float64
+	}{
+		"precise":  {"Precise & Factual", 0.1, 0.9},
+		"balanced": {"Balanced Assistant", 0.7, 0.95},
+		"creative": {"Creative Drafting", 0.85, 0.98},
+	}
+
+	for id, exp := range expected {
+		p, ok := GetPreset(id)
+		if !ok {
+			t.Errorf("expected preset %s to exist", id)
+			continue
+		}
+		if p.Name != exp.name {
+			t.Errorf("[%s] expected name %s, got %s", id, exp.name, p.Name)
+		}
+		if p.Temperature != exp.temp {
+			t.Errorf("[%s] expected temp %f, got %f", id, exp.temp, p.Temperature)
+		}
+		if p.TopP != exp.topP {
+			t.Errorf("[%s] expected top_p %f, got %f", id, exp.topP, p.TopP)
+		}
+		if len(p.RecommendedUseCases) == 0 {
+			t.Errorf("[%s] expected non-empty recommended use cases", id)
+		}
+	}
+}
+
+func TestNormalizeInferencePayload(t *testing.T) {
+	tests := []struct {
+		name          string
+		inputJSON     string
+		defaultPreset string
+		expectTemp    float64
+		expectTopP    float64
+	}{
+		{
+			name:       "creative preset in json",
+			inputJSON:  `{"preset": "creative", "messages": [{"role": "user", "content": "hello"}]}`,
+			expectTemp: 0.85,
+			expectTopP: 0.98,
+		},
+		{
+			name:       "precise preset in json",
+			inputJSON:  `{"preset": "precise", "messages": []}`,
+			expectTemp: 0.1,
+			expectTopP: 0.9,
+		},
+		{
+			name:       "intent field alternative in json",
+			inputJSON:  `{"intent": "creative", "messages": []}`,
+			expectTemp: 0.85,
+			expectTopP: 0.98,
+		},
+		{
+			name:          "fallback to defaultPreset header",
+			inputJSON:     `{"messages": []}`,
+			defaultPreset: "precise",
+			expectTemp:    0.1,
+			expectTopP:    0.9,
+		},
+		{
+			name:       "invalid preset falls back to balanced",
+			inputJSON:  `{"preset": "unknown_preset", "messages": []}`,
+			expectTemp: 0.7,
+			expectTopP: 0.95,
+		},
+		{
+			name:       "power user explicit temperature override preserved",
+			inputJSON:  `{"preset": "precise", "temperature": 0.2}`,
+			expectTemp: 0.2,
+			expectTopP: 0.9, // calibrated top_p still injected
+		},
+		{
+			name:       "power user explicit top_p override preserved",
+			inputJSON:  `{"preset": "creative", "top_p": 0.5}`,
+			expectTemp: 0.85, // calibrated temp still injected
+			expectTopP: 0.5,
+		},
+		{
+			name:       "power user explicit zero temperature preserved",
+			inputJSON:  `{"preset": "creative", "temperature": 0.0}`,
+			expectTemp: 0.0,
+			expectTopP: 0.98,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			normalized, err := NormalizeInferencePayload([]byte(tc.inputJSON), tc.defaultPreset)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			var result map[string]any
+			if err := json.Unmarshal(normalized, &result); err != nil {
+				t.Fatalf("failed to parse normalized output: %v", err)
+			}
+
+			tempVal, ok := result["temperature"].(float64)
+			if !ok || tempVal != tc.expectTemp {
+				t.Errorf("expected temperature %v, got %v", tc.expectTemp, result["temperature"])
+			}
+
+			topPVal, ok := result["top_p"].(float64)
+			if !ok || topPVal != tc.expectTopP {
+				t.Errorf("expected top_p %v, got %v", tc.expectTopP, result["top_p"])
+			}
+		})
+	}
+
+	// Empty body returns empty
+	emptyRes, err := NormalizeInferencePayload([]byte(""), "balanced")
+	if err != nil || len(emptyRes) != 0 {
+		t.Fatalf("expected empty response for empty body, got %v, err: %v", emptyRes, err)
+	}
+
+	// Invalid JSON returns error
+	_, err = NormalizeInferencePayload([]byte("{not json"), "balanced")
+	if err == nil {
+		t.Fatal("expected error for malformed json, got nil")
+	}
+}
+
+func TestClassifyPriority(t *testing.T) {
+	tests := []struct {
+		name     string
+		header   string
+		value    string
+		query    string
+		expected InferencePriority
+	}{
+		{"X-Inference-Priority interactive", "X-Inference-Priority", "interactive", "", PriorityInteractive},
+		{"X-Inference-Priority background", "X-Inference-Priority", "background", "", PriorityBackground},
+		{"X-Inference-Priority case insensitive", "X-Inference-Priority", "BACKGROUND", "", PriorityBackground},
+		{"X-Priority background", "X-Priority", "background", "", PriorityBackground},
+		{"X-Lane batch", "X-Lane", "batch", "", PriorityBackground},
+		{"Query param background", "", "", "priority=background", PriorityBackground},
+		{"Default to interactive", "", "", "", PriorityInteractive},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions?"+tc.query, nil)
+			if tc.header != "" {
+				req.Header.Set(tc.header, tc.value)
+			}
+			p := ClassifyPriority(req)
+			if p != tc.expected {
+				t.Errorf("expected priority %v, got %v", tc.expected, p)
+			}
+		})
+	}
+}
+
+func TestRequestGovernor_BasicAcquireRelease(t *testing.T) {
+	gov := NewRequestGovernor(GovernorConfig{
+		TotalSlots:          2,
+		ReservedInteractive: 1,
+	})
+
+	// 1. Interactive request acquires slot immediately
+	relInteractive, err := gov.Acquire(context.Background(), PriorityInteractive)
+	if err != nil {
+		t.Fatalf("Acquire interactive failed: %v", err)
+	}
+
+	st := gov.Status()
+	if st.ActiveInteractive != 1 || st.ActiveBackground != 0 {
+		t.Errorf("unexpected status: %+v", st)
+	}
+
+	// 2. Release slot
+	relInteractive()
+
+	st = gov.Status()
+	if st.ActiveInteractive != 0 || st.TotalServed != 1 {
+		t.Errorf("unexpected status after release: %+v", st)
+	}
+
+	// 3. Background request acquires slot when idle
+	relBackground, err := gov.Acquire(context.Background(), PriorityBackground)
+	if err != nil {
+		t.Fatalf("Acquire background failed: %v", err)
+	}
+
+	st = gov.Status()
+	if st.ActiveBackground != 1 {
+		t.Errorf("expected 1 active background, got: %+v", st)
+	}
+
+	relBackground()
+	st = gov.Status()
+	if st.ActiveBackground != 0 || st.TotalServed != 2 {
+		t.Errorf("expected 2 total served, got: %+v", st)
+	}
+}
+
+func TestRequestGovernor_InteractivePriorityOverBackground(t *testing.T) {
+	// TotalSlots = 2, ReservedInteractive = 1
+	gov := NewRequestGovernor(GovernorConfig{
+		TotalSlots:          2,
+		ReservedInteractive: 1,
+		MaxBackgroundQueue:  10,
+		MaxInteractiveQueue: 10,
+	})
+
+	// 1. Background acquires slot 1 (allowed because 0 < 2-1 = 1)
+	relBg1, err := gov.Acquire(context.Background(), PriorityBackground)
+	if err != nil {
+		t.Fatalf("failed to acquire initial background slot: %v", err)
+	}
+
+	// 2. Interactive arrives and acquires slot 2 immediately (allowed because 1 active < 2 total)
+	relInt1, err := gov.Acquire(context.Background(), PriorityInteractive)
+	if err != nil {
+		t.Fatalf("interactive request failed to acquire immediately: %v", err)
+	}
+
+	st := gov.Status()
+	if st.ActiveInteractive != 1 || st.ActiveBackground != 1 {
+		t.Fatalf("expected 1 interactive and 1 background active, got: %+v", st)
+	}
+
+	// 3. Queue 2 background tasks in the background lane
+	bgQueuedDone := make(chan string, 2)
+	for i := 1; i <= 2; i++ {
+		idx := i
+		go func() {
+			rel, err := gov.Acquire(context.Background(), PriorityBackground)
+			if err != nil {
+				return
+			}
+			bgQueuedDone <- fmt.Sprintf("bg-%d", idx)
+			rel()
+		}()
+	}
+
+	// Wait briefly for background tasks to enter queue
+	time.Sleep(20 * time.Millisecond)
+
+	st = gov.Status()
+	if st.QueuedBackground != 2 {
+		t.Fatalf("expected 2 queued background tasks, got %d", st.QueuedBackground)
+	}
+
+	// 4. Now an interactive task arrives and must wait because both slots are full (1 bg + 1 int)
+	intQueuedDone := make(chan string, 1)
+	go func() {
+		rel, err := gov.Acquire(context.Background(), PriorityInteractive)
+		if err != nil {
+			return
+		}
+		intQueuedDone <- "interactive-2"
+		rel()
+	}()
+
+	time.Sleep(20 * time.Millisecond)
+
+	st = gov.Status()
+	if st.QueuedInteractive != 1 {
+		t.Fatalf("expected 1 queued interactive task, got %d", st.QueuedInteractive)
+	}
+
+	// 5. Release the first background task slot.
+	// CRITICAL TEST: The waiting interactive request MUST be scheduled ahead of the waiting background tasks!
+	relBg1()
+
+	select {
+	case tag := <-intQueuedDone:
+		if tag != "interactive-2" {
+			t.Fatalf("expected interactive-2, got %s", tag)
+		}
+	case tag := <-bgQueuedDone:
+		t.Fatalf("VIOLATION: background task %s was scheduled ahead of waiting interactive task!", tag)
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("timed out waiting for interactive task to complete")
+	}
+
+	// Clean up first interactive task to allow background tasks to drain
+	relInt1()
+
+	// Drain remaining background tasks
+	for i := 0; i < 2; i++ {
+		select {
+		case <-bgQueuedDone:
+		case <-time.After(500 * time.Millisecond):
+			t.Fatal("timed out waiting for background queue to drain")
+		}
+	}
+}
+
+func TestRequestGovernor_QueueFull_429(t *testing.T) {
+	gov := NewRequestGovernor(GovernorConfig{
+		TotalSlots:          2,
+		ReservedInteractive: 1,
+		MaxBackgroundQueue:  2,
+	})
+
+	// Fill background running slot
+	relBg, err := gov.Acquire(context.Background(), PriorityBackground)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer relBg()
+
+	// Fill background queue to capacity (2)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	for i := 0; i < 2; i++ {
+		go func() {
+			_, _ = gov.Acquire(ctx, PriorityBackground)
+		}()
+	}
+	time.Sleep(20 * time.Millisecond)
+
+	st := gov.Status()
+	if st.QueuedBackground != 2 {
+		t.Fatalf("expected 2 queued background, got %d", st.QueuedBackground)
+	}
+
+	// 3rd background request must fail with ErrQueueFull
+	_, err = gov.Acquire(context.Background(), PriorityBackground)
+	if err == nil || !errors.Is(err, ErrQueueFull) {
+		t.Fatalf("expected ErrQueueFull, got: %v", err)
+	}
+
+	st = gov.Status()
+	if st.TotalRejected != 1 {
+		t.Errorf("expected 1 total rejected, got %d", st.TotalRejected)
+	}
+}
+
+func TestRequestGovernor_QueueTimeout_504(t *testing.T) {
+	gov := NewRequestGovernor(GovernorConfig{
+		TotalSlots:          1,
+		ReservedInteractive: 0,
+		QueueTimeout:        50 * time.Millisecond,
+	})
+
+	rel, err := gov.Acquire(context.Background(), PriorityInteractive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rel()
+
+	// Acquire with short context timeout
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+
+	_, err = gov.Acquire(ctx, PriorityInteractive)
+	if err == nil || !errors.Is(err, ErrQueueTimeout) {
+		t.Fatalf("expected ErrQueueTimeout, got: %v", err)
+	}
+
+	st := gov.Status()
+	if st.TotalTimedOut != 1 {
+		t.Errorf("expected 1 total timed out, got %d", st.TotalTimedOut)
+	}
+}
+
+func TestRequestGovernor_ClientCancellation(t *testing.T) {
+	gov := NewRequestGovernor(GovernorConfig{
+		TotalSlots:          1,
+		ReservedInteractive: 0,
+	})
+
+	// Occupy sole slot
+	rel, err := gov.Acquire(context.Background(), PriorityInteractive)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Queued request with cancellable context
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+
+	go func() {
+		_, err := gov.Acquire(ctx, PriorityInteractive)
+		errCh <- err
+	}()
+
+	time.Sleep(20 * time.Millisecond)
+	st := gov.Status()
+	if st.QueuedInteractive != 1 {
+		t.Fatalf("expected 1 queued, got %d", st.QueuedInteractive)
+	}
+
+	// Cancel context while waiting
+	cancel()
+
+	select {
+	case err := <-errCh:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("expected context.Canceled, got: %v", err)
+		}
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("timed out waiting for acquire cancellation")
+	}
+
+	st = gov.Status()
+	if st.QueuedInteractive != 0 {
+		t.Errorf("expected 0 queued interactive after cancellation, got %d", st.QueuedInteractive)
+	}
+
+	rel()
+}
+
+func TestDefaultGateway_ServeHTTP_GovernorAndPresets(t *testing.T) {
+	tmpDir := t.TempDir()
+	_ = os.WriteFile(filepath.Join(tmpDir, "model.gguf"), createMockGGUFBytes(3, 100, 10), 0644)
+
+	var receivedBody []byte
+	var receivedHeaderPriority string
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedHeaderPriority = r.Header.Get("X-Inference-Priority")
+		receivedBody, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"choices": [{"message": {"content": "ok"}}]}`))
+	}))
+	defer upstream.Close()
+
+	gov := NewRequestGovernor(GovernorConfig{
+		TotalSlots:          2,
+		ReservedInteractive: 1,
+	})
+
+	gw := NewGateway(GatewayConfig{
+		ModelsDir: tmpDir,
+		LlamaURL:  upstream.URL,
+		Governor:  gov,
+	})
+
+	// Test 1: Payload with preset: creative injects temp 0.85 and top_p 0.98
+	reqBody := `{"preset": "creative", "messages": [{"role": "user", "content": "hello"}]}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(reqBody))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	gw.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected HTTP 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var upstreamJSON map[string]any
+	if err := json.Unmarshal(receivedBody, &upstreamJSON); err != nil {
+		t.Fatalf("failed to parse upstream body: %v", err)
+	}
+
+	if upstreamJSON["temperature"] != 0.85 {
+		t.Errorf("expected temperature 0.85, got %v", upstreamJSON["temperature"])
+	}
+	if upstreamJSON["top_p"] != 0.98 {
+		t.Errorf("expected top_p 0.98, got %v", upstreamJSON["top_p"])
+	}
+
+	// Test 2: Payload with header X-Generation-Intent: precise and X-Inference-Priority: background
+	reqBody = `{"messages": [{"role": "user", "content": "analyze invoice"}]}`
+	req = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(reqBody))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Generation-Intent", "precise")
+	req.Header.Set("X-Inference-Priority", "background")
+	rec = httptest.NewRecorder()
+
+	gw.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected HTTP 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if receivedHeaderPriority != "background" {
+		t.Errorf("expected upstream X-Inference-Priority background, got %s", receivedHeaderPriority)
+	}
+
+	if err := json.Unmarshal(receivedBody, &upstreamJSON); err != nil {
+		t.Fatalf("failed to parse upstream body: %v", err)
+	}
+	if upstreamJSON["temperature"] != 0.1 {
+		t.Errorf("expected temperature 0.1, got %v", upstreamJSON["temperature"])
+	}
+	if upstreamJSON["top_p"] != 0.9 {
+		t.Errorf("expected top_p 0.9, got %v", upstreamJSON["top_p"])
+	}
+
+	// Check Governor status
+	st := gw.Governor().Status()
+	if st.TotalServed != 2 {
+		t.Errorf("expected 2 total served in governor, got %d", st.TotalServed)
+	}
+}
+
+func TestDefaultGateway_QueueSaturation_429(t *testing.T) {
+	tmpDir := t.TempDir()
+	_ = os.WriteFile(filepath.Join(tmpDir, "model.gguf"), createMockGGUFBytes(3, 100, 10), 0644)
+
+	// Upstream that blocks until instructed
+	blockCh := make(chan struct{})
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-blockCh
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer upstream.Close()
+	defer close(blockCh)
+
+	gov := NewRequestGovernor(GovernorConfig{
+		TotalSlots:          1,
+		ReservedInteractive: 0,
+		MaxInteractiveQueue: 1,
+	})
+
+	gw := NewGateway(GatewayConfig{
+		ModelsDir: tmpDir,
+		LlamaURL:  upstream.URL,
+		Governor:  gov,
+	})
+
+	// Request 1: Takes slot and blocks in upstream
+	go func() {
+		req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{}`))
+		rec := httptest.NewRecorder()
+		gw.ServeHTTP(rec, req)
+	}()
+	time.Sleep(20 * time.Millisecond)
+
+	// Request 2: Takes queue slot (capacity 1)
+	go func() {
+		req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{}`))
+		rec := httptest.NewRecorder()
+		gw.ServeHTTP(rec, req)
+	}()
+	time.Sleep(20 * time.Millisecond)
+
+	// Request 3: Exceeds queue -> HTTP 429 Problem Details
+	req3 := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{}`))
+	rec3 := httptest.NewRecorder()
+	gw.ServeHTTP(rec3, req3)
+
+	if rec3.Code != http.StatusTooManyRequests {
+		t.Fatalf("expected HTTP 429 Too Many Requests, got %d: %s", rec3.Code, rec3.Body.String())
+	}
+	if ct := rec3.Header().Get("Content-Type"); ct != "application/problem+json" {
+		t.Errorf("expected Content-Type application/problem+json, got %s", ct)
+	}
+
+	var prob map[string]any
+	_ = json.Unmarshal(rec3.Body.Bytes(), &prob)
+	if prob["title"] != "Too Many Requests" {
+		t.Errorf("unexpected problem title: %v", prob["title"])
+	}
+}
+
+func TestDefaultGateway_ClientCancellationReleasesSlot(t *testing.T) {
+	tmpDir := t.TempDir()
+	_ = os.WriteFile(filepath.Join(tmpDir, "model.gguf"), createMockGGUFBytes(3, 100, 10), 0644)
+
+	started := make(chan struct{})
+	stopUpstream := make(chan struct{})
+	var closeOnce sync.Once
+	cleanup := func() { closeOnce.Do(func() { close(stopUpstream) }) }
+	defer cleanup()
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(started)
+		select {
+		case <-stopUpstream:
+		case <-r.Context().Done():
+		}
+	}))
+	defer upstream.CloseClientConnections()
+	defer upstream.Close()
+
+	gov := NewRequestGovernor(GovernorConfig{
+		TotalSlots:          1,
+		ReservedInteractive: 0,
+	})
+
+	gw := NewGateway(GatewayConfig{
+		ModelsDir: tmpDir,
+		LlamaURL:  upstream.URL,
+		Governor:  gov,
+		Client: &http.Client{
+			Transport: &http.Transport{
+				DisableKeepAlives: true,
+			},
+		},
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{}`)).WithContext(ctx)
+	rec := httptest.NewRecorder()
+
+	done := make(chan struct{})
+	go func() {
+		gw.ServeHTTP(rec, req)
+		close(done)
+	}()
+
+	// Wait until upstream is entered
+	<-started
+	st := gov.Status()
+	if st.ActiveInteractive != 1 {
+		t.Fatalf("expected 1 active interactive, got: %+v", st)
+	}
+
+	// Cancel client connection
+	cancel()
+	cleanup()
+
+	<-done
+
+	st = gov.Status()
+	if st.ActiveInteractive != 0 {
+		t.Errorf("expected 0 active slots after client cancellation, got %d", st.ActiveInteractive)
+	}
+}
+

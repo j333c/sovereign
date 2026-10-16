@@ -969,7 +969,9 @@ func (s *Server) routes() {
 	s.router.HandleFunc("POST /api/v1/alerts/test/email", s.requireSetupOrAdmin(s.handleTestEmail))
 	s.router.HandleFunc("POST /api/v1/alerts/dispatch", s.requireSetupOrAdmin(s.handleDispatchAlerts))
 
-	// AI Gateway mediated inference endpoints and Safe Stub Mode fallback
+	// AI Gateway mediated inference endpoints, presets, and governor status
+	s.router.HandleFunc("GET /api/v1/ai/presets", s.handleAIPresets)
+	s.router.HandleFunc("GET /api/v1/ai/governor/status", s.handleAIGovernorStatus)
 	s.router.HandleFunc("/v1", s.handleAIGateway)
 	s.router.HandleFunc("/v1/{path...}", s.handleAIGateway)
 }
@@ -1011,6 +1013,37 @@ func (s *Server) handleAIGateway(w http.ResponseWriter, r *http.Request) {
 	}
 
 	gw.ServeHTTP(w, r)
+}
+
+// handleAIPresets returns the catalogue of pre-calibrated generation intent presets.
+func (s *Server) handleAIPresets(w http.ResponseWriter, r *http.Request) {
+	presets := ai.ListPresets()
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"presets": presets,
+	})
+}
+
+// handleAIGovernorStatus reports live request governor concurrency metrics and queue depths.
+func (s *Server) handleAIGovernorStatus(w http.ResponseWriter, r *http.Request) {
+	s.mu.RLock()
+	gw := s.aiGateway
+	s.mu.RUnlock()
+
+	var status ai.GovernorStatus
+	if gw != nil && gw.Governor() != nil {
+		status = gw.Governor().Status()
+	} else {
+		status = ai.GovernorStatus{
+			TotalSlots:          2,
+			ReservedInteractive: 1,
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(status)
 }
 
 

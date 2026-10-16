@@ -52,7 +52,8 @@ type chatMessage struct {
 
 type chatCompletionRequest struct {
 	Messages    []chatMessage `json:"messages"`
-	Temperature float64       `json:"temperature"`
+	Preset      string        `json:"preset,omitempty"`
+	Temperature float64       `json:"temperature,omitempty"`
 }
 
 type chatCompletionChoice struct {
@@ -113,6 +114,7 @@ If no deadlines or obligations exist, return: {"obligations": []}.`
 			{Role: "system", Content: systemPrompt},
 			{Role: "user", Content: fmt.Sprintf("Extract obligations from this document text:\n\n%s", text)},
 		},
+		Preset:      "precise",
 		Temperature: 0.1, // Precise & Factual preset
 	}
 
@@ -128,7 +130,9 @@ If no deadlines or obligations exist, return: {"obligations": []}.`
 	}
 
 	req.Header.Set("Content-Type", "application/json")
-	// Mandatory background priority lane headers per spec
+	// Mandatory background priority lane and intent headers per spec
+	req.Header.Set("X-Inference-Priority", "background")
+	req.Header.Set("X-Generation-Intent", "precise")
 	req.Header.Set("X-Priority", "background")
 	req.Header.Set("X-Lane", "batch")
 
