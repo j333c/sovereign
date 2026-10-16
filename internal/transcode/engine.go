@@ -77,12 +77,13 @@ type TranscodeEngine struct {
 	activeSource   string
 	activeProgress float64
 	activeCancel   context.CancelFunc
-	state          string
-	statusText     string
-	wakeCh         chan struct{}
-	stopCh         chan struct{}
-	wg             sync.WaitGroup
-	closeOnce      sync.Once
+	state           string
+	statusText      string
+	lastDiskAlertAt time.Time
+	wakeCh          chan struct{}
+	stopCh          chan struct{}
+	wg              sync.WaitGroup
+	closeOnce       sync.Once
 }
 
 // NewTranscodeEngine creates and initializes a TranscodeEngine.
@@ -213,6 +214,10 @@ func (e *TranscodeEngine) Enqueue(ctx context.Context, req EnqueueRequest) (*Job
 		targetPath = filepath.Clean(targetPath)
 	}
 
+	if cleanSource == targetPath {
+		return nil, errors.New("target_path cannot be identical to source_path")
+	}
+
 	profile := strings.TrimSpace(req.Profile)
 	if profile == "" {
 		profile = "universal"
@@ -264,16 +269,24 @@ func (e *TranscodeEngine) Scheduler() *Scheduler {
 	return e.scheduler
 }
 
+// broadcast emits an SSE event in a thread-safe manner.
+func (e *TranscodeEngine) broadcast(event string, data any) {
+	e.mu.RLock()
+	b := e.broadcaster
+	e.mu.RUnlock()
+	if b != nil {
+		b(event, data)
+	}
+}
+
 // SetManualOverride toggles the manual override bypassing daytime restrictions.
 func (e *TranscodeEngine) SetManualOverride(force bool) {
 	e.scheduler.SetManualOverride(force)
 	e.logger.Info("transcode schedule manual override updated", "force", force)
-	if e.broadcaster != nil {
-		e.broadcaster("transcode.override_changed", map[string]any{
-			"manual_override": force,
-			"gpu_status":      e.scheduler.GetGPUStatusNow(),
-		})
-	}
+	e.broadcast("transcode.override_changed", map[string]any{
+		"manual_override": force,
+		"gpu_status":      e.scheduler.GetGPUStatusNow(),
+	})
 	if force {
 		e.triggerWake()
 	} else if !e.scheduler.IsOffPeakNow() {
@@ -350,22 +363,25 @@ func (e *TranscodeEngine) processNextJob(ctx context.Context) error {
 		e.mu.Lock()
 		if e.activeJobID != "" {
 			e.logger.Info("daytime window transition: pausing active batch transcode to preserve GPU VRAM for AI inference")
+			jobID := e.activeJobID
 			if e.activeCancel != nil {
 				e.activeCancel()
 				e.activeCancel = nil
 			}
-			if e.store != nil && e.activeJobID != "" {
-				_ = e.store.UpdateStatus(ctx, e.activeJobID, StatusPaused, "Paused: daytime hours active")
-			}
-			if e.broadcaster != nil {
-				e.broadcaster("transcode.job_paused", map[string]any{
-					"job_id": e.activeJobID,
-					"reason": "daytime_transition",
-				})
+			if e.store != nil {
+				_ = e.store.UpdateStatus(ctx, jobID, StatusPaused, "Paused: daytime hours active")
 			}
 			e.activeJobID = ""
 			e.activeSource = ""
 			e.activeProgress = 0.0
+			e.state = "paused"
+			e.statusText = "Daytime (AI Priority) · Transcoding Paused"
+			e.mu.Unlock()
+			e.broadcast("transcode.job_paused", map[string]any{
+				"job_id": jobID,
+				"reason": "daytime_transition",
+			})
+			return ErrDaytimeRestricted
 		}
 		e.state = "paused"
 		e.statusText = "Daytime (AI Priority) · Transcoding Paused"
@@ -385,20 +401,14 @@ func (e *TranscodeEngine) processNextJob(ctx context.Context) error {
 				"free_percent", freePct,
 			)
 			e.mu.Lock()
-			if e.activeJobID != "" {
+			jobID := e.activeJobID
+			if jobID != "" {
 				if e.activeCancel != nil {
 					e.activeCancel()
 					e.activeCancel = nil
 				}
 				if e.store != nil {
-					_ = e.store.UpdateStatus(ctx, e.activeJobID, StatusPaused, "Paused: storage capacity below 10% safety floor")
-				}
-				if e.broadcaster != nil {
-					e.broadcaster("transcode.job_paused", map[string]any{
-						"job_id":       e.activeJobID,
-						"reason":       "storage_low",
-						"free_percent": freePct,
-					})
+					_ = e.store.UpdateStatus(ctx, jobID, StatusPaused, "Paused: storage capacity below 10% safety floor")
 				}
 				e.activeJobID = ""
 				e.activeSource = ""
@@ -406,16 +416,34 @@ func (e *TranscodeEngine) processNextJob(ctx context.Context) error {
 			}
 			e.state = "storage_low"
 			e.statusText = "Storage low (<10%) · Transcoding Paused"
+
+			shouldAlert := false
+			if time.Since(e.lastDiskAlertAt) > 60*time.Second {
+				e.lastDiskAlertAt = time.Now()
+				shouldAlert = true
+			}
 			e.mu.Unlock()
 
-			if e.broadcaster != nil {
-				e.broadcaster("storage.disk_alert", map[string]any{
+			if jobID != "" {
+				e.broadcast("transcode.job_paused", map[string]any{
+					"job_id":       jobID,
+					"reason":       "storage_low",
+					"free_percent": freePct,
+				})
+			}
+
+			if shouldAlert {
+				e.broadcast("storage.disk_alert", map[string]any{
 					"reason":       "storage_low",
 					"free_percent": freePct,
 					"message":      "Transcoding paused: storage capacity is below 10%",
 				})
 			}
 			return ErrStorageHeadroomLow
+		} else if err == nil && freePct >= 10.0 {
+			e.mu.Lock()
+			e.lastDiskAlertAt = time.Time{}
+			e.mu.Unlock()
 		}
 	}
 
@@ -457,23 +485,23 @@ func (e *TranscodeEngine) executeJob(ctx context.Context, job *Job) error {
 	e.mu.Lock()
 	e.activeJobID = job.ID
 	e.activeSource = job.SourcePath
-	e.activeProgress = job.Progress
+	e.activeProgress = 0.0
 	e.activeCancel = jobCancel
 	e.state = "processing"
 	e.statusText = fmt.Sprintf("Transcoding %s", filepath.Base(job.SourcePath))
 	e.mu.Unlock()
 
+	_ = e.store.UpdateProgress(ctx, job.ID, 0.0)
+
 	detectedHW := tc.DetectHardware(jobCtx)
 	_ = e.store.MarkStarted(ctx, job.ID, string(detectedHW))
 
-	if e.broadcaster != nil {
-		e.broadcaster("transcode.job_started", map[string]any{
-			"job_id":      job.ID,
-			"source_path": job.SourcePath,
-			"target_path": job.TargetPath,
-			"encoder":     string(detectedHW),
-		})
-	}
+	e.broadcast("transcode.job_started", map[string]any{
+		"job_id":      job.ID,
+		"source_path": job.SourcePath,
+		"target_path": job.TargetPath,
+		"encoder":     string(detectedHW),
+	})
 
 	progressCb := func(pct float64) {
 		e.mu.Lock()
@@ -484,15 +512,20 @@ func (e *TranscodeEngine) executeJob(ctx context.Context, job *Job) error {
 
 		_ = e.store.UpdateProgress(ctx, job.ID, pct)
 
-		if e.broadcaster != nil {
-			e.broadcaster("transcode.job_progress", map[string]any{
+		e.mu.RLock()
+		broadcaster := e.broadcaster
+		checker := e.headroomChecker
+		e.mu.RUnlock()
+
+		if broadcaster != nil {
+			broadcaster("transcode.job_progress", map[string]any{
 				"job_id":   job.ID,
 				"progress": pct,
 			})
 		}
 
 		// Check headroom and schedule mid-encode
-		if checker := e.headroomChecker; checker != nil {
+		if checker != nil {
 			if freePct, err := checker(e.dataDir); err == nil && freePct < 10.0 {
 				e.logger.Warn("headroom floor breached mid-encode; aborting active job", "free_percent", freePct)
 				jobCancel()
@@ -519,12 +552,10 @@ func (e *TranscodeEngine) executeJob(ctx context.Context, job *Job) error {
 		if jobCtx.Err() != nil || errors.Is(err, ErrTranscodeCancelled) {
 			e.logger.Info("transcode job interrupted/paused", "job_id", job.ID)
 			_ = e.store.UpdateStatus(ctx, job.ID, StatusPaused, "Transcoding interrupted")
-			if e.broadcaster != nil {
-				e.broadcaster("transcode.job_paused", map[string]any{
-					"job_id": job.ID,
-					"reason": "interrupted",
-				})
-			}
+			e.broadcast("transcode.job_paused", map[string]any{
+				"job_id": job.ID,
+				"reason": "interrupted",
+			})
 			e.resetActiveState()
 			return nil
 		}
@@ -552,12 +583,10 @@ func (e *TranscodeEngine) executeJob(ctx context.Context, job *Job) error {
 
 			e.logger.Error("transcoding job failed definitively", "job_id", job.ID, "error", err)
 			_ = e.store.MarkFailed(ctx, job.ID, err.Error())
-			if e.broadcaster != nil {
-				e.broadcaster("transcode.job_failed", map[string]any{
-					"job_id": job.ID,
-					"error":  err.Error(),
-				})
-			}
+			e.broadcast("transcode.job_failed", map[string]any{
+				"job_id": job.ID,
+				"error":  err.Error(),
+			})
 			e.resetActiveState()
 			return err
 		}
@@ -577,14 +606,12 @@ func (e *TranscodeEngine) executeJob(ctx context.Context, job *Job) error {
 		"duration", result.Duration.String(),
 	)
 
-	if e.broadcaster != nil {
-		e.broadcaster("transcode.job_completed", map[string]any{
-			"job_id":           job.ID,
-			"target_path":      result.TargetPath,
-			"encoder_used":     encoderUsed,
-			"duration_seconds": result.Duration.Seconds(),
-		})
-	}
+	e.broadcast("transcode.job_completed", map[string]any{
+		"job_id":           job.ID,
+		"target_path":      result.TargetPath,
+		"encoder_used":     encoderUsed,
+		"duration_seconds": result.Duration.Seconds(),
+	})
 
 	e.resetActiveState()
 

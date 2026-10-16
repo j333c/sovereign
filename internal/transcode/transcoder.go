@@ -58,9 +58,9 @@ type Transcoder interface {
 // HardwareDetector defines a function that detects available hardware capabilities.
 type HardwareDetector func(ctx context.Context) HardwareCapability
 
-// DefaultHardwareDetector inspects host device nodes to discover GPU acceleration.
+// DefaultHardwareDetector inspects host device nodes and DRM sysfs to discover GPU acceleration.
 func DefaultHardwareDetector(ctx context.Context) HardwareCapability {
-	// 1. Check for Nvidia NVENC (/dev/nvidia0 or nvidia-smi)
+	// 1. Check for Nvidia NVENC (/dev/nvidia0, /dev/nvidiactl, or nvidia-smi)
 	if _, err := os.Stat("/dev/nvidia0"); err == nil {
 		return HardwareNVENC
 	}
@@ -71,9 +71,21 @@ func DefaultHardwareDetector(ctx context.Context) HardwareCapability {
 		return HardwareNVENC
 	}
 
-	// 2. Check for Intel QSV / VAAPI via DRI render node (/dev/dri/renderD128)
+	// 2. Check DRM vendor if render node is available
+	if data, err := os.ReadFile("/sys/class/drm/renderD128/device/vendor"); err == nil {
+		vendor := strings.ToLower(strings.TrimSpace(string(data)))
+		switch vendor {
+		case "0x8086": // Intel QSV
+			return HardwareQSV
+		case "0x1002": // AMD VAAPI
+			return HardwareVAAPI
+		case "0x10de": // Nvidia NVENC
+			return HardwareNVENC
+		}
+	}
+
+	// 3. Fallback check for /dev/dri render node presence
 	if _, err := os.Stat("/dev/dri/renderD128"); err == nil {
-		// Prefer QSV on Intel systems, VAAPI otherwise
 		return HardwareQSV
 	}
 	if _, err := os.Stat("/dev/dri"); err == nil {
@@ -118,6 +130,12 @@ func (f *FFmpegTranscoder) DetectHardware(ctx context.Context) HardwareCapabilit
 func (f *FFmpegTranscoder) Transcode(ctx context.Context, opts TranscodeOptions) (*TranscodeResult, error) {
 	if fi, err := os.Stat(opts.SourcePath); err != nil || fi.IsDir() {
 		return nil, ErrInvalidSourceFile
+	}
+
+	// Ensure destination directory exists prior to launching FFmpeg
+	targetDir := filepath.Dir(opts.TargetPath)
+	if err := os.MkdirAll(targetDir, 0755); err != nil {
+		return nil, fmt.Errorf("failed to create target directory %q: %w", targetDir, err)
 	}
 
 	hw := opts.HardwareAcc
@@ -179,12 +197,6 @@ func (f *FFmpegTranscoder) Transcode(ctx context.Context, opts TranscodeOptions)
 		return nil, ErrOutputValidationFail
 	}
 
-	// Ensure destination directory exists
-	targetDir := filepath.Dir(opts.TargetPath)
-	if err := os.MkdirAll(targetDir, 0755); err != nil {
-		return nil, fmt.Errorf("failed to create target directory %q: %w", targetDir, err)
-	}
-
 	// Atomic rename to final target path
 	if err := os.Rename(tmpOutput, opts.TargetPath); err != nil {
 		return nil, fmt.Errorf("failed to atomically place transcoded file: %w", err)
@@ -204,19 +216,50 @@ func (f *FFmpegTranscoder) Transcode(ctx context.Context, opts TranscodeOptions)
 func (f *FFmpegTranscoder) buildFFmpegArgs(src, dst, profile string, hw HardwareCapability) ([]string, string) {
 	args := []string{"-y"}
 
-	var encoder string
+	// Hardware acceleration input flags (must precede -i)
 	switch hw {
 	case HardwareQSV:
-		args = append(args, "-hwaccel", "qsv", "-c:v", "h264_qsv")
-		encoder = "qsv"
+		args = append(args, "-hwaccel", "qsv")
 	case HardwareNVENC:
-		args = append(args, "-hwaccel", "cuda", "-c:v", "h264_nvenc")
-		encoder = "nvenc"
+		args = append(args, "-hwaccel", "cuda")
 	case HardwareVAAPI:
-		args = append(args, "-vaapi_device", "/dev/dri/renderD128", "-hwaccel", "vaapi", "-c:v", "h264_vaapi")
-		encoder = "vaapi"
+		args = append(args, "-vaapi_device", "/dev/dri/renderD128", "-hwaccel", "vaapi")
+	}
+
+	// Input file specification
+	args = append(args, "-i", src)
+
+	// Output video codec & options (must follow -i)
+	var encoder string
+	isH265 := strings.EqualFold(profile, "h265")
+
+	switch hw {
+	case HardwareQSV:
+		if isH265 {
+			args = append(args, "-c:v", "hevc_qsv")
+			encoder = "qsv-hevc"
+		} else {
+			args = append(args, "-c:v", "h264_qsv")
+			encoder = "qsv"
+		}
+	case HardwareNVENC:
+		if isH265 {
+			args = append(args, "-c:v", "hevc_nvenc")
+			encoder = "nvenc-hevc"
+		} else {
+			args = append(args, "-c:v", "h264_nvenc")
+			encoder = "nvenc"
+		}
+	case HardwareVAAPI:
+		if isH265 {
+			args = append(args, "-c:v", "hevc_vaapi")
+			encoder = "vaapi-hevc"
+		} else {
+			args = append(args, "-c:v", "h264_vaapi")
+			encoder = "vaapi"
+		}
 	default:
-		if profile == "h265" {
+		if isH265 {
 			args = append(args, "-c:v", "libx265", "-preset", "fast", "-crf", "24")
 			encoder = "cpu-x265"
 		} else {
@@ -225,8 +268,8 @@ func (f *FFmpegTranscoder) buildFFmpegArgs(src, dst, profile string, hw Hardware
 		}
 	}
 
+	// Output audio & container flags
 	args = append(args,
-		"-i", src,
 		"-c:a", "aac",
 		"-b:a", "192k",
 		"-ac", "2",

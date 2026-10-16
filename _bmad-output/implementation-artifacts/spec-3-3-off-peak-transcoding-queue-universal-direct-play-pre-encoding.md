@@ -2,10 +2,10 @@
 title: 'Story 3.3: Off-Peak Transcoding Queue & Universal Direct-Play Pre-Encoding'
 type: 'feature'
 created: '2026-10-16'
-status: 'review'
+status: 'done'
 route: 'dispatch'
 baseline_commit: '0a884be76e7a25048248d8918028568a43989b8e'
-review_loop_iteration: 0
+review_loop_iteration: 1
 context:
   - '_bmad-output/planning-artifacts/architecture/architecture-sovereign-2026-10-15/ARCHITECTURE-SPINE.md'
   - '_bmad-output/planning-artifacts/ux-designs/ux-sovereign-2026-10-15/DESIGN.md'
@@ -89,15 +89,16 @@ context:
   - `scheduler.go`: Day/Night window evaluator defaulting to 01:00-07:00 with support for midnight-crossing windows, manual override, and telemetry formatting for `gpu_status` (`Daytime (AI Priority)` vs `Off-Peak (Transcoding Active)`).
   - `transcoder.go`: `Transcoder` interface and `FFmpegTranscoder` generating standardized MP4 files (`-pix_fmt yuv420p`, `-movflags +faststart`, AAC audio `-ac 2`) with hardware acceleration detection (`/dev/dri`, `/dev/nvidia*`) and deterministic `MockTranscoder` for unit/integration testing.
   - `engine.go`: Orchestrator managing background queue execution, 10% storage headroom safety floor enforcement, automatic software encoder fallback upon hardware encoder failure, atomic library placement, and Jellyfin library refresh webhooks.
-  - `transcode_test.go`: 10 comprehensive unit tests covering schedule evaluation, day/night transitions, manual override, store CRUD, headroom guards, hardware failure fallback, and queue validation.
+  - `transcode_test.go`: 14 comprehensive unit tests covering schedule evaluation, day/night transitions, manual override, store CRUD, headroom guards, hardware failure fallback, FFmpeg argument ordering, mid-encode pause and resumption, identical path rejection, target dir creation, and queue validation.
 - Extended `cmd/sovereign-daemon/server.go`:
   - Registered `/api/v1/transcode/queue` (GET, POST), `/api/v1/transcode/schedule` (GET, POST), and `/api/v1/transcode/override` (POST).
   - Integrated `TranscodeEngine` into background lifecycle (`StartBackgroundServices`, `Close`).
   - Wired live dynamic `gpu_status` calculation into real-time SSE telemetry updates.
 - Extended `cmd/sovereign-daemon/server_test.go`:
-  - Added 5 integration tests covering queue lifecycle, schedule retrieval/updates, manual override toggles, SSE `gpu_status` telemetry transitions, and end-to-end batch execution with Jellyfin refresh.
+  - Added 6 integration tests covering queue lifecycle, schedule retrieval/updates, manual override toggles, SSE `gpu_status` telemetry transitions, end-to-end batch execution with Jellyfin refresh, and background orchestrator processing.
 - Updated `api/openapi.yaml`:
   - Documented `/api/v1/transcode/queue`, `/api/v1/transcode/schedule`, and `/api/v1/transcode/override`.
+  - Added 401 Unauthorized and 403 Forbidden problem response definitions for protected endpoints.
   - Added component schemas `TranscodeJobResponse`, `TranscodeQueueResponse`, `EnqueueTranscodeRequest`, `TranscodeScheduleResponse`, `UpdateTranscodeScheduleRequest`, `TranscodeOverrideRequest`, and `TranscodeOverrideResponse`.
 
 ## Spec Change Log
@@ -106,5 +107,10 @@ context:
 
 ## Review Triage Log
 
-*(To be populated during code review)*
+- **Item 1 (FFmpeg CLI Option Ordering & Codec Handling):** Corrected `buildFFmpegArgs` so `-y` and `-hwaccel` precede `-i src`, while output video encoding arguments (`-c:v`, `-preset`, `-crf`, `-c:a`, `-movflags`, etc.) follow `-i src`. Added H.265 profile support across Intel QSV (`hevc_qsv`), Nvidia NVENC (`hevc_nvenc`), AMD VAAPI (`hevc_vaapi`), and CPU fallback (`libx265`). Added `os.MkdirAll(filepath.Dir(opts.TargetPath), 0755)` in `Transcode()` before FFmpeg invocation. Probed `/sys/class/drm/renderD128/device/vendor` for DRM vendor detection (`0x8086`, `0x1002`, `0x10de`).
+- **Item 2 (Transcode Engine Race Conditions & Headroom Alert Debouncing):** Added check in `Enqueue()` rejecting identical source and target paths. Reset `activeProgress` and stored progress to `0.0` at job start/resume in `executeJob()`. Added thread-safe `broadcast()` helper and protected concurrent reads of `broadcaster` and `headroomChecker` in `progressCb()`. Debounced `storage.disk_alert` with a 60-second cooldown in `processNextJob()`.
+- **Item 3 (Verification & Regression Unit/Integration Tests):** Added `TestFFmpegTranscoder_BuildFFmpegArgsOrder`, `TestTranscodeEngine_MidEncodePauseAndResume`, `TestTranscoder_MissingTargetDirCreated`, and `TestServer_Transcode_BackgroundProcessing` verifying background queue execution, args ordering, mid-encode cancellation, pause, and resumption.
+- **Item 4 (API Security & OpenAPI Documentation):** Added 401 Unauthorized and 403 Forbidden problem responses for `POST /api/v1/transcode/schedule` and `POST /api/v1/transcode/override` in `api/openapi.yaml`, matching existing `s.requireSetupOrAdmin` security wrapping in `server.go`.
+- **Item 5 (Sprint Status & Verification):** Passed `go test ./...` and `go build ./cmd/sovereign-daemon` without regressions. Updated sprint status to done.
+
 

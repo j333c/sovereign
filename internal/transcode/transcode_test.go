@@ -676,4 +676,260 @@ func TestTranscodeEngine_EnqueueValidation(t *testing.T) {
 	if err == nil {
 		t.Errorf("expected error when source path is a directory, got nil")
 	}
+
+	// 4. Source and target paths identical
+	srcFile := createTestVideoFile(t, tempDir, "same_path.mkv")
+	_, err = engine.Enqueue(context.Background(), EnqueueRequest{
+		SourcePath: srcFile,
+		TargetPath: srcFile,
+	})
+	if err == nil {
+		t.Errorf("expected error when source and target paths are identical, got nil")
+	}
 }
+
+func TestFFmpegTranscoder_BuildFFmpegArgsOrder(t *testing.T) {
+	ft := NewFFmpegTranscoder(nil, nil)
+
+	cases := []struct {
+		name        string
+		src         string
+		dst         string
+		profile     string
+		hw          HardwareCapability
+		expectedEnc string
+		videoCodec  string
+	}{
+		{"qsv h264", "/in.mkv", "/out.mp4", "universal", HardwareQSV, "qsv", "h264_qsv"},
+		{"qsv h265", "/in.mkv", "/out.mp4", "h265", HardwareQSV, "qsv-hevc", "hevc_qsv"},
+		{"nvenc h264", "/in.mkv", "/out.mp4", "universal", HardwareNVENC, "nvenc", "h264_nvenc"},
+		{"nvenc h265", "/in.mkv", "/out.mp4", "h265", HardwareNVENC, "nvenc-hevc", "hevc_nvenc"},
+		{"vaapi h264", "/in.mkv", "/out.mp4", "universal", HardwareVAAPI, "vaapi", "h264_vaapi"},
+		{"vaapi h265", "/in.mkv", "/out.mp4", "h265", HardwareVAAPI, "vaapi-hevc", "hevc_vaapi"},
+		{"cpu h264", "/in.mkv", "/out.mp4", "universal", HardwareSoftware, "cpu-x264", "libx264"},
+		{"cpu h265", "/in.mkv", "/out.mp4", "h265", HardwareSoftware, "cpu-x265", "libx265"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			args, enc := ft.buildFFmpegArgs(tc.src, tc.dst, tc.profile, tc.hw)
+			if enc != tc.expectedEnc {
+				t.Errorf("expected encoder %q, got %q", tc.expectedEnc, enc)
+			}
+
+			// Find indices of critical parameters
+			inputIdx := -1
+			videoCodecIdx := -1
+			audioCodecIdx := -1
+			movflagsIdx := -1
+			hwaccelIdx := -1
+
+			for i, arg := range args {
+				if arg == "-i" {
+					inputIdx = i
+				}
+				if arg == "-c:v" {
+					videoCodecIdx = i
+				}
+				if arg == "-c:a" {
+					audioCodecIdx = i
+				}
+				if arg == "-movflags" {
+					movflagsIdx = i
+				}
+				if arg == "-hwaccel" {
+					hwaccelIdx = i
+				}
+			}
+
+			if inputIdx == -1 {
+				t.Fatalf("missing -i in ffmpeg arguments: %v", args)
+			}
+			if videoCodecIdx == -1 {
+				t.Fatalf("missing -c:v in ffmpeg arguments: %v", args)
+			}
+
+			// Validate input comes before output options
+			if inputIdx > videoCodecIdx {
+				t.Errorf("-i (%d) must precede -c:v (%d) in ffmpeg args: %v", inputIdx, videoCodecIdx, args)
+			}
+			if audioCodecIdx != -1 && inputIdx > audioCodecIdx {
+				t.Errorf("-i (%d) must precede -c:a (%d) in ffmpeg args: %v", inputIdx, audioCodecIdx, args)
+			}
+			if movflagsIdx != -1 && inputIdx > movflagsIdx {
+				t.Errorf("-i (%d) must precede -movflags (%d) in ffmpeg args: %v", inputIdx, movflagsIdx, args)
+			}
+
+			// If hardware acceleration is specified, hwaccel flag must precede -i
+			if tc.hw == HardwareQSV || tc.hw == HardwareNVENC || tc.hw == HardwareVAAPI {
+				if hwaccelIdx == -1 {
+					t.Errorf("expected -hwaccel for %v, got none: %v", tc.hw, args)
+				} else if hwaccelIdx > inputIdx {
+					t.Errorf("-hwaccel (%d) must precede -i (%d) in args: %v", hwaccelIdx, inputIdx, args)
+				}
+			}
+
+			// Verify correct video codec option value
+			if args[videoCodecIdx+1] != tc.videoCodec {
+				t.Errorf("expected video codec %q, got %q", tc.videoCodec, args[videoCodecIdx+1])
+			}
+		})
+	}
+}
+
+func TestTranscodeEngine_MidEncodePauseAndResume(t *testing.T) {
+	_, store := setupTestDB(t)
+	tempDir := t.TempDir()
+
+	sched, _ := NewScheduler(DefaultScheduleConfig())
+	// Set daytime (not off-peak)
+	sched.SetNowFunc(func() time.Time {
+		return time.Date(2026, 10, 16, 14, 0, 0, 0, time.Local)
+	})
+
+	mockTC := NewMockTranscoder()
+	mockTC.StepDelay = 50 * time.Millisecond
+
+	var eventsMu sync.Mutex
+	var eventsReceived []string
+
+	broadcaster := func(event string, data any) {
+		eventsMu.Lock()
+		eventsReceived = append(eventsReceived, event)
+		eventsMu.Unlock()
+	}
+
+	engine, err := NewTranscodeEngine(EngineConfig{
+		DataDir:     tempDir,
+		Store:       store,
+		Scheduler:   sched,
+		Transcoder:  mockTC,
+		Broadcaster: broadcaster,
+		HeadroomChecker: func(path string) (float64, error) {
+			return 50.0, nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("failed to create engine: %v", err)
+	}
+	defer engine.Close()
+
+	// 1. Start with manual override enabled so the job begins
+	engine.SetManualOverride(true)
+
+	srcFile := createTestVideoFile(t, tempDir, "long_movie.mkv")
+	targetFile := filepath.Join(tempDir, "long_movie.mp4")
+
+	job, err := engine.Enqueue(context.Background(), EnqueueRequest{
+		SourcePath: srcFile,
+		TargetPath: targetFile,
+	})
+	if err != nil {
+		t.Fatalf("Enqueue failed: %v", err)
+	}
+
+	// In the background, revoke override shortly after job starts to trigger mid-encode pause
+	go func() {
+		time.Sleep(30 * time.Millisecond)
+		engine.SetManualOverride(false)
+	}()
+
+	// Execute first pass - should start, get interrupted, and transition to paused
+	err = engine.ProcessOnce(context.Background())
+	if err != nil {
+		t.Fatalf("ProcessOnce failed unexpectedly: %v", err)
+	}
+
+	// Verify job is now paused
+	pausedJob, err := store.GetJob(context.Background(), job.ID)
+	if err != nil {
+		t.Fatalf("GetJob failed: %v", err)
+	}
+	if pausedJob.Status != StatusPaused {
+		t.Errorf("expected job status %q, got %q", StatusPaused, pausedJob.Status)
+	}
+
+	eventsMu.Lock()
+	hasPausedEvent := false
+	for _, ev := range eventsReceived {
+		if ev == "transcode.job_paused" {
+			hasPausedEvent = true
+			break
+		}
+	}
+	eventsMu.Unlock()
+
+	if !hasPausedEvent {
+		t.Errorf("expected transcode.job_paused event, got: %v", eventsReceived)
+	}
+
+	// 2. Resume transcode: re-enable manual override (or off-peak window)
+	mockTC.StepDelay = 0 // finish remaining quickly
+	engine.SetManualOverride(true)
+
+	err = engine.ProcessOnce(context.Background())
+	if err != nil {
+		t.Fatalf("second ProcessOnce failed: %v", err)
+	}
+
+	// Verify job is now completed
+	resumedJob, err := store.GetJob(context.Background(), job.ID)
+	if err != nil {
+		t.Fatalf("GetJob failed: %v", err)
+	}
+	if resumedJob.Status != StatusCompleted {
+		t.Errorf("expected resumed job status %q, got %q", StatusCompleted, resumedJob.Status)
+	}
+
+	if _, err := os.Stat(targetFile); err != nil {
+		t.Fatalf("expected target file %q to exist: %v", targetFile, err)
+	}
+}
+
+func TestTranscoder_MissingTargetDirCreated(t *testing.T) {
+	tempDir := t.TempDir()
+	srcFile := createTestVideoFile(t, tempDir, "source.mkv")
+
+	// 1. Test MockTranscoder with deeply nested non-existent directory
+	mockTC := NewMockTranscoder()
+	nestedTarget := filepath.Join(tempDir, "deeply", "nested", "sub", "output.mp4")
+
+	res, err := mockTC.Transcode(context.Background(), TranscodeOptions{
+		SourcePath:  srcFile,
+		TargetPath:  nestedTarget,
+		HardwareAcc: HardwareSoftware,
+		Profile:     "universal",
+	})
+	if err != nil {
+		t.Fatalf("MockTranscoder.Transcode failed: %v", err)
+	}
+	if res.TargetPath != nestedTarget {
+		t.Errorf("expected result target %q, got %q", nestedTarget, res.TargetPath)
+	}
+	if _, err := os.Stat(nestedTarget); err != nil {
+		t.Errorf("expected output file to exist in created nested dir: %v", err)
+	}
+
+	// 2. Test FFmpegTranscoder pre-creates target directory
+	ffmpegTC := NewFFmpegTranscoder(nil, nil)
+	ffmpegTarget := filepath.Join(tempDir, "ffmpeg_created_dir", "sub", "final.mp4")
+	parentDir := filepath.Dir(ffmpegTarget)
+
+	// Directory should not exist yet
+	if _, err := os.Stat(parentDir); !os.IsNotExist(err) {
+		t.Fatalf("expected parent dir to not exist yet")
+	}
+
+	// Transcode will create parentDir before failing or succeeding with ffmpeg exec
+	_, _ = ffmpegTC.Transcode(context.Background(), TranscodeOptions{
+		SourcePath:  srcFile,
+		TargetPath:  ffmpegTarget,
+		HardwareAcc: HardwareSoftware,
+		Profile:     "universal",
+	})
+
+	if info, err := os.Stat(parentDir); err != nil || !info.IsDir() {
+		t.Errorf("expected FFmpegTranscoder to create parent dir %q, err: %v", parentDir, err)
+	}
+}
+

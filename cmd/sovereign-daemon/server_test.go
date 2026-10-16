@@ -3885,3 +3885,71 @@ func TestServer_Transcode_EndToEndBatchExecution(t *testing.T) {
 	}
 }
 
+func TestServer_Transcode_BackgroundProcessing(t *testing.T) {
+	srv, dataDir := setupTestServer(t)
+	defer srv.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Configure schedule to be active during night
+	srv.TranscodeEngine().Scheduler().SetNowFunc(func() time.Time {
+		return time.Date(2026, 10, 16, 3, 0, 0, 0, time.Local)
+	})
+
+	// Start background orchestrator routines
+	srv.StartBackgroundServices(ctx)
+
+	// Prepare raw video in staging
+	rawFile := filepath.Join(dataDir, "media", "staging", "auto_movie.mkv")
+	_ = os.MkdirAll(filepath.Dir(rawFile), 0755)
+	_ = os.WriteFile(rawFile, []byte("RAW_STREAM_FOR_AUTO_TRANSCODE"), 0644)
+
+	targetMP4 := filepath.Join(dataDir, "media", "movies", "Auto Movie (2024)", "movie.mp4")
+	enqPayload := map[string]any{
+		"source_path": rawFile,
+		"target_path": targetMP4,
+		"profile":     "universal",
+	}
+	body, _ := json.Marshal(enqPayload)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/transcode/queue", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(w, req)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("enqueue failed with status %d: %s", w.Code, w.Body.String())
+	}
+
+	// Poll until completed without calling ProcessOnce manually
+	var completed bool
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		qReq := httptest.NewRequest(http.MethodGet, "/api/v1/transcode/queue", nil)
+		qW := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(qW, qReq)
+
+		var qResp TranscodeQueueResponse
+		_ = json.Unmarshal(qW.Body.Bytes(), &qResp)
+		if len(qResp.Jobs) > 0 && qResp.Jobs[0].Status == "completed" {
+			completed = true
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	if !completed {
+		t.Fatalf("transcode job was not processed by background service within timeout")
+	}
+
+	// Verify target MP4 exists and is non-empty
+	fi, err := os.Stat(targetMP4)
+	if err != nil {
+		t.Fatalf("expected target MP4 to exist: %v", err)
+	}
+	if fi.Size() == 0 {
+		t.Fatalf("target MP4 is empty")
+	}
+}
+
+
