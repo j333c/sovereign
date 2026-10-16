@@ -135,6 +135,9 @@ func ScanModels(dir string) ([]ModelMetadata, error) {
 		if strings.HasPrefix(name, ".") || strings.HasSuffix(name, ".downloading") {
 			continue
 		}
+		if name == "active.gguf" || name == "default.gguf" {
+			continue
+		}
 		if !strings.HasSuffix(strings.ToLower(name), ".gguf") {
 			continue
 		}

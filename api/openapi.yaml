@@ -4106,9 +4106,8 @@ components:
           type: object
           properties:
             magic:
-              type: array
-              items:
-                type: integer
+              type: string
+              example: R0dVRg==
             version:
               type: integer
               example: 3
@@ -4242,6 +4241,9 @@ components:
           type: integer
           format: int64
           example: 1288490188
+        has_gpu:
+          type: boolean
+          example: true
 
     AISettingsUpdateRequest:
       type: object

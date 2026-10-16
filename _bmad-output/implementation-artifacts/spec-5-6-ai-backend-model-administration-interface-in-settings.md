@@ -2,10 +2,10 @@
 title: 'Story 5.6: AI Backend & Model Administration Interface in Settings'
 type: 'feature'
 created: '2026-10-16'
-status: 'ready-for-dev'
+status: 'done'
 route: 'dispatch'
 baseline_commit: 'a531ca41c992636b1912e6453862f8b853493429'
-review_loop_iteration: 0
+review_loop_iteration: 1
 context:
   - '_bmad-output/planning-artifacts/architecture/architecture-sovereign-2026-10-15/ARCHITECTURE-SPINE.md'
   - '_bmad-output/planning-artifacts/ux-designs/ux-sovereign-2026-10-15/DESIGN.md'
@@ -80,3 +80,24 @@ context:
 - `web/src/app/settings/page.tsx` -- Settings hub with AI administration panel.
 - `web/src/app/settings/ai-settings.test.tsx` -- Component tests for model card, sliders, download manager, and switching.
 - `web/src/lib/i18n.ts` -- Localized microcopy for AI settings in EN, DE, ES, FR.
+
+## Review Triage Log
+
+### Cycle 1 (3-Layer Code Review Remediations)
+- **Reviewers**: Blind Hunter, Edge Case Hunter, Verification Gap.
+- **Findings & Remediations Applied**:
+  1. *Pointer Symlink Masking in `ScanModels`*: Skip pointer symlinks `active.gguf` and `default.gguf` during directory scanning so canonical model files are not shadowed by deduplication logic.
+  2. *Dynamic Parameter Adoption in `LlamaProvisioner`*: Added `SettingGetter` interface and injected store into `LlamaProvisioner` to dynamically re-evaluate `ai_context_length` (`-c`) and `ai_gpu_layers` (`-ngl`) when synthesizing container command-line arguments on reload.
+  3. *Persisted Idle Timeout Restoration*: Wired database `ai_idle_timeout_seconds` lookup on daemon startup in `NewServer` to restore user's idle surrender duration into `GPUArbitrator`.
+  4. *Model Download Validation & Cancellation*:
+     - Check for `.gguf` extension and block pointer symlink operations.
+     - Remove partial `.downloading` file when a job is explicitly cancelled.
+     - Return HTTP 404 for nonexistent download IDs.
+     - Return HTTP 400 for invalid/pointer/non-GGUF filenames in delete handler.
+  5. *GPU Hardware Capability Flag*: Added `has_gpu` to `AISettingsResponse` and `openapi.yaml` so the frontend distinguishes between CPU-only hardware and a GPU system configured with 0 offloaded layers, preventing permanent slider lockout.
+  6. *Accessibility & UI Robustness*:
+     - Replaced browser `alert()` with an accessible inline alert banner.
+     - Scoped download status polling to the AI settings tab.
+     - Debounced slider updates to prevent rapid API requests during drag gestures.
+  7. *Automated Verification*: Added integration tests for default settings assertions, download cancellation status, 404 handling, and boot-time idle timeout restoration in `server_test.go`. Verified 100% pass across Go and TS test suites.
+

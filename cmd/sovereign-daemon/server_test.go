@@ -6198,6 +6198,16 @@ func TestServer_AI_Settings_GetAndUpdate(t *testing.T) {
 		t.Fatalf("failed to decode settings: %v", err)
 	}
 
+	if settings.ContextLength != 4096 {
+		t.Errorf("expected default ContextLength 4096, got %d", settings.ContextLength)
+	}
+	if settings.IdleTimeoutSeconds != 300 {
+		t.Errorf("expected default IdleTimeoutSeconds 300, got %d", settings.IdleTimeoutSeconds)
+	}
+	if !settings.FlashAttention {
+		t.Errorf("expected default FlashAttention true, got %v", settings.FlashAttention)
+	}
+
 	// 2. POST /api/v1/ai/settings
 	updatePayload := `{"gpu_layers": 33, "context_length": 8192, "idle_timeout_seconds": 600}`
 	reqPost := httptest.NewRequest(http.MethodPost, "/api/v1/ai/settings", strings.NewReader(updatePayload))
@@ -6311,6 +6321,54 @@ func TestServer_AI_Models_DownloadAndCancel(t *testing.T) {
 
 	if wCancel.Code != http.StatusOK {
 		t.Fatalf("expected HTTP 200 from cancel download, got %d: %s", wCancel.Code, wCancel.Body.String())
+	}
+
+	var cancelledProg ai.AIModelDownloadProgress
+	if err := json.Unmarshal(wCancel.Body.Bytes(), &cancelledProg); err != nil {
+		t.Fatalf("failed to decode cancelled progress: %v", err)
+	}
+	if cancelledProg.Status != "cancelled" {
+		t.Errorf("expected download status 'cancelled', got %q", cancelledProg.Status)
+	}
+
+	// 4. Unknown download job ID should return 404
+	reqUnknown := httptest.NewRequest(http.MethodDelete, "/api/v1/ai/models/downloads/nonexistent-id", nil)
+	wUnknown := httptest.NewRecorder()
+	srv.router.ServeHTTP(wUnknown, reqUnknown)
+	if wUnknown.Code != http.StatusNotFound {
+		t.Errorf("expected HTTP 404 for nonexistent download job, got %d", wUnknown.Code)
+	}
+}
+
+func TestServer_AI_IdleTimeout_RestoredOnBoot(t *testing.T) {
+	srv, dataDir := setupTestServer(t)
+
+	// Persist 600s in DB
+	if err := srv.db.SetSetting(context.Background(), "ai_idle_timeout_seconds", "600"); err != nil {
+		t.Fatalf("failed to set setting: %v", err)
+	}
+	srv.Close()
+
+	mockEngine := supervisor.NewMockRuntimeEngine()
+	svcMgr := supervisor.NewServiceManager(supervisor.ServiceManagerConfig{
+		DataDir: dataDir,
+		Engine:  mockEngine,
+	})
+
+	srv2, err := NewServer(Config{
+		DataDir:    dataDir,
+		ServiceMgr: svcMgr,
+	})
+	if err != nil {
+		t.Fatalf("NewServer failed: %v", err)
+	}
+	defer srv2.Close()
+
+	if srv2.aiGateway != nil && srv2.aiGateway.Arbitrator() != nil {
+		status := srv2.aiGateway.Arbitrator().Status()
+		if status.IdleTimeoutSeconds != 600 {
+			t.Errorf("expected restored arbitrator idle timeout 600s, got %d", status.IdleTimeoutSeconds)
+		}
 	}
 }
 

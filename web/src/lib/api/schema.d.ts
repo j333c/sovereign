@@ -2577,7 +2577,8 @@ export interface components {
             /** @example true */
             flash_attention: boolean;
             header?: {
-                magic?: number[];
+                /** @example R0dVRg== */
+                magic?: string;
                 /** @example 3 */
                 version?: number;
                 /** @example 338 */
@@ -2663,6 +2664,8 @@ export interface components {
              * @example 1288490188
              */
             ram_usage_bytes: number;
+            /** @example true */
+            has_gpu?: boolean;
         };
         AISettingsUpdateRequest: {
             /** @example 99 */

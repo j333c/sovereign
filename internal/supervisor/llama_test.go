@@ -313,6 +313,60 @@ func TestLlamaProvisioner_SuccessGPU(t *testing.T) {
 	}
 }
 
+type mockLlamaSettingStore struct {
+	settings map[string]string
+}
+
+func (m *mockLlamaSettingStore) GetSetting(ctx context.Context, key string) (string, error) {
+	if val, ok := m.settings[key]; ok {
+		return val, nil
+	}
+	return "", nil
+}
+
+func TestLlamaProvisioner_ConfiguredContextLengthAndGPULayers(t *testing.T) {
+	tmpDir := t.TempDir()
+	modelsDir := filepath.Join(tmpDir, "models")
+	_ = os.MkdirAll(modelsDir, 0755)
+	createMockGGUFFile(t, modelsDir, "model.gguf", 3)
+
+	devDir := filepath.Join(tmpDir, "dev")
+	_ = os.MkdirAll(devDir, 0755)
+	_ = os.WriteFile(filepath.Join(devDir, "nvidia0"), []byte{}, 0644)
+
+	store := &mockLlamaSettingStore{
+		settings: map[string]string{
+			"ai_context_length": "8192",
+			"ai_gpu_layers":     "33",
+		},
+	}
+
+	prov := NewLlamaProvisioner(tmpDir, nil, LlamaProvisionerOptions{
+		NumCPU:       func() int { return 8 },
+		DevRoot:      devDir,
+		SettingStore: store,
+	})
+
+	res, err := prov.Provision(context.Background())
+	if err != nil {
+		t.Fatalf("Provision failed: %v", err)
+	}
+
+	cmdStr := " " + strings.Join(res.ContainerSpec.Command, " ") + " "
+	if !strings.Contains(cmdStr, " -c 8192 ") {
+		t.Errorf("expected -c 8192 in command: %s", cmdStr)
+	}
+	if !strings.Contains(cmdStr, " -ngl 33 ") {
+		t.Errorf("expected -ngl 33 in command: %s", cmdStr)
+	}
+	if res.ContainerSpec.Env["LLAMA_ARG_CTX_SIZE"] != "8192" {
+		t.Errorf("expected LLAMA_ARG_CTX_SIZE=8192, got %s", res.ContainerSpec.Env["LLAMA_ARG_CTX_SIZE"])
+	}
+	if res.ContainerSpec.Env["LLAMA_ARG_N_GPU_LAYERS"] != "33" {
+		t.Errorf("expected LLAMA_ARG_N_GPU_LAYERS=33, got %s", res.ContainerSpec.Env["LLAMA_ARG_N_GPU_LAYERS"])
+	}
+}
+
 func TestLlamaProvisioner_CorruptCandidateHandling(t *testing.T) {
 	tmpDir := t.TempDir()
 	modelsDir := filepath.Join(tmpDir, "models")

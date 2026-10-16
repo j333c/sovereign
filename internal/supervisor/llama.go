@@ -38,24 +38,31 @@ type LlamaProvisionResult struct {
 	CPUOptimized  bool
 }
 
+// SettingGetter provides access to key-value configuration settings.
+type SettingGetter interface {
+	GetSetting(ctx context.Context, key string) (string, error)
+}
+
 // LlamaProvisionerOptions allows dependency injection for hardware and core detection during testing.
 type LlamaProvisionerOptions struct {
-	NumCPU    func() int
-	DevRoot   string
-	SysfsRoot string
-	ProcRoot  string
-	ModelsDir string
+	NumCPU       func() int
+	DevRoot      string
+	SysfsRoot    string
+	ProcRoot     string
+	ModelsDir    string
+	SettingStore SettingGetter
 }
 
 // LlamaProvisioner manages hardware autodetection, thread capping, GGUF pre-flight verification,
 // and safe container specification synthesis for the llama-server inference spoke.
 type LlamaProvisioner struct {
-	mu        sync.RWMutex
-	dataDir   string
-	modelsDir string
-	logger    *slog.Logger
-	hwOpts    HardwareProbeOptions
-	numCPU    func() int
+	mu           sync.RWMutex
+	dataDir      string
+	modelsDir    string
+	logger       *slog.Logger
+	hwOpts       HardwareProbeOptions
+	numCPU       func() int
+	settingStore SettingGetter
 }
 
 // NewLlamaProvisioner constructs a new LlamaProvisioner.
@@ -75,6 +82,7 @@ func NewLlamaProvisioner(dataDir string, logger *slog.Logger, opts ...LlamaProvi
 	numCPUFn := runtime.NumCPU
 	modelsDir := filepath.Join(dataDir, "models")
 
+	var settingStore SettingGetter
 	if len(opts) > 0 {
 		o := opts[0]
 		if o.DevRoot != "" {
@@ -92,15 +100,26 @@ func NewLlamaProvisioner(dataDir string, logger *slog.Logger, opts ...LlamaProvi
 		if o.ModelsDir != "" {
 			modelsDir = o.ModelsDir
 		}
+		if o.SettingStore != nil {
+			settingStore = o.SettingStore
+		}
 	}
 
 	return &LlamaProvisioner{
-		dataDir:   dataDir,
-		modelsDir: modelsDir,
-		logger:    logger,
-		hwOpts:    hwOpts,
-		numCPU:    numCPUFn,
+		dataDir:      dataDir,
+		modelsDir:    modelsDir,
+		logger:       logger,
+		hwOpts:       hwOpts,
+		numCPU:       numCPUFn,
+		settingStore: settingStore,
 	}
+}
+
+// SetSettingStore sets or updates the settings store.
+func (p *LlamaProvisioner) SetSettingStore(s SettingGetter) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.settingStore = s
 }
 
 // CalculateLlamaThreads caps CPU inference threads to max(1, physical_cores - 2)
@@ -299,12 +318,27 @@ func (p *LlamaProvisioner) Provision(ctx context.Context) (*LlamaProvisionResult
 	containerModelPath := "/models/" + modelFilename
 
 	// 5. Build standardized command line arguments
-	// Always: -np 2 (parallel slots), -fa (FlashAttention), -c 4096 (context)
+	// Always: -np 2 (parallel slots), -fa (FlashAttention)
+	// Context length and GPU offload layers are dynamically read from settingStore (defaults: 4096, 99)
+	ctxLength := "4096"
+	gpuLayers := "99"
+	p.mu.RLock()
+	store := p.settingStore
+	p.mu.RUnlock()
+	if store != nil {
+		if val, err := store.GetSetting(ctx, "ai_context_length"); err == nil && val != "" {
+			ctxLength = val
+		}
+		if val, err := store.GetSetting(ctx, "ai_gpu_layers"); err == nil && val != "" {
+			gpuLayers = val
+		}
+	}
+
 	cmd := []string{
 		"--host", "0.0.0.0",
 		"--port", strconv.Itoa(DefaultLlamaPort),
 		"-m", containerModelPath,
-		"-c", "4096",
+		"-c", ctxLength,
 		"-np", "2",
 		"-fa",
 	}
@@ -313,14 +347,14 @@ func (p *LlamaProvisioner) Provision(ctx context.Context) (*LlamaProvisionResult
 		"LLAMA_ARG_HOST":       "0.0.0.0",
 		"LLAMA_ARG_PORT":       strconv.Itoa(DefaultLlamaPort),
 		"LLAMA_ARG_MODEL":      containerModelPath,
-		"LLAMA_ARG_CTX_SIZE":   "4096",
+		"LLAMA_ARG_CTX_SIZE":   ctxLength,
 		"LLAMA_ARG_PARALLEL":   "2",
 		"LLAMA_ARG_FLASH_ATTN": "1",
 	}
 
 	if isGPU {
-		cmd = append(cmd, "-ngl", "99")
-		env["LLAMA_ARG_N_GPU_LAYERS"] = "99"
+		cmd = append(cmd, "-ngl", gpuLayers)
+		env["LLAMA_ARG_N_GPU_LAYERS"] = gpuLayers
 		if hw.Type == HWAccelNVENC {
 			env["NVIDIA_VISIBLE_DEVICES"] = "all"
 			env["NVIDIA_DRIVER_CAPABILITIES"] = "compute,utility"

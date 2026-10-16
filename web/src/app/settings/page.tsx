@@ -78,6 +78,9 @@ export default function SettingsPage({
   const [showLogsModal, setShowLogsModal] = useState<boolean>(false);
   const [modelToDelete, setModelToDelete] = useState<string | null>(null);
   const [generationPreset, setGenerationPreset] = useState<string>("balanced");
+  const [actionError, setActionError] = useState<{ title: string; detail?: string } | null>(null);
+  const [sliderGpuLayers, setSliderGpuLayers] = useState<number | null>(null);
+  const [sliderIdleTimeout, setSliderIdleTimeout] = useState<number | null>(null);
 
   // Download form state
   const [downloadUrl, setDownloadUrl] = useState<string>("");
@@ -174,7 +177,7 @@ export default function SettingsPage({
       (d) => d.status === "downloading" || d.status === "verifying"
     );
 
-    if (!hasActiveDownloads) return;
+    if (!hasActiveDownloads || activeTab !== "ai") return;
 
     const interval = setInterval(async () => {
       try {
@@ -192,19 +195,20 @@ export default function SettingsPage({
     }, 2000);
 
     return () => clearInterval(interval);
-  }, [downloads, client]);
+  }, [downloads, client, activeTab]);
 
   // Model switching handler
   const handleSwitchModel = async (filename: string) => {
     try {
+      setActionError(null);
       setActivatingModel(filename);
       await client.setActiveAIModel(filename);
       await loadAIState();
     } catch (err: unknown) {
       if (err instanceof ProblemDetailsError) {
-        alert(err.detail || err.title);
+        setActionError({ title: err.title, detail: err.detail });
       } else if (err instanceof Error) {
-        alert(err.message);
+        setActionError({ title: "Failed to switch model", detail: err.message });
       }
     } finally {
       setActivatingModel(null);
@@ -215,14 +219,15 @@ export default function SettingsPage({
   const handleDeleteModel = async () => {
     if (!modelToDelete) return;
     try {
+      setActionError(null);
       await client.deleteAIModel(modelToDelete);
       setModelToDelete(null);
       await loadAIState();
     } catch (err: unknown) {
       if (err instanceof ProblemDetailsError) {
-        alert(err.detail || err.title);
+        setActionError({ title: err.title, detail: err.detail });
       } else if (err instanceof Error) {
-        alert(err.message);
+        setActionError({ title: "Failed to delete model", detail: err.message });
       }
     }
   };
@@ -235,6 +240,7 @@ export default function SettingsPage({
     try {
       setIsStartingDownload(true);
       setDownloadError(null);
+      setActionError(null);
       await client.downloadAIModel({
         url: downloadUrl.trim(),
         sha256: downloadSha256.trim() || undefined,
@@ -270,12 +276,13 @@ export default function SettingsPage({
   // Cancel download handler
   const handleCancelDownload = async (id: string) => {
     try {
+      setActionError(null);
       await client.cancelAIModelDownload(id);
       const activeDownloads = await client.getAIModelDownloads();
       setDownloads(activeDownloads?.downloads || []);
     } catch (err: unknown) {
       if (err instanceof ProblemDetailsError) {
-        alert(err.detail || err.title);
+        setActionError({ title: err.title, detail: err.detail });
       }
     }
   };
@@ -284,11 +291,12 @@ export default function SettingsPage({
   const handleContextLengthChange = async (length: number) => {
     if (!aiSettings || aiSettings.context_length === length) return;
     try {
+      setActionError(null);
       const updated = await client.updateAISettings({ context_length: length });
       setAiSettings(updated);
     } catch (err: unknown) {
       if (err instanceof ProblemDetailsError) {
-        alert(err.detail || err.title);
+        setActionError({ title: err.title, detail: err.detail });
       }
     }
   };
@@ -296,11 +304,12 @@ export default function SettingsPage({
   const handleGpuLayersChange = async (layers: number) => {
     if (!aiSettings) return;
     try {
+      setActionError(null);
       const updated = await client.updateAISettings({ gpu_layers: layers });
       setAiSettings(updated);
     } catch (err: unknown) {
       if (err instanceof ProblemDetailsError) {
-        alert(err.detail || err.title);
+        setActionError({ title: err.title, detail: err.detail });
       }
     }
   };
@@ -308,13 +317,14 @@ export default function SettingsPage({
   const handleIdleTimeoutChange = async (seconds: number) => {
     if (!aiSettings) return;
     try {
+      setActionError(null);
       const updated = await client.updateAISettings({
         idle_timeout_seconds: seconds,
       });
       setAiSettings(updated);
     } catch (err: unknown) {
       if (err instanceof ProblemDetailsError) {
-        alert(err.detail || err.title);
+        setActionError({ title: err.title, detail: err.detail });
       }
     }
   };
@@ -328,15 +338,16 @@ export default function SettingsPage({
     try {
       setIsReloading(true);
       setReloadNotice(null);
+      setActionError(null);
       await client.reloadAIEngine();
       setReloadNotice(t.reloadSuccess);
       await loadAIState();
       setTimeout(() => setReloadNotice(null), 5000);
     } catch (err: unknown) {
       if (err instanceof ProblemDetailsError) {
-        alert(err.detail || err.title);
+        setActionError({ title: err.title, detail: err.detail });
       } else if (err instanceof Error) {
-        alert(err.message);
+        setActionError({ title: "Reload failed", detail: err.message });
       }
     } finally {
       setIsReloading(false);
@@ -368,7 +379,7 @@ export default function SettingsPage({
   }, [showLogsModal, modelToDelete]);
 
   const activeModelObj = models.find((m) => m.is_active) || null;
-  const isCpuOnly = !aiSettings || (aiSettings.vram_usage_bytes === 0 && aiSettings.gpu_layers === 0);
+  const isCpuOnly = aiSettings ? !aiSettings.has_gpu : false;
 
   return (
     <div className="flex min-h-screen flex-col bg-[#F8F9FA] text-[#0F172A]">
@@ -521,6 +532,28 @@ export default function SettingsPage({
                       onClick={() => setReloadNotice(null)}
                       className="text-[#166534] hover:text-[#065F46] p-1 font-bold"
                       aria-label="Dismiss notice"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                )}
+
+                {/* Operational Error Banner */}
+                {actionError && (
+                  <div
+                    className="mt-4 rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-800 font-medium flex items-center justify-between"
+                    role="alert"
+                    data-testid="action-error"
+                  >
+                    <div>
+                      <span className="font-bold">{actionError.title}</span>
+                      {actionError.detail && <span className="ml-2 font-normal">{actionError.detail}</span>}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setActionError(null)}
+                      className="text-red-700 hover:text-red-900 p-1 font-bold cursor-pointer"
+                      aria-label="Dismiss error"
                     >
                       ✕
                     </button>
@@ -695,7 +728,7 @@ export default function SettingsPage({
                       >
                         {isCpuOnly
                           ? "0 layers (CPU)"
-                          : `${aiSettings?.gpu_layers ?? 0} layers`}
+                          : `${sliderGpuLayers ?? aiSettings?.gpu_layers ?? 0} layers`}
                       </span>
                     </div>
 
@@ -706,10 +739,18 @@ export default function SettingsPage({
                         min="0"
                         max="99"
                         disabled={isCpuOnly}
-                        value={isCpuOnly ? 0 : aiSettings?.gpu_layers ?? 0}
-                        onChange={(e) =>
-                          handleGpuLayersChange(parseInt(e.target.value, 10))
-                        }
+                        value={isCpuOnly ? 0 : (sliderGpuLayers ?? aiSettings?.gpu_layers ?? 0)}
+                        onChange={(e) => setSliderGpuLayers(parseInt(e.target.value, 10))}
+                        onPointerUp={(e) => {
+                          const val = parseInt((e.target as HTMLInputElement).value, 10);
+                          setSliderGpuLayers(null);
+                          void handleGpuLayersChange(val);
+                        }}
+                        onKeyUp={(e) => {
+                          const val = parseInt((e.target as HTMLInputElement).value, 10);
+                          setSliderGpuLayers(null);
+                          void handleGpuLayersChange(val);
+                        }}
                         className="w-full h-2 bg-[#E2E8F0] rounded-lg appearance-none cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
                         aria-label={t.gpuLayersLabel}
                       />
@@ -728,7 +769,7 @@ export default function SettingsPage({
                             "{minutes}",
                             String(
                               Math.round(
-                                (aiSettings?.idle_timeout_seconds ?? 300) / 60
+                                (sliderIdleTimeout ?? aiSettings?.idle_timeout_seconds ?? 300) / 60
                               )
                             )
                           )}
@@ -740,7 +781,7 @@ export default function SettingsPage({
                         data-testid="idle-timeout-value"
                       >
                         {Math.round(
-                          (aiSettings?.idle_timeout_seconds ?? 300) / 60
+                          (sliderIdleTimeout ?? aiSettings?.idle_timeout_seconds ?? 300) / 60
                         )}{" "}
                         min
                       </span>
@@ -753,10 +794,18 @@ export default function SettingsPage({
                         min="60"
                         max="3600"
                         step="60"
-                        value={aiSettings?.idle_timeout_seconds ?? 300}
-                        onChange={(e) =>
-                          handleIdleTimeoutChange(parseInt(e.target.value, 10))
-                        }
+                        value={sliderIdleTimeout ?? aiSettings?.idle_timeout_seconds ?? 300}
+                        onChange={(e) => setSliderIdleTimeout(parseInt(e.target.value, 10))}
+                        onPointerUp={(e) => {
+                          const val = parseInt((e.target as HTMLInputElement).value, 10);
+                          setSliderIdleTimeout(null);
+                          void handleIdleTimeoutChange(val);
+                        }}
+                        onKeyUp={(e) => {
+                          const val = parseInt((e.target as HTMLInputElement).value, 10);
+                          setSliderIdleTimeout(null);
+                          void handleIdleTimeoutChange(val);
+                        }}
                         className="w-full h-2 bg-[#E2E8F0] rounded-lg appearance-none cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
                         aria-label={t.idleTimeoutLabel}
                       />

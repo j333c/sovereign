@@ -99,6 +99,7 @@ type AISettings struct {
 	TokensPerSec       float64 `json:"tokens_per_sec"`
 	VRAMUsageBytes     int64   `json:"vram_usage_bytes"`
 	RAMUsageBytes      int64   `json:"ram_usage_bytes"`
+	HasGPU             bool    `json:"has_gpu"`
 }
 
 // AISettingsUpdate contains mutable AI operational parameters.
@@ -416,6 +417,12 @@ func (m *ModelManager) SetActiveModel(ctx context.Context, filename string) erro
 	if cleanName == "" || cleanName == "." || cleanName == "/" {
 		return errors.New("invalid model filename")
 	}
+	if cleanName == "active.gguf" || cleanName == "default.gguf" {
+		return errors.New("cannot set pointer symlink as active model")
+	}
+	if !strings.HasSuffix(strings.ToLower(cleanName), ".gguf") {
+		return errors.New("model file must have .gguf extension")
+	}
 
 	m.mu.RLock()
 	dir := m.modelsDir
@@ -489,6 +496,12 @@ func (m *ModelManager) DeleteModel(ctx context.Context, filename string) error {
 	cleanName := filepath.Base(filename)
 	if cleanName == "" || cleanName == "." || cleanName == "/" {
 		return errors.New("invalid model filename")
+	}
+	if cleanName == "active.gguf" || cleanName == "default.gguf" {
+		return errors.New("cannot delete active model pointer symlink")
+	}
+	if !strings.HasSuffix(strings.ToLower(cleanName), ".gguf") {
+		return errors.New("cannot delete non-GGUF files")
 	}
 
 	active := m.ActiveModel(ctx)
@@ -905,16 +918,27 @@ func (m *ModelManager) ListDownloads() []AIModelDownloadProgress {
 func (m *ModelManager) CancelDownload(id string) error {
 	m.mu.RLock()
 	job, ok := m.downloads[id]
+	dir := m.modelsDir
 	m.mu.RUnlock()
 
 	if !ok {
 		return ErrDownloadNotFound
 	}
 
-	job.cancel()
 	job.mu.Lock()
+	defer job.mu.Unlock()
+
+	if job.progress.Status != "downloading" && job.progress.Status != "pending" && job.progress.Status != "verifying" {
+		return errors.New("download job is not active")
+	}
+
 	job.progress.Status = "cancelled"
-	job.mu.Unlock()
+	if job.cancel != nil {
+		job.cancel()
+	}
+
+	tempFile := filepath.Join(dir, job.progress.Filename+".downloading")
+	_ = os.Remove(tempFile)
 
 	return nil
 }
@@ -1008,6 +1032,7 @@ func (m *ModelManager) GetSettings(ctx context.Context) (*AISettings, error) {
 		TokensPerSec:       tps,
 		VRAMUsageBytes:     vramBytes,
 		RAMUsageBytes:      ramBytes,
+		HasGPU:             isGPU,
 	}, nil
 }
 

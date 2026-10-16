@@ -517,6 +517,18 @@ func NewServer(cfg Config) (*Server, error) {
 		s.modelManager = cfg.ModelManager
 	}
 
+	if s.llamaProvisioner != nil && s.db != nil {
+		s.llamaProvisioner.SetSettingStore(s.db)
+	}
+
+	if s.db != nil && s.aiGateway != nil && s.aiGateway.Arbitrator() != nil {
+		if timeoutStr, err := s.db.GetSetting(context.Background(), "ai_idle_timeout_seconds"); err == nil && timeoutStr != "" {
+			if sec, pErr := strconv.Atoi(timeoutStr); pErr == nil && sec > 0 {
+				s.aiGateway.Arbitrator().SetIdleTimeout(time.Duration(sec) * time.Second)
+			}
+		}
+	}
+
 	if cfg.DropzoneEngine == nil {
 		var err error
 		cfg.DropzoneEngine, err = storage.NewDropzoneEngine(storage.DropzoneConfig{
@@ -1665,6 +1677,10 @@ func (s *Server) handleDeleteAIModel(w http.ResponseWriter, r *http.Request) {
 		}
 		if errors.Is(err, ai.ErrModelNotFound) || errors.Is(err, os.ErrNotExist) {
 			s.writeProblem(w, http.StatusNotFound, "Model Not Found", fmt.Sprintf("Model %q not found", filename), r.URL.Path)
+			return
+		}
+		if strings.Contains(err.Error(), "invalid") || strings.Contains(err.Error(), "pointer symlink") || strings.Contains(err.Error(), "non-GGUF") {
+			s.writeProblem(w, http.StatusBadRequest, "Invalid Request", err.Error(), r.URL.Path)
 			return
 		}
 		s.logger.Warn("failed to delete AI model", "filename", filename, "error", err)

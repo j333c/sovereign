@@ -67,13 +67,13 @@ development_status:
   4-4-home-assistant-webhook-mqtt-email-alert-dispatcher: done
   epic-4-retrospective: optional
 
-  epic-5: in-progress
+  epic-5: done
   5-1-managed-llama-cpp-backend-appliance-boundary-guard-suite: done
   5-2-mediated-ai-gateway-two-lane-priority-request-governor: done
   5-3-dynamic-gpu-arbitration-day-night-idle-surrender: done
   5-4-open-webui-chat-interface-localized-customization-prompts: done
   5-5-single-source-of-truth-rag-context-window-headroom-truncator: done
-  5-6-ai-backend-model-administration-interface-in-settings: in-progress
+  5-6-ai-backend-model-administration-interface-in-settings: done
   epic-5-retrospective: optional
 
   epic-6: backlog

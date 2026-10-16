@@ -39,7 +39,7 @@ const defaultModels: AIModelsResponse = {
       tokens_per_sec: 24.5,
       flash_attention: true,
       header: {
-        magic: [71, 71, 85, 70],
+        magic: "GGUF",
         version: 3,
         tensor_count: 338,
         metadata_kv_count: 28,
