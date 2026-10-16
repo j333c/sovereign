@@ -199,6 +199,10 @@ func (p *Poller) PollOnce(ctx context.Context) error {
 
 	// 5. Fetch and extract attachments
 	for _, seqNo := range unseenSeqNos {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+
 		msgBytes, fetchErr := client.FetchMessage(ctx, seqNo)
 		if fetchErr != nil {
 			p.logger.Warn("failed to fetch unread message", "seqNo", seqNo, "error", fetchErr)
@@ -211,6 +215,7 @@ func (p *Poller) PollOnce(ctx context.Context) error {
 			continue
 		}
 
+		hasErrors := false
 		for _, att := range attachments {
 			docID := generateDocUUID()
 			cleanName := filepath.Base(filepath.Clean(att.Filename))
@@ -223,6 +228,7 @@ func (p *Poller) PollOnce(ctx context.Context) error {
 			if writeErr := os.WriteFile(targetPath, att.Data, 0644); writeErr != nil {
 				p.logger.Error("failed to write extracted document attachment to consume directory",
 					"path", targetPath, "error", writeErr)
+				hasErrors = true
 				continue
 			}
 
@@ -232,23 +238,29 @@ func (p *Poller) PollOnce(ctx context.Context) error {
 			p.logger.Info("ingested document from email attachment",
 				"filename", cleanName, "target", targetName, "size", len(att.Data))
 
-			// Emit dms.document_ingested
+			// Emit dms.document_ingested matching OpenAPI schema and backward-compat fields
 			if p.broadcaster != nil {
+				nowStr := time.Now().UTC().Format(time.RFC3339)
 				p.broadcaster(EventDocumentIngested, map[string]any{
 					"id":           docID,
 					"filename":     cleanName,
+					"format":       att.ContentType,
+					"size_bytes":   int64(len(att.Data)),
+					"source":       "imap",
+					"ingested_at":  nowStr,
 					"target":       targetName,
 					"path":         targetPath,
-					"size":         len(att.Data),
+					"size":         int64(len(att.Data)),
 					"content_type": att.ContentType,
-					"source":       "imap",
 				})
 			}
 		}
 
-		// Mark processed message as seen
-		if markErr := client.MarkSeen(ctx, seqNo); markErr != nil {
-			p.logger.Warn("failed to mark message as seen", "seqNo", seqNo, "error", markErr)
+		// Only mark processed message as seen if all attachments were safely written
+		if !hasErrors {
+			if markErr := client.MarkSeen(ctx, seqNo); markErr != nil {
+				p.logger.Warn("failed to mark message as seen", "seqNo", seqNo, "error", markErr)
+			}
 		}
 	}
 

@@ -658,7 +658,7 @@ func (e *DropzoneEngine) triggerLibraryRefresh(category string) {
 	}
 
 	serviceID := ServiceForCategory(category)
-	if serviceID == "" {
+	if serviceID == "" || serviceID == supervisor.ServicePaperless {
 		return
 	}
 

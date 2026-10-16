@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"time"
 )
 
 var (
@@ -22,11 +23,17 @@ var (
 type IngestedDocument struct {
 	ID          string `json:"id"`
 	Filename    string `json:"filename"`
-	Target      string `json:"target"`
-	Path        string `json:"path"`
-	Size        int64  `json:"size"`
-	ContentType string `json:"content_type"`
-	Source      string `json:"source"`
+	Format      string `json:"format"`
+	SizeBytes   int64  `json:"size_bytes"`
+	ConsumePath string `json:"consume_path"`
+	IngestedAt  string `json:"ingested_at"`
+
+	// Backward-compatibility aliases
+	Target      string `json:"target,omitempty"`
+	Path        string `json:"path,omitempty"`
+	Size        int64  `json:"size,omitempty"`
+	ContentType string `json:"content_type,omitempty"`
+	Source      string `json:"source,omitempty"`
 }
 
 // IngestEngine coordinates document intake and validation.
@@ -125,9 +132,14 @@ func (e *IngestEngine) SaveDocument(ctx context.Context, filename string, r io.R
 		source = "upload"
 	}
 
+	nowStr := time.Now().UTC().Format(time.RFC3339)
 	item := &IngestedDocument{
 		ID:          docID,
 		Filename:    cleanName,
+		Format:      contentType,
+		SizeBytes:   totalSize,
+		ConsumePath: targetPath,
+		IngestedAt:  nowStr,
 		Target:      targetName,
 		Path:        targetPath,
 		Size:        totalSize,
@@ -135,16 +147,19 @@ func (e *IngestEngine) SaveDocument(ctx context.Context, filename string, r io.R
 		Source:      source,
 	}
 
-	// Emit SSE event
+	// Emit SSE event matching DMSDocumentIngestedEvent schema and backwards-compat fields
 	if e.broadcaster != nil {
 		e.broadcaster(EventDocumentIngested, map[string]any{
 			"id":           item.ID,
 			"filename":     item.Filename,
+			"format":       item.Format,
+			"size_bytes":   item.SizeBytes,
+			"source":       item.Source,
+			"ingested_at":  item.IngestedAt,
 			"target":       item.Target,
 			"path":         item.Path,
 			"size":         item.Size,
 			"content_type": item.ContentType,
-			"source":       item.Source,
 		})
 	}
 

@@ -244,3 +244,54 @@ func TestIMAPStore_AutoMasterKeyGeneration(t *testing.T) {
 		t.Fatalf("expected loaded password 'SecretStoredKey123', got %q", loaded.Password)
 	}
 }
+
+func TestIMAPStore_GetFirst_DisabledConfig(t *testing.T) {
+	db, tempDir := setupTestDB(t)
+	defer func() {
+		_ = db.Close()
+		_ = os.RemoveAll(tempDir)
+	}()
+
+	key := []byte("32-bytes-long-key-for-testing!!")
+	store, err := NewIMAPStore(db, key)
+	if err != nil {
+		t.Fatalf("NewIMAPStore failed: %v", err)
+	}
+
+	ctx := context.Background()
+
+	// When no config exists, GetFirst returns ErrIMAPConfigNotFound
+	_, err = store.GetFirst(ctx)
+	if err != ErrIMAPConfigNotFound {
+		t.Fatalf("expected ErrIMAPConfigNotFound, got: %v", err)
+	}
+
+	// Save a disabled config
+	cfg := &IMAPConfig{
+		Host:       "imap.disabled.net",
+		Port:       993,
+		Username:   "disabled@family.net",
+		Password:   "MySecretPass!",
+		Folder:     "INBOX",
+		SSLEnabled: true,
+		Enabled:    false,
+	}
+	if err := store.Save(ctx, cfg); err != nil {
+		t.Fatalf("Save failed: %v", err)
+	}
+
+	// GetActive must fail because enabled == false
+	_, err = store.GetActive(ctx)
+	if err != ErrIMAPConfigNotFound {
+		t.Fatalf("expected GetActive to fail for disabled config, got: %v", err)
+	}
+
+	// GetFirst must succeed and return the disabled config
+	first, err := store.GetFirst(ctx)
+	if err != nil {
+		t.Fatalf("GetFirst failed: %v", err)
+	}
+	if first.Host != "imap.disabled.net" || first.Enabled != false {
+		t.Fatalf("expected disabled config from GetFirst, got: %+v", first)
+	}
+}

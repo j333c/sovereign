@@ -2381,7 +2381,7 @@ func (s *Server) handleGetIMAPConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cfg, err := imapStore.GetActive(r.Context())
+	cfg, err := imapStore.GetFirst(r.Context())
 	if err != nil {
 		if errors.Is(err, store.ErrIMAPConfigNotFound) {
 			s.writeJSON(w, http.StatusOK, IMAPConfigResponse{
@@ -2398,7 +2398,7 @@ func (s *Server) handleGetIMAPConfig(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		}
-		s.logger.Error("failed to get active imap config", "error", err)
+		s.logger.Error("failed to get imap config", "error", err)
 		s.writeProblem(w, http.StatusInternalServerError, "Internal Server Error", "Failed to retrieve IMAP configuration: "+err.Error(), r.URL.Path)
 		return
 	}
@@ -2408,7 +2408,7 @@ func (s *Server) handleGetIMAPConfig(w http.ResponseWriter, r *http.Request) {
 		lastPolledStr = cfg.LastPolledAt.UTC().Format(time.RFC3339)
 	}
 
-	connected := cfg.LastError == "" && cfg.LastPolledAt != nil
+	connected := cfg.Enabled && cfg.LastError == "" && cfg.LastPolledAt != nil
 
 	resp := IMAPConfigResponse{
 		ID:           cfg.ID,
@@ -2525,7 +2525,7 @@ func (s *Server) handleSaveIMAPConfig(w http.ResponseWriter, r *http.Request) {
 		Folder:     configToSave.Folder,
 		SSLEnabled: configToSave.SSLEnabled,
 		Enabled:    configToSave.Enabled,
-		Connected:  true,
+		Connected:  configToSave.Enabled && configToSave.LastError == "" && configToSave.LastPolledAt != nil,
 		LastError:  "",
 	}
 
@@ -2567,7 +2567,7 @@ func (s *Server) handleTestIMAPConnection(w http.ResponseWriter, r *http.Request
 	passwordToTest := req.Password
 	if passwordToTest == "" || passwordToTest == "********" {
 		if imapStore != nil {
-			if active, err := imapStore.GetActive(r.Context()); err == nil && active != nil {
+			if active, err := imapStore.GetFirst(r.Context()); err == nil && active != nil {
 				passwordToTest = active.Password
 			}
 		}
@@ -2616,6 +2616,11 @@ func (s *Server) handleTestIMAPConnection(w http.ResponseWriter, r *http.Request
 		}
 		s.writeProblem(w, http.StatusBadGateway, "Mailbox Connection Failed", documents.ReassuranceMailboxDisconnected, r.URL.Path)
 		return
+	}
+
+	// On successful connection test, restore Paperless health if it was degraded
+	if s.serviceMgr != nil {
+		s.serviceMgr.SetServiceHealth(supervisor.ServicePaperless, "running", "healthy", "Automatic Text Search Active · Mailbox Connected")
 	}
 
 	s.writeJSON(w, http.StatusOK, IMAPTestResponse{

@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -135,8 +136,10 @@ func (c *Client) readLine(ctx context.Context) (string, error) {
 	}
 }
 
-// quoteString properly formats an IMAP quoted string.
+// quoteString properly formats an IMAP quoted string, sanitizing any CRLF injection attempts.
 func quoteString(s string) string {
+	s = strings.ReplaceAll(s, "\r", "")
+	s = strings.ReplaceAll(s, "\n", "")
 	s = strings.ReplaceAll(s, "\\", "\\\\")
 	s = strings.ReplaceAll(s, "\"", "\\\"")
 	return "\"" + s + "\""
@@ -463,8 +466,17 @@ func ExtractAttachments(rawMsg []byte) ([]ExtractedDocument, error) {
 			if err == nil && len(decoded) > 0 {
 				detectedType, ok := DetectDocumentMagic(decoded)
 				if ok {
+					ext := ".pdf"
+					switch detectedType {
+					case "image/jpeg":
+						ext = ".jpg"
+					case "image/png":
+						ext = ".png"
+					case "image/tiff":
+						ext = ".tiff"
+					}
 					results = append(results, ExtractedDocument{
-						Filename:    "document.pdf",
+						Filename:    "document" + ext,
 						ContentType: detectedType,
 						Data:        decoded,
 					})
@@ -508,6 +520,14 @@ func parseMultipartParts(r io.Reader, boundary string, results *[]ExtractedDocum
 		}
 		if filename == "" {
 			filename = subParams["name"]
+		}
+
+		// Decode RFC 2047 encoded filenames (e.g. =?UTF-8?B?...?= or =?UTF-8?Q?...?=)
+		if strings.HasPrefix(filename, "=?") {
+			dec := new(mime.WordDecoder)
+			if decodedName, decErr := dec.DecodeHeader(filename); decErr == nil {
+				filename = decodedName
+			}
 		}
 
 		partBytes, readErr := io.ReadAll(part)
@@ -562,59 +582,11 @@ func decodeTransferEncoding(data []byte, encoding string) ([]byte, error) {
 			return r
 		}, string(data))
 
-		// Standard base64 decoding with padding tolerance
-		dec := make([]byte, len(clean))
-		n, err := base64Decode(clean, dec)
-		if err != nil {
-			return nil, err
-		}
-		return dec[:n], nil
+		return base64.StdEncoding.DecodeString(clean)
 	case "quoted-printable":
 		r := quotedprintable.NewReader(bytes.NewReader(data))
 		return io.ReadAll(r)
 	default:
 		return data, nil
 	}
-}
-
-func base64Decode(src string, dst []byte) (int, error) {
-	// Standard base64 decoding
-	return base64StdDecode(src, dst)
-}
-
-func base64StdDecode(s string, dst []byte) (int, error) {
-	var decLen int
-	var buf uint32
-	var bits uint
-	for i := 0; i < len(s); i++ {
-		c := s[i]
-		if c == '=' {
-			break
-		}
-		var val byte
-		switch {
-		case 'A' <= c && c <= 'Z':
-			val = c - 'A'
-		case 'a' <= c && c <= 'z':
-			val = c - 'a' + 26
-		case '0' <= c && c <= '9':
-			val = c - '0' + 52
-		case c == '+':
-			val = 62
-		case c == '/':
-			val = 63
-		default:
-			continue
-		}
-		buf = (buf << 6) | uint32(val)
-		bits += 6
-		if bits >= 8 {
-			bits -= 8
-			if decLen < len(dst) {
-				dst[decLen] = byte((buf >> bits) & 0xFF)
-				decLen++
-			}
-		}
-	}
-	return decLen, nil
 }

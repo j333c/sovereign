@@ -2,7 +2,7 @@
 title: 'Story 4.2: Multi-Channel Ingestion (Mobile Scanner & Automated IMAP Email Polling)'
 type: 'feature'
 created: '2026-10-16'
-status: 'review'
+status: 'done'
 route: 'dispatch'
 baseline_commit: '930d325a69c8e25c53b58ca4fe47ff9f06af319a'
 review_loop_iteration: 0
@@ -100,4 +100,30 @@ context:
 
 ## Review Triage Log
 
-*(Populated during review)*
+- **Layer 1-3 Code Review Feedback**:
+  1. `internal/documents/ingest.go`:
+     - Aligned `IngestedDocument` struct and serialization with OpenAPI `DocumentUploadResponse` (`format`, `size_bytes`, `consume_path`, `ingested_at`) while retaining backwards-compatible aliases (`path`, `size`, `target`, `content_type`, `source`).
+     - Aligned `dms.document_ingested` SSE broadcast event payload with OpenAPI `DMSDocumentIngestedEvent` schema.
+  2. `internal/documents/imap_client.go`:
+     - Added RFC 2047 header word decoding (`mime.WordDecoder`) for attachment filenames (`=?UTF-8?Q?...?=` and `B`).
+     - Refactored `decodeTransferEncoding` to use standard Go library `encoding/base64` for robust whitespace, padding, and error handling.
+     - Preserved accurate file extensions (`.jpg`, `.png`, `.tiff`) for single-part image email extractions.
+     - Sanitized CRLF in IMAP commands and quoted strings to prevent IMAP command injection.
+     - Replaced line-by-line goroutine spawning with socket read deadlines.
+  3. `internal/documents/poller.go`:
+     - Added context cancellation check `if ctx.Err() != nil` per unread message iteration.
+     - Guarded `MarkSeen` with `hasErrors`: if attachment writing to disk fails, message is not marked read, allowing safe retries.
+     - Aligned `dms.document_ingested` event broadcast with OpenAPI schema fields.
+  4. `internal/store/imap.go`:
+     - Added `GetFirst(ctx)` method so disabled configurations (`enabled: false`) are preserved in settings UI rather than returning empty values.
+     - Checked and surfaced `DecryptSecret` errors in `scanConfig` rather than silently leaving password empty.
+  5. `internal/storage/dropzone.go`:
+     - Skipped `RefreshService` when `serviceID == supervisor.ServicePaperless` to avoid spurious warning logs during document drops.
+  6. `cmd/sovereign-daemon/server.go`:
+     - Updated `handleGetIMAPConfig` to use `GetFirst` and compute `connected` flag accurately (`enabled && lastError == "" && lastPolledAt != nil`).
+     - Fixed `Connected` flag in `handleSaveIMAPConfig`.
+     - In `handleTestIMAPConnection`, restored Paperless health to `healthy` upon successful connection test.
+  7. Automated Tests:
+     - Added unit tests in `internal/documents/imap_test.go` covering RFC 2047 decoding, single-part image extraction, and OpenAPI metadata fields.
+     - Added unit test in `internal/store/imap_test.go` covering `GetFirst` with disabled config.
+     - All 89 frontend tests and 100% of Go backend tests pass cleanly.

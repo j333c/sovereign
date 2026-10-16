@@ -300,6 +300,26 @@ func (s *IMAPStore) GetActive(ctx context.Context) (*IMAPConfig, error) {
 	return cfg, nil
 }
 
+// GetFirst returns the most recently updated IMAPConfig, regardless of whether it is enabled.
+func (s *IMAPStore) GetFirst(ctx context.Context) (*IMAPConfig, error) {
+	row := s.db.QueryRowContext(ctx, `
+		SELECT id, host, port, username, password_encrypted, folder, ssl_enabled, enabled, last_polled_at, last_error, created_at, updated_at
+		FROM imap_configs
+		ORDER BY updated_at DESC
+		LIMIT 1
+	`)
+
+	cfg, err := s.scanConfig(row)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrIMAPConfigNotFound
+		}
+		return nil, fmt.Errorf("failed to query imap config: %w", err)
+	}
+
+	return cfg, nil
+}
+
 // List returns all IMAP configurations.
 func (s *IMAPStore) List(ctx context.Context) ([]*IMAPConfig, error) {
 	rows, err := s.db.QueryContext(ctx, `
@@ -382,9 +402,10 @@ func (s *IMAPStore) scanConfig(scanner rowScanner) (*IMAPConfig, error) {
 	// Decrypt password
 	if len(cfg.PasswordEncrypted) > 0 {
 		plain, err := DecryptSecret(s.key, cfg.PasswordEncrypted)
-		if err == nil {
-			cfg.Password = string(plain)
+		if err != nil {
+			return nil, fmt.Errorf("failed to decrypt stored imap password: %w", err)
 		}
+		cfg.Password = string(plain)
 	}
 
 	return &cfg, nil

@@ -562,4 +562,74 @@ func TestIngestEngine_DirectUpload(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected error on empty payload, got nil")
 	}
+
+	// 5. Verify OpenAPI fields are set
+	if doc.Format != "application/pdf" {
+		t.Errorf("expected Format 'application/pdf', got %q", doc.Format)
+	}
+	if doc.SizeBytes != int64(len(pdfData)) {
+		t.Errorf("expected SizeBytes %d, got %d", len(pdfData), doc.SizeBytes)
+	}
+	if doc.ConsumePath != doc.Path {
+		t.Errorf("expected ConsumePath %q, got %q", doc.Path, doc.ConsumePath)
+	}
+	if doc.IngestedAt == "" {
+		t.Errorf("expected IngestedAt timestamp to be populated")
+	}
+}
+
+func TestExtractAttachments_RFC2047_EncodedFilename(t *testing.T) {
+	pdfData := MakeSamplePDF("RFC 2047 invoice test")
+	b64Data := base64.StdEncoding.EncodeToString(pdfData)
+
+	boundary := "----=_Part_123_456"
+	msg := fmt.Sprintf("MIME-Version: 1.0\r\n"+
+		"Content-Type: multipart/mixed; boundary=\"%s\"\r\n"+
+		"Subject: Rechnung\r\n\r\n"+
+		"--%s\r\n"+
+		"Content-Type: text/plain; charset=UTF-8\r\n\r\n"+
+		"Please find attached your bill.\r\n"+
+		"--%s\r\n"+
+		"Content-Type: application/pdf\r\n"+
+		"Content-Disposition: attachment; filename=\"=?UTF-8?Q?Rechnung_=C3=A4_2026.pdf?=\"\r\n"+
+		"Content-Transfer-Encoding: base64\r\n\r\n"+
+		"%s\r\n"+
+		"--%s--\r\n", boundary, boundary, boundary, b64Data, boundary)
+
+	attachments, err := ExtractAttachments([]byte(msg))
+	if err != nil {
+		t.Fatalf("ExtractAttachments failed: %v", err)
+	}
+	if len(attachments) != 1 {
+		t.Fatalf("expected 1 attachment, got %d", len(attachments))
+	}
+	expectedName := "Rechnung ä 2026.pdf"
+	if attachments[0].Filename != expectedName {
+		t.Errorf("expected decoded filename %q, got %q", expectedName, attachments[0].Filename)
+	}
+}
+
+func TestExtractAttachments_SinglePartImage(t *testing.T) {
+	// Sample PNG magic bytes: 0x89 PNG \r \n 0x1a \n
+	pngData := []byte{0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52}
+	b64Data := base64.StdEncoding.EncodeToString(pngData)
+
+	msg := fmt.Sprintf("MIME-Version: 1.0\r\n"+
+		"Content-Type: image/png\r\n"+
+		"Content-Transfer-Encoding: base64\r\n\r\n"+
+		"%s\r\n", b64Data)
+
+	attachments, err := ExtractAttachments([]byte(msg))
+	if err != nil {
+		t.Fatalf("ExtractAttachments failed: %v", err)
+	}
+	if len(attachments) != 1 {
+		t.Fatalf("expected 1 attachment, got %d", len(attachments))
+	}
+	if attachments[0].Filename != "document.png" {
+		t.Errorf("expected filename 'document.png', got %q", attachments[0].Filename)
+	}
+	if attachments[0].ContentType != "image/png" {
+		t.Errorf("expected ContentType 'image/png', got %q", attachments[0].ContentType)
+	}
 }
