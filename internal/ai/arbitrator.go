@@ -427,6 +427,15 @@ func (a *GPUArbitrator) Status() ArbitratorStatus {
 	}
 }
 
+// SetIdleTimeout dynamically adjusts the idle surrender timeout.
+func (a *GPUArbitrator) SetIdleTimeout(d time.Duration) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if d > 0 {
+		a.idleTimeout = d
+	}
+}
+
 // Close stops the arbitrator background ticker.
 func (a *GPUArbitrator) Close() {
 	a.closeOnce.Do(func() {

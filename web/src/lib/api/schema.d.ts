@@ -1142,6 +1142,190 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/ai/models": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List installed AI models
+         * @description Returns all installed GGUF models with RAM/VRAM resource footprint, inference speed, FlashAttention status, and active selection.
+         */
+        get: operations["getAIModels"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/ai/models/active": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Switch active AI model
+         * @description Validates GGUF binary magic header, atomically creates active.gguf symlink, updates setting, and gracefully reloads inference engine.
+         */
+        post: operations["setActiveAIModel"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/ai/models/download": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Download GGUF model
+         * @description Initiates an atomic resumable model download with pre-flight storage reservation (+5 GB buffer) and optional SHA-256 verification.
+         */
+        post: operations["downloadAIModel"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/ai/models/downloads": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List model downloads
+         * @description Returns active and historical download jobs with transfer speed, ETA, and verification progress.
+         */
+        get: operations["getAIModelDownloads"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/ai/models/downloads/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Cancel model download
+         * @description Cancels an active model download job.
+         */
+        delete: operations["cancelAIModelDownload"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/ai/models/{filename}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Delete unmounted GGUF model
+         * @description Safely removes an inactive GGUF model from storage. Prevents deletion of the currently active model.
+         */
+        delete: operations["deleteAIModel"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/ai/settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get AI operational parameters
+         * @description Returns active model, GPU offload layers (-ngl), context window size (-c), idle surrender timeout, and telemetry footprints.
+         */
+        get: operations["getAISettings"];
+        put?: never;
+        /**
+         * Update AI operational parameters
+         * @description Updates GPU layers, context length, or idle surrender timeout with immediate effect.
+         */
+        post: operations["updateAISettings"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/ai/reload": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Reload AI inference engine
+         * @description Gracefully reloads the llama-server inference backend container and resets arbitrator state.
+         */
+        post: operations["reloadAIEngine"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/ai/logs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get scrubbed inference logs
+         * @description Returns recent operational and inference logs stripped of personal user prompts or sensitive query text.
+         */
+        get: operations["getAIInferenceLogs"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -2356,6 +2540,164 @@ export interface components {
             truncated: boolean;
             /** @example  */
             notice?: string;
+        };
+        AIModelInfo: {
+            /** @example qwen2.5-7b.gguf */
+            filename: string;
+            /** @example qwen2.5-7b */
+            name: string;
+            /** @example /data/models/qwen2.5-7b.gguf */
+            path: string;
+            /**
+             * Format: int64
+             * @example 4684534880
+             */
+            size_bytes: number;
+            /**
+             * Format: date-time
+             * @example 2026-10-16T20:00:00Z
+             */
+            modified_at: string;
+            /** @example true */
+            is_active: boolean;
+            /** @example true */
+            valid: boolean;
+            /**
+             * Format: int64
+             * @example 1288490188
+             */
+            ram_usage_bytes: number;
+            /**
+             * Format: int64
+             * @example 4684534880
+             */
+            vram_usage_bytes: number;
+            /** @example 42.5 */
+            tokens_per_sec: number;
+            /** @example true */
+            flash_attention: boolean;
+            header?: {
+                magic?: number[];
+                /** @example 3 */
+                version?: number;
+                /** @example 338 */
+                tensor_count?: number;
+                /** @example 28 */
+                metadata_kv_count?: number;
+            };
+        };
+        AIModelsResponse: {
+            models: components["schemas"]["AIModelInfo"][];
+            /** @example qwen2.5-7b.gguf */
+            active_model: string;
+        };
+        AIModelDownloadRequest: {
+            /** @example https://huggingface.co/Qwen/Qwen2.5-7B-Instruct-GGUF/resolve/main/qwen2.5-7b-instruct-q4_k_m.gguf */
+            url: string;
+            /** @example qwen2.5-7b-instruct-q4_k_m.gguf */
+            filename?: string;
+            /** @example e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855 */
+            sha256?: string;
+        };
+        AIModelDownloadProgress: {
+            /** @example dl-1729112400000000000 */
+            id: string;
+            /** @example https://huggingface.co/Qwen/Qwen2.5-7B-Instruct-GGUF/resolve/main/qwen2.5-7b-instruct-q4_k_m.gguf */
+            url: string;
+            /** @example qwen2.5-7b-instruct-q4_k_m.gguf */
+            filename: string;
+            /**
+             * Format: int64
+             * @example 2147483648
+             */
+            bytes_downloaded: number;
+            /**
+             * Format: int64
+             * @example 4684534880
+             */
+            total_bytes: number;
+            /** @example 45.8 */
+            percent: number;
+            /**
+             * Format: int64
+             * @example 25165824
+             */
+            speed_bytes_per_sec: number;
+            /** @example 100 */
+            eta_seconds: number;
+            /**
+             * @example downloading
+             * @enum {string}
+             */
+            status: "pending" | "downloading" | "verifying" | "completed" | "cancelled" | "failed";
+            /** @example  */
+            error?: string;
+            /**
+             * Format: date-time
+             * @example 2026-10-16T20:00:00Z
+             */
+            created_at: string;
+            /** @example e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855 */
+            sha256?: string;
+        };
+        AISettingsResponse: {
+            /** @example qwen2.5-7b.gguf */
+            active_model: string;
+            /** @example 99 */
+            gpu_layers: number;
+            /** @example 4096 */
+            context_length: number;
+            /** @example 300 */
+            idle_timeout_seconds: number;
+            /** @example true */
+            flash_attention: boolean;
+            /** @example 42.5 */
+            tokens_per_sec: number;
+            /**
+             * Format: int64
+             * @example 4684534880
+             */
+            vram_usage_bytes: number;
+            /**
+             * Format: int64
+             * @example 1288490188
+             */
+            ram_usage_bytes: number;
+        };
+        AISettingsUpdateRequest: {
+            /** @example 99 */
+            gpu_layers?: number;
+            /** @example 4096 */
+            context_length?: number;
+            /** @example 300 */
+            idle_timeout_seconds?: number;
+            /** @example qwen2.5-7b.gguf */
+            active_model?: string;
+        };
+        AIInferenceLogEntry: {
+            /**
+             * Format: date-time
+             * @example 2026-10-16T20:00:00Z
+             */
+            timestamp: string;
+            /** @example INFO */
+            level: string;
+            /** @example ai-engine */
+            component: string;
+            /** @example Active model switched to qwen2.5-7b.gguf; inference engine reloaded */
+            message: string;
+            /** @example 128 */
+            tokens_generated?: number;
+            /**
+             * Format: int64
+             * @example 3012
+             */
+            duration_ms?: number;
+            /** @example 42.5 */
+            tokens_per_sec?: number;
+        };
+        AIInferenceLogsResponse: {
+            logs: components["schemas"]["AIInferenceLogEntry"][];
         };
     };
     responses: never;
@@ -4708,6 +5050,353 @@ export interface operations {
                 };
                 content: {
                     "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    getAIModels: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description List of models and active model filename. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AIModelsResponse"];
+                };
+            };
+            /** @description Model scan error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    setActiveAIModel: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @example qwen2.5-7b.gguf */
+                    filename: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Active model switched successfully. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @example ok */
+                        status?: string;
+                        /** @example qwen2.5-7b.gguf */
+                        active_model?: string;
+                        message?: string;
+                    };
+                };
+            };
+            /** @description Invalid header magic or missing filename */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Model file not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    downloadAIModel: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AIModelDownloadRequest"];
+            };
+        };
+        responses: {
+            /** @description Download accepted and background transfer initiated. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AIModelDownloadProgress"];
+                };
+            };
+            /** @description Invalid URL or parameters */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Download for this model is already running */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Insufficient storage space (model size + 5 GB safety reserve required) */
+            507: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    getAIModelDownloads: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description List of download progress entries. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        downloads?: components["schemas"]["AIModelDownloadProgress"][];
+                    };
+                };
+            };
+        };
+    };
+    cancelAIModelDownload: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Download cancelled. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @example cancelled */
+                        status?: string;
+                        id?: string;
+                    };
+                };
+            };
+            /** @description Download job not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    deleteAIModel: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                filename: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Model deleted successfully. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @example ok */
+                        status?: string;
+                        deleted?: string;
+                    };
+                };
+            };
+            /** @description Invalid model filename */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Model file not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Cannot delete currently active model */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    getAISettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current AI operational parameters and memory footprints. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AISettingsResponse"];
+                };
+            };
+        };
+    };
+    updateAISettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AISettingsUpdateRequest"];
+            };
+        };
+        responses: {
+            /** @description Updated AI parameters. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AISettingsResponse"];
+                };
+            };
+            /** @description Validation error */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    reloadAIEngine: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Backend engine reloaded successfully. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @example ok */
+                        status?: string;
+                        message?: string;
+                    };
+                };
+            };
+            /** @description Reload failed */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    getAIInferenceLogs: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description List of scrubbed inference logs. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AIInferenceLogsResponse"];
                 };
             };
         };

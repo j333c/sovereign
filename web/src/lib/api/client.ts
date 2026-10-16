@@ -65,6 +65,14 @@ export type RAGSearchResult = components["schemas"]["RAGSearchResult"];
 export type RAGSearchResponse = components["schemas"]["RAGSearchResponse"];
 export type RAGQueryRequest = components["schemas"]["RAGQueryRequest"];
 export type RAGQueryResponse = components["schemas"]["RAGQueryResponse"];
+export type AIModelInfo = components["schemas"]["AIModelInfo"];
+export type AIModelsResponse = components["schemas"]["AIModelsResponse"];
+export type AIModelDownloadRequest = components["schemas"]["AIModelDownloadRequest"];
+export type AIModelDownloadProgress = components["schemas"]["AIModelDownloadProgress"];
+export type AISettingsResponse = components["schemas"]["AISettingsResponse"];
+export type AISettingsUpdateRequest = components["schemas"]["AISettingsUpdateRequest"];
+export type AIInferenceLogEntry = components["schemas"]["AIInferenceLogEntry"];
+export type AIInferenceLogsResponse = components["schemas"]["AIInferenceLogsResponse"];
 
 
 /**
@@ -642,6 +650,94 @@ export class SovereignApiClient {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(req),
     });
+  }
+
+  /**
+   * List installed AI GGUF models.
+   */
+  async getAIModels(): Promise<AIModelsResponse> {
+    return this.request<AIModelsResponse>("/api/v1/ai/models");
+  }
+
+  /**
+   * Switch active AI GGUF model by filename.
+   */
+  async setActiveAIModel(filename: string): Promise<{ status: string; active_model: string; message?: string }> {
+    return this.request<{ status: string; active_model: string; message?: string }>("/api/v1/ai/models/active", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ filename }),
+    });
+  }
+
+  /**
+   * Initiate background model download with pre-flight storage safety check.
+   */
+  async downloadAIModel(req: AIModelDownloadRequest): Promise<AIModelDownloadProgress> {
+    return this.request<AIModelDownloadProgress>("/api/v1/ai/models/download", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(req),
+    });
+  }
+
+  /**
+   * List active and past model downloads.
+   */
+  async getAIModelDownloads(): Promise<{ downloads: AIModelDownloadProgress[] }> {
+    return this.request<{ downloads: AIModelDownloadProgress[] }>("/api/v1/ai/models/downloads");
+  }
+
+  /**
+   * Cancel an active model download by ID.
+   */
+  async cancelAIModelDownload(id: string): Promise<{ status: string; id: string }> {
+    return this.request<{ status: string; id: string }>(`/api/v1/ai/models/downloads/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    });
+  }
+
+  /**
+   * Delete an unmounted GGUF model from storage.
+   */
+  async deleteAIModel(filename: string): Promise<{ status: string; deleted: string }> {
+    return this.request<{ status: string; deleted: string }>(`/api/v1/ai/models/${encodeURIComponent(filename)}`, {
+      method: "DELETE",
+    });
+  }
+
+  /**
+   * Get AI operational parameters and memory footprints.
+   */
+  async getAISettings(): Promise<AISettingsResponse> {
+    return this.request<AISettingsResponse>("/api/v1/ai/settings");
+  }
+
+  /**
+   * Update AI operational parameters (gpu_layers, context_length, idle_timeout_seconds).
+   */
+  async updateAISettings(req: AISettingsUpdateRequest): Promise<AISettingsResponse> {
+    return this.request<AISettingsResponse>("/api/v1/ai/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(req),
+    });
+  }
+
+  /**
+   * Trigger graceful reload of the AI inference engine container.
+   */
+  async reloadAIEngine(): Promise<{ status: string; message: string }> {
+    return this.request<{ status: string; message: string }>("/api/v1/ai/reload", {
+      method: "POST",
+    });
+  }
+
+  /**
+   * Get scrubbed recent inference logs.
+   */
+  async getAIInferenceLogs(): Promise<AIInferenceLogsResponse> {
+    return this.request<AIInferenceLogsResponse>("/api/v1/ai/logs");
   }
 
   /**

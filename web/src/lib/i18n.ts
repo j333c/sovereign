@@ -102,6 +102,74 @@ export interface DashboardTranslations {
   uploading: string;
   uploadSuccess: string;
   onlyMediaAccepted: string;
+  settingsTitle: string;
+  backToDashboard: string;
+  tabGeneral: string;
+  tabServices: string;
+  tabAI: string;
+  tabSystem: string;
+  aiEngineTitle: string;
+  aiEngineSubtitle: string;
+  flashAttentionPill: string;
+  defaultSetupBadge: string;
+  cpuOptimizedBadge: string;
+  activeModelCardTitle: string;
+  ramFootprint: string;
+  vramFootprint: string;
+  inferenceSpeed: string;
+  tokensPerSec: string;
+  noActiveModel: string;
+  installedModelsTitle: string;
+  modelNameCol: string;
+  modelSizeCol: string;
+  modelModifiedCol: string;
+  modelStatusCol: string;
+  modelActionsCol: string;
+  activateModel: string;
+  activatingModel: string;
+  activeBadge: string;
+  deleteModel: string;
+  confirmDeleteModel: string;
+  noModelsInstalled: string;
+  downloadManagerTitle: string;
+  downloadManagerSubtitle: string;
+  modelUrlLabel: string;
+  modelUrlPlaceholder: string;
+  sha256Label: string;
+  sha256Placeholder: string;
+  customFilenameLabel: string;
+  startDownload: string;
+  downloadingState: string;
+  storageWarning: string;
+  cancelDownload: string;
+  downloadSpeed: string;
+  downloadETA: string;
+  generationPresetLabel: string;
+  presetPrecise: string;
+  presetBalanced: string;
+  presetCreative: string;
+  contextLengthLabel: string;
+  contextLengthDesc: string;
+  gpuLayersLabel: string;
+  gpuLayersDesc: string;
+  cpuOnlyLocked: string;
+  idleTimeoutLabel: string;
+  idleTimeoutDesc: string;
+  reloadEngine: string;
+  reloadingEngine: string;
+  reloadSuccess: string;
+  viewInferenceLogs: string;
+  logsModalTitle: string;
+  logsModalDesc: string;
+  noLogsRecorded: string;
+  logTimestamp: string;
+  logPromptTokens: string;
+  logCompletionTokens: string;
+  logLatency: string;
+  logSpeed: string;
+  logStatus: string;
+  logError: string;
+  closeLogs: string;
 }
 
 export const translations: Record<Language, DashboardTranslations> = {
@@ -207,6 +275,74 @@ export const translations: Record<Language, DashboardTranslations> = {
     uploading: "Uploading...",
     uploadSuccess: "Media uploaded successfully and added to your library.",
     onlyMediaAccepted: "Only media files are accepted. Please upload video or audio files.",
+    settingsTitle: "Appliance Settings",
+    backToDashboard: "Back to Dashboard",
+    tabGeneral: "General",
+    tabServices: "Services & Add-ons",
+    tabAI: "AI Backend & Models",
+    tabSystem: "System & Hardware",
+    aiEngineTitle: "AI Inference Engine (llama.cpp)",
+    aiEngineSubtitle: "Administer local GGUF models, tune GPU offload, and inspect inference telemetry.",
+    flashAttentionPill: "FlashAttention Active · KV Cache Optimized",
+    defaultSetupBadge: "Default Setup Active",
+    cpuOptimizedBadge: "CPU-Optimized Mode Active",
+    activeModelCardTitle: "Active Model",
+    ramFootprint: "RAM Footprint",
+    vramFootprint: "VRAM Footprint",
+    inferenceSpeed: "Inference Speed",
+    tokensPerSec: "tokens/sec",
+    noActiveModel: "No Model Loaded",
+    installedModelsTitle: "Installed Models",
+    modelNameCol: "Model Name",
+    modelSizeCol: "Size",
+    modelModifiedCol: "Modified",
+    modelStatusCol: "Status",
+    modelActionsCol: "Actions",
+    activateModel: "Activate",
+    activatingModel: "Activating...",
+    activeBadge: "Active",
+    deleteModel: "Delete",
+    confirmDeleteModel: "Are you sure you want to delete this model?",
+    noModelsInstalled: "No GGUF models installed. Download a model below to enable local AI.",
+    downloadManagerTitle: "Download New Model",
+    downloadManagerSubtitle: "Resumable background download with SHA-256 verification and storage safety checks.",
+    modelUrlLabel: "Model Download URL (.gguf)",
+    modelUrlPlaceholder: "https://huggingface.co/.../model.gguf",
+    sha256Label: "Optional SHA-256 Checksum",
+    sha256Placeholder: "64-character hex checksum (optional)",
+    customFilenameLabel: "Custom Filename (optional)",
+    startDownload: "Download Model",
+    downloadingState: "Downloading...",
+    storageWarning: "Insufficient storage: {modelSize} model requires at least {requiredSpace} free space (5 GB system safety reserve).",
+    cancelDownload: "Cancel Download",
+    downloadSpeed: "Speed",
+    downloadETA: "ETA",
+    generationPresetLabel: "Generation Intent Preset",
+    presetPrecise: "Precise & Factual",
+    presetBalanced: "Balanced Assistant",
+    presetCreative: "Creative Drafting",
+    contextLengthLabel: "Context Window Size",
+    contextLengthDesc: "Maximum conversation and document memory length (KV-cache memory: ~{mem}).",
+    gpuLayersLabel: "GPU Layer Offload (-ngl)",
+    gpuLayersDesc: "Transformer layers offloaded to GPU VRAM.",
+    cpuOnlyLocked: "Locked to CPU (No dedicated GPU detected)",
+    idleTimeoutLabel: "Dynamic Idle Surrender Timeout",
+    idleTimeoutDesc: "Release GPU memory after {minutes} minutes of inactivity (reserves VRAM for video streaming).",
+    reloadEngine: "Reload Backend Engine",
+    reloadingEngine: "Reloading Engine...",
+    reloadSuccess: "AI engine reloaded successfully.",
+    viewInferenceLogs: "View Inference Logs",
+    logsModalTitle: "Scrubbed AI Inference Logs",
+    logsModalDesc: "Recent inference queries. Prompts and personal data are strictly redacted for privacy.",
+    noLogsRecorded: "No inference queries recorded yet.",
+    logTimestamp: "Timestamp",
+    logPromptTokens: "Prompt Tokens",
+    logCompletionTokens: "Completion Tokens",
+    logLatency: "Latency",
+    logSpeed: "Speed",
+    logStatus: "Status",
+    logError: "Error",
+    closeLogs: "Close",
   },
   de: {
     crestTitle: "Sovereign",
@@ -310,6 +446,74 @@ export const translations: Record<Language, DashboardTranslations> = {
     uploading: "Wird hochgeladen...",
     uploadSuccess: "Mediendatei erfolgreich hochgeladen und zur Bibliothek hinzugefügt.",
     onlyMediaAccepted: "Es werden nur Mediendateien akzeptiert. Bitte lade Video- oder Audiodateien hoch.",
+    settingsTitle: "Appliance-Einstellungen",
+    backToDashboard: "Zurück zum Dashboard",
+    tabGeneral: "Allgemein",
+    tabServices: "Dienste & Add-ons",
+    tabAI: "KI-Backend & Modelle",
+    tabSystem: "System & Hardware",
+    aiEngineTitle: "KI-Inferenz-Engine (llama.cpp)",
+    aiEngineSubtitle: "Lokale GGUF-Modelle verwalten, GPU-Offloading anpassen und Inferenz-Telemetrie prüfen.",
+    flashAttentionPill: "FlashAttention aktiv · KV-Cache optimiert",
+    defaultSetupBadge: "Standardkonfiguration aktiv",
+    cpuOptimizedBadge: "CPU-optimierter Modus aktiv",
+    activeModelCardTitle: "Aktives Modell",
+    ramFootprint: "RAM-Bedarf",
+    vramFootprint: "VRAM-Bedarf",
+    inferenceSpeed: "Inferenzgeschwindigkeit",
+    tokensPerSec: "Tokens/Sek.",
+    noActiveModel: "Kein Modell geladen",
+    installedModelsTitle: "Installierte Modelle",
+    modelNameCol: "Modellname",
+    modelSizeCol: "Größe",
+    modelModifiedCol: "Geändert",
+    modelStatusCol: "Status",
+    modelActionsCol: "Aktionen",
+    activateModel: "Aktivieren",
+    activatingModel: "Wird aktiviert...",
+    activeBadge: "Aktiv",
+    deleteModel: "Löschen",
+    confirmDeleteModel: "Möchten Sie dieses Modell wirklich löschen?",
+    noModelsInstalled: "Keine GGUF-Modelle installiert. Laden Sie unten ein Modell herunter, um lokale KI zu aktivieren.",
+    downloadManagerTitle: "Neues Modell herunterladen",
+    downloadManagerSubtitle: "Fortsetzbarer Hintergrund-Download mit SHA-256-Prüfung und Speicher-Sicherheitsabfrage.",
+    modelUrlLabel: "Modell-Download-URL (.gguf)",
+    modelUrlPlaceholder: "https://huggingface.co/.../model.gguf",
+    sha256Label: "Optionale SHA-256-Prüfsumme",
+    sha256Placeholder: "64-stellige Hex-Prüfsumme (optional)",
+    customFilenameLabel: "Benutzerdefinierter Dateiname (optional)",
+    startDownload: "Modell herunterladen",
+    downloadingState: "Wird heruntergeladen...",
+    storageWarning: "Nicht genügend Speicherplatz: {modelSize} Modell erfordert mindestens {requiredSpace} freien Speicher (5 GB Sicherheitsreserve).",
+    cancelDownload: "Download abbrechen",
+    downloadSpeed: "Geschwindigkeit",
+    downloadETA: "Verbleibend",
+    generationPresetLabel: "Generierungs-Voreinstellung",
+    presetPrecise: "Präzise & Faktisch",
+    presetBalanced: "Ausgewogener Assistent",
+    presetCreative: "Kreatives Formulieren",
+    contextLengthLabel: "Kontextfenster-Größe",
+    contextLengthDesc: "Maximale Konversations- und Dokumentenspeicherlänge (KV-Cache-Speicher: ~{mem}).",
+    gpuLayersLabel: "GPU-Ebenen-Offload (-ngl)",
+    gpuLayersDesc: "In den GPU-VRAM ausgelagerte Transformer-Schichten.",
+    cpuOnlyLocked: "Auf CPU beschränkt (Keine dedizierte GPU erkannt)",
+    idleTimeoutLabel: "Dynamischer Leerlauf-Timeout",
+    idleTimeoutDesc: "Gibt den GPU-Speicher nach {minutes} Minuten Inaktivität frei (reserviert VRAM für Videostreaming).",
+    reloadEngine: "Backend-Engine neu laden",
+    reloadingEngine: "Engine wird neu geladen...",
+    reloadSuccess: "KI-Engine erfolgreich neu geladen.",
+    viewInferenceLogs: "Inferenz-Protokolle anzeigen",
+    logsModalTitle: "Bereinigte KI-Inferenzprotokolle",
+    logsModalDesc: "Kürzliche Inferenzanfragen. Prompts und persönliche Daten werden zum Schutz der Privatsphäre streng geschwärzt.",
+    noLogsRecorded: "Noch keine Inferenzabfragen aufgezeichnet.",
+    logTimestamp: "Zeitstempel",
+    logPromptTokens: "Prompt-Tokens",
+    logCompletionTokens: "Antwort-Tokens",
+    logLatency: "Latenz",
+    logSpeed: "Geschwindigkeit",
+    logStatus: "Status",
+    logError: "Fehler",
+    closeLogs: "Schließen",
   },
   es: {
     crestTitle: "Sovereign",
@@ -413,6 +617,74 @@ export const translations: Record<Language, DashboardTranslations> = {
     uploading: "Subiendo...",
     uploadSuccess: "Archivo subido correctamente y añadido a tu biblioteca.",
     onlyMediaAccepted: "Solo se aceptan archivos multimedia. Sube archivos de vídeo o audio.",
+    settingsTitle: "Configuración del electrodoméstico",
+    backToDashboard: "Volver al panel",
+    tabGeneral: "General",
+    tabServices: "Servicios y complementos",
+    tabAI: "Backend de IA y modelos",
+    tabSystem: "Sistema y hardware",
+    aiEngineTitle: "Motor de inferencia de IA (llama.cpp)",
+    aiEngineSubtitle: "Administre modelos GGUF locales, ajuste la descarga de GPU e inspeccione la telemetría de inferencia.",
+    flashAttentionPill: "FlashAttention activo · KV Cache optimizado",
+    defaultSetupBadge: "Configuración predeterminada activa",
+    cpuOptimizedBadge: "Modo optimizado para CPU activo",
+    activeModelCardTitle: "Modelo activo",
+    ramFootprint: "Huella de RAM",
+    vramFootprint: "Huella de VRAM",
+    inferenceSpeed: "Velocidad de inferencia",
+    tokensPerSec: "tokens/s",
+    noActiveModel: "Ningún modelo cargado",
+    installedModelsTitle: "Modelos instalados",
+    modelNameCol: "Nombre del modelo",
+    modelSizeCol: "Tamaño",
+    modelModifiedCol: "Modificado",
+    modelStatusCol: "Estado",
+    modelActionsCol: "Acciones",
+    activateModel: "Activar",
+    activatingModel: "Activando...",
+    activeBadge: "Activo",
+    deleteModel: "Eliminar",
+    confirmDeleteModel: "¿Seguro que desea eliminar este modelo?",
+    noModelsInstalled: "No hay modelos GGUF instalados. Descargue un modelo a continuación para habilitar la IA local.",
+    downloadManagerTitle: "Descargar nuevo modelo",
+    downloadManagerSubtitle: "Descarga en segundo plano reanudable con verificación SHA-256 y comprobación de seguridad de almacenamiento.",
+    modelUrlLabel: "URL de descarga del modelo (.gguf)",
+    modelUrlPlaceholder: "https://huggingface.co/.../model.gguf",
+    sha256Label: "Suma de comprobación SHA-256 opcional",
+    sha256Placeholder: "Suma hexadecimal de 64 caracteres (opcional)",
+    customFilenameLabel: "Nombre de archivo personalizado (opcional)",
+    startDownload: "Descargar modelo",
+    downloadingState: "Descargando...",
+    storageWarning: "Espacio insuficiente: el modelo de {modelSize} requiere al menos {requiredSpace} de espacio libre (reserva de seguridad de 5 GB).",
+    cancelDownload: "Cancelar descarga",
+    downloadSpeed: "Velocidad",
+    downloadETA: "Tiempo restante",
+    generationPresetLabel: "Preajuste de intención de generación",
+    presetPrecise: "Preciso y factual",
+    presetBalanced: "Asistente equilibrado",
+    presetCreative: "Redacción creativa",
+    contextLengthLabel: "Tamaño de la ventana de contexto",
+    contextLengthDesc: "Longitud máxima de memoria de conversación y documentos (memoria de caché KV: ~{mem}).",
+    gpuLayersLabel: "Descarga de capas en GPU (-ngl)",
+    gpuLayersDesc: "Capas del transformador descargadas a la memoria VRAM de la GPU.",
+    cpuOnlyLocked: "Bloqueado en CPU (No se detectó GPU dedicada)",
+    idleTimeoutLabel: "Tiempo de espera de inactividad dinámico",
+    idleTimeoutDesc: "Libera la memoria de la GPU tras {minutes} minutos de inactividad (reserva VRAM para streaming de vídeo).",
+    reloadEngine: "Recargar motor de backend",
+    reloadingEngine: "Recargando motor...",
+    reloadSuccess: "Motor de IA recargado con éxito.",
+    viewInferenceLogs: "Ver registros de inferencia",
+    logsModalTitle: "Registros de inferencia de IA depurados",
+    logsModalDesc: "Consultas de inferencia recientes. Las instrucciones y datos personales están estrictamente censurados.",
+    noLogsRecorded: "Aún no se han registrado consultas de inferencia.",
+    logTimestamp: "Marca de tiempo",
+    logPromptTokens: "Tokens de entrada",
+    logCompletionTokens: "Tokens de finalización",
+    logLatency: "Latencia",
+    logSpeed: "Velocidad",
+    logStatus: "Estado",
+    logError: "Error",
+    closeLogs: "Cerrar",
   },
   fr: {
     crestTitle: "Sovereign",
@@ -516,5 +788,73 @@ export const translations: Record<Language, DashboardTranslations> = {
     uploading: "Téléversement...",
     uploadSuccess: "Fichier téléversé avec succès et ajouté à votre bibliothèque.",
     onlyMediaAccepted: "Seuls les fichiers multimédias sont acceptés. Veuillez envoyer des fichiers vidéo ou audio.",
+    settingsTitle: "Paramètres de l'appareil",
+    backToDashboard: "Retour au tableau de bord",
+    tabGeneral: "Général",
+    tabServices: "Services et extensions",
+    tabAI: "Moteur IA et modèles",
+    tabSystem: "Système et matériel",
+    aiEngineTitle: "Moteur d'inférence IA (llama.cpp)",
+    aiEngineSubtitle: "Gérer les modèles GGUF locaux, ajuster le déchargement GPU et inspecter la télémétrie d'inférence.",
+    flashAttentionPill: "FlashAttention actif · Cache KV optimisé",
+    defaultSetupBadge: "Configuration par défaut active",
+    cpuOptimizedBadge: "Mode optimisé CPU actif",
+    activeModelCardTitle: "Modèle actif",
+    ramFootprint: "Empreinte RAM",
+    vramFootprint: "Empreinte VRAM",
+    inferenceSpeed: "Vitesse d'inférence",
+    tokensPerSec: "tokens/s",
+    noActiveModel: "Aucun modèle chargé",
+    installedModelsTitle: "Modèles installés",
+    modelNameCol: "Nom du modèle",
+    modelSizeCol: "Taille",
+    modelModifiedCol: "Modifié",
+    modelStatusCol: "État",
+    modelActionsCol: "Actions",
+    activateModel: "Activer",
+    activatingModel: "Activation...",
+    activeBadge: "Actif",
+    deleteModel: "Supprimer",
+    confirmDeleteModel: "Êtes-vous sûr de vouloir supprimer ce modèle ?",
+    noModelsInstalled: "Aucun modèle GGUF installé. Téléchargez un modèle ci-dessous pour activer l'IA locale.",
+    downloadManagerTitle: "Télécharger un nouveau modèle",
+    downloadManagerSubtitle: "Téléchargement en arrière-plan reprenable avec vérification SHA-256 et contrôle de sécurité du stockage.",
+    modelUrlLabel: "URL de téléchargement du modèle (.gguf)",
+    modelUrlPlaceholder: "https://huggingface.co/.../model.gguf",
+    sha256Label: "Somme de contrôle SHA-256 facultative",
+    sha256Placeholder: "Somme hexadécimale de 64 caractères (facultatif)",
+    customFilenameLabel: "Nom de fichier personnalisé (facultatif)",
+    startDownload: "Télécharger le modèle",
+    downloadingState: "Téléchargement...",
+    storageWarning: "Espace insuffisant : le modèle de {modelSize} nécessite au moins {requiredSpace} d'espace libre (réserve de sécurité de 5 Go).",
+    cancelDownload: "Annuler le téléchargement",
+    downloadSpeed: "Vitesse",
+    downloadETA: "Temps restant",
+    generationPresetLabel: "Préréglage d'intention de génération",
+    presetPrecise: "Précis et factuel",
+    presetBalanced: "Assistant équilibré",
+    presetCreative: "Rédaction créative",
+    contextLengthLabel: "Taille de la fenêtre de contexte",
+    contextLengthDesc: "Longueur maximale de la mémoire de conversation et de documents (mémoire cache KV : ~{mem}).",
+    gpuLayersLabel: "Déchargement des couches sur GPU (-ngl)",
+    gpuLayersDesc: "Couches de transformateur déchargées dans la VRAM du GPU.",
+    cpuOnlyLocked: "Verrouillé sur CPU (Aucun GPU dédié détecté)",
+    idleTimeoutLabel: "Délai d'inactivité dynamique",
+    idleTimeoutDesc: "Libère la mémoire du GPU après {minutes} minutes d'inactivité (réserve la VRAM pour le streaming vidéo).",
+    reloadEngine: "Recharger le moteur backend",
+    reloadingEngine: "Rechargement du moteur...",
+    reloadSuccess: "Moteur IA rechargé avec succès.",
+    viewInferenceLogs: "Afficher les journaux d'inférence",
+    logsModalTitle: "Journaux d'inférence IA épurés",
+    logsModalDesc: "Requêtes d'inférence récentes. Les invites et données personnelles sont strictement masquées.",
+    noLogsRecorded: "Aucune requête d'inférence enregistrée pour le moment.",
+    logTimestamp: "Horodatage",
+    logPromptTokens: "Tokens d'invite",
+    logCompletionTokens: "Tokens de complétion",
+    logLatency: "Latence",
+    logSpeed: "Vitesse",
+    logStatus: "État",
+    logError: "Erreur",
+    closeLogs: "Fermer",
   },
 };

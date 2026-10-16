@@ -1564,6 +1564,236 @@ describe("SovereignApiClient", () => {
     assert.equal(queryRes.citations[0].page_number, 4);
     assert.equal(queryRes.truncated, false);
   });
+
+  it("successfully calls getAIModels, setActiveAIModel, and deleteAIModel", async () => {
+    const mockModels = {
+      models: [
+        {
+          filename: "qwen2.5-7b.gguf",
+          name: "qwen2.5-7b",
+          path: "/data/models/qwen2.5-7b.gguf",
+          size_bytes: 4684534880,
+          modified_at: "2026-10-16T20:00:00Z",
+          is_active: true,
+          valid: true,
+          ram_usage_bytes: 1288490188,
+          vram_usage_bytes: 4684534880,
+          tokens_per_sec: 42.5,
+          flash_attention: true,
+        },
+        {
+          filename: "llama3-8b.gguf",
+          name: "llama3-8b",
+          path: "/data/models/llama3-8b.gguf",
+          size_bytes: 4920000000,
+          modified_at: "2026-10-16T19:00:00Z",
+          is_active: false,
+          valid: true,
+          ram_usage_bytes: 0,
+          vram_usage_bytes: 0,
+          tokens_per_sec: 0,
+          flash_attention: true,
+        },
+      ],
+      active_model: "qwen2.5-7b.gguf",
+    };
+
+    const mockFetch: typeof fetch = async (input, init) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+
+      if (url === "http://localhost:8080/api/v1/ai/models" && (!init?.method || init.method === "GET")) {
+        return new Response(JSON.stringify(mockModels), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+
+      if (url === "http://localhost:8080/api/v1/ai/models/active" && init?.method === "POST") {
+        const body = JSON.parse(init.body as string);
+        return new Response(
+          JSON.stringify({
+            status: "ok",
+            active_model: body.filename,
+            message: `Switched to ${body.filename}`,
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+
+      if (url === "http://localhost:8080/api/v1/ai/models/llama3-8b.gguf" && init?.method === "DELETE") {
+        return new Response(
+          JSON.stringify({ status: "ok", deleted: "llama3-8b.gguf" }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+
+      return new Response("Not found", { status: 404 });
+    };
+
+    const client = new SovereignApiClient({
+      baseUrl: "http://localhost:8080",
+      fetchFn: mockFetch,
+    });
+
+    const res = await client.getAIModels();
+    assert.equal(res.active_model, "qwen2.5-7b.gguf");
+    assert.equal(res.models.length, 2);
+    assert.equal(res.models[0].flash_attention, true);
+
+    const switchRes = await client.setActiveAIModel("llama3-8b.gguf");
+    assert.equal(switchRes.status, "ok");
+    assert.equal(switchRes.active_model, "llama3-8b.gguf");
+
+    const delRes = await client.deleteAIModel("llama3-8b.gguf");
+    assert.equal(delRes.status, "ok");
+    assert.equal(delRes.deleted, "llama3-8b.gguf");
+  });
+
+  it("successfully calls downloadAIModel, getAIModelDownloads, and cancelAIModelDownload", async () => {
+    const mockProgress = {
+      id: "dl-12345",
+      url: "https://example.com/model.gguf",
+      filename: "model.gguf",
+      bytes_downloaded: 1000000,
+      total_bytes: 4000000,
+      percent: 25.0,
+      speed_bytes_per_sec: 500000,
+      eta_seconds: 6,
+      status: "downloading",
+      created_at: "2026-10-16T20:00:00Z",
+    };
+
+    const mockFetch: typeof fetch = async (input, init) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+
+      if (url === "http://localhost:8080/api/v1/ai/models/download" && init?.method === "POST") {
+        return new Response(JSON.stringify(mockProgress), {
+          status: 202,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+
+      if (url === "http://localhost:8080/api/v1/ai/models/downloads" && (!init?.method || init.method === "GET")) {
+        return new Response(JSON.stringify({ downloads: [mockProgress] }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+
+      if (url === "http://localhost:8080/api/v1/ai/models/downloads/dl-12345" && init?.method === "DELETE") {
+        return new Response(JSON.stringify({ status: "cancelled", id: "dl-12345" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+
+      return new Response("Not found", { status: 404 });
+    };
+
+    const client = new SovereignApiClient({
+      baseUrl: "http://localhost:8080",
+      fetchFn: mockFetch,
+    });
+
+    const dlRes = await client.downloadAIModel({
+      url: "https://example.com/model.gguf",
+      filename: "model.gguf",
+    });
+    assert.equal(dlRes.id, "dl-12345");
+    assert.equal(dlRes.status, "downloading");
+
+    const listRes = await client.getAIModelDownloads();
+    assert.equal(listRes.downloads.length, 1);
+    assert.equal(listRes.downloads[0].percent, 25.0);
+
+    const cancelRes = await client.cancelAIModelDownload("dl-12345");
+    assert.equal(cancelRes.status, "cancelled");
+  });
+
+  it("successfully calls getAISettings, updateAISettings, reloadAIEngine, and getAIInferenceLogs", async () => {
+    const mockSettings = {
+      active_model: "qwen2.5-7b.gguf",
+      gpu_layers: 99,
+      context_length: 4096,
+      idle_timeout_seconds: 300,
+      flash_attention: true,
+      tokens_per_sec: 42.5,
+      vram_usage_bytes: 4684534880,
+      ram_usage_bytes: 1288490188,
+    };
+
+    const mockLogs = {
+      logs: [
+        {
+          timestamp: "2026-10-16T20:00:00Z",
+          level: "INFO",
+          component: "ai-engine",
+          message: "Active model switched to qwen2.5-7b.gguf; inference engine reloaded",
+          tokens_per_sec: 42.5,
+        },
+      ],
+    };
+
+    const mockFetch: typeof fetch = async (input, init) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+
+      if (url === "http://localhost:8080/api/v1/ai/settings" && (!init?.method || init.method === "GET")) {
+        return new Response(JSON.stringify(mockSettings), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+
+      if (url === "http://localhost:8080/api/v1/ai/settings" && init?.method === "POST") {
+        const body = JSON.parse(init.body as string);
+        return new Response(
+          JSON.stringify({ ...mockSettings, ...body }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+
+      if (url === "http://localhost:8080/api/v1/ai/reload" && init?.method === "POST") {
+        return new Response(
+          JSON.stringify({ status: "ok", message: "AI engine reloaded" }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+
+      if (url === "http://localhost:8080/api/v1/ai/logs" && (!init?.method || init.method === "GET")) {
+        return new Response(JSON.stringify(mockLogs), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+
+      return new Response("Not found", { status: 404 });
+    };
+
+    const client = new SovereignApiClient({
+      baseUrl: "http://localhost:8080",
+      fetchFn: mockFetch,
+    });
+
+    const settings = await client.getAISettings();
+    assert.equal(settings.active_model, "qwen2.5-7b.gguf");
+    assert.equal(settings.gpu_layers, 99);
+
+    const updated = await client.updateAISettings({
+      gpu_layers: 50,
+      context_length: 8192,
+      idle_timeout_seconds: 600,
+    });
+    assert.equal(updated.gpu_layers, 50);
+    assert.equal(updated.context_length, 8192);
+    assert.equal(updated.idle_timeout_seconds, 600);
+
+    const reloadRes = await client.reloadAIEngine();
+    assert.equal(reloadRes.status, "ok");
+
+    const logsRes = await client.getAIInferenceLogs();
+    assert.equal(logsRes.logs.length, 1);
+    assert.equal(logsRes.logs[0].level, "INFO");
+  });
 });
 
 

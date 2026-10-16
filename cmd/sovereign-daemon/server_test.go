@@ -6080,6 +6080,240 @@ func TestServer_RAG_SafeStub_WhenNoModel(t *testing.T) {
 	}
 }
 
+func TestServer_AI_Models_ListAndActive(t *testing.T) {
+	srv, tmpDir := setupTestServer(t)
+	defer srv.Close()
+
+	modelsDir := filepath.Join(tmpDir, "models")
+	_ = os.MkdirAll(modelsDir, 0755)
+
+	createMockGGUFFile(t, modelsDir, "qwen2.5-7b.gguf", 3)
+	createMockGGUFFile(t, modelsDir, "llama3-8b.gguf", 3)
+	_ = os.Symlink("qwen2.5-7b.gguf", filepath.Join(modelsDir, "active.gguf"))
+
+	// 1. GET /api/v1/ai/models
+	reqList := httptest.NewRequest(http.MethodGet, "/api/v1/ai/models", nil)
+	wList := httptest.NewRecorder()
+	srv.router.ServeHTTP(wList, reqList)
+
+	if wList.Code != http.StatusOK {
+		t.Fatalf("expected HTTP 200 from GET /api/v1/ai/models, got %d: %s", wList.Code, wList.Body.String())
+	}
+
+	var listResp ai.AIModelsResponse
+	if err := json.Unmarshal(wList.Body.Bytes(), &listResp); err != nil {
+		t.Fatalf("failed to decode models response: %v", err)
+	}
+
+	if listResp.ActiveModel != "qwen2.5-7b.gguf" {
+		t.Errorf("expected active model 'qwen2.5-7b.gguf', got %q", listResp.ActiveModel)
+	}
+	if len(listResp.Models) != 2 {
+		t.Fatalf("expected 2 models, got %d", len(listResp.Models))
+	}
+
+	// 2. POST /api/v1/ai/models/active with non-existent model -> 404
+	missingPayload := `{"filename": "missing.gguf"}`
+	reqMissing := httptest.NewRequest(http.MethodPost, "/api/v1/ai/models/active", strings.NewReader(missingPayload))
+	reqMissing.Header.Set("Content-Type", "application/json")
+	wMissing := httptest.NewRecorder()
+	srv.router.ServeHTTP(wMissing, reqMissing)
+
+	if wMissing.Code != http.StatusNotFound {
+		t.Errorf("expected HTTP 404 for missing model, got %d: %s", wMissing.Code, wMissing.Body.String())
+	}
+
+	// 3. POST /api/v1/ai/models/active with valid model -> 200
+	switchPayload := `{"filename": "llama3-8b.gguf"}`
+	reqSwitch := httptest.NewRequest(http.MethodPost, "/api/v1/ai/models/active", strings.NewReader(switchPayload))
+	reqSwitch.Header.Set("Content-Type", "application/json")
+	wSwitch := httptest.NewRecorder()
+	srv.router.ServeHTTP(wSwitch, reqSwitch)
+
+	if wSwitch.Code != http.StatusOK {
+		t.Fatalf("expected HTTP 200 for model switch, got %d: %s", wSwitch.Code, wSwitch.Body.String())
+	}
+
+	// Verify active model was updated
+	reqList2 := httptest.NewRequest(http.MethodGet, "/api/v1/ai/models", nil)
+	wList2 := httptest.NewRecorder()
+	srv.router.ServeHTTP(wList2, reqList2)
+
+	var listResp2 ai.AIModelsResponse
+	_ = json.Unmarshal(wList2.Body.Bytes(), &listResp2)
+	if listResp2.ActiveModel != "llama3-8b.gguf" {
+		t.Errorf("expected active model 'llama3-8b.gguf', got %q", listResp2.ActiveModel)
+	}
+}
+
+func TestServer_AI_Models_Delete(t *testing.T) {
+	srv, tmpDir := setupTestServer(t)
+	defer srv.Close()
+
+	modelsDir := filepath.Join(tmpDir, "models")
+	_ = os.MkdirAll(modelsDir, 0755)
+
+	createMockGGUFFile(t, modelsDir, "active-model.gguf", 3)
+	createMockGGUFFile(t, modelsDir, "inactive-model.gguf", 3)
+	_ = os.Symlink("active-model.gguf", filepath.Join(modelsDir, "active.gguf"))
+
+	// 1. DELETE active model -> 409 Conflict
+	reqDelActive := httptest.NewRequest(http.MethodDelete, "/api/v1/ai/models/active-model.gguf", nil)
+	wDelActive := httptest.NewRecorder()
+	srv.router.ServeHTTP(wDelActive, reqDelActive)
+
+	if wDelActive.Code != http.StatusConflict {
+		t.Errorf("expected HTTP 409 when deleting active model, got %d: %s", wDelActive.Code, wDelActive.Body.String())
+	}
+
+	// 2. DELETE inactive model -> 200 OK
+	reqDelInactive := httptest.NewRequest(http.MethodDelete, "/api/v1/ai/models/inactive-model.gguf", nil)
+	wDelInactive := httptest.NewRecorder()
+	srv.router.ServeHTTP(wDelInactive, reqDelInactive)
+
+	if wDelInactive.Code != http.StatusOK {
+		t.Errorf("expected HTTP 200 when deleting inactive model, got %d: %s", wDelInactive.Code, wDelInactive.Body.String())
+	}
+
+	if _, err := os.Stat(filepath.Join(modelsDir, "inactive-model.gguf")); !os.IsNotExist(err) {
+		t.Errorf("expected inactive-model.gguf to be deleted")
+	}
+}
+
+func TestServer_AI_Settings_GetAndUpdate(t *testing.T) {
+	srv, _ := setupTestServer(t)
+	defer srv.Close()
+
+	// 1. GET /api/v1/ai/settings
+	reqGet := httptest.NewRequest(http.MethodGet, "/api/v1/ai/settings", nil)
+	wGet := httptest.NewRecorder()
+	srv.router.ServeHTTP(wGet, reqGet)
+
+	if wGet.Code != http.StatusOK {
+		t.Fatalf("expected HTTP 200 from GET /api/v1/ai/settings, got %d: %s", wGet.Code, wGet.Body.String())
+	}
+
+	var settings ai.AISettings
+	if err := json.Unmarshal(wGet.Body.Bytes(), &settings); err != nil {
+		t.Fatalf("failed to decode settings: %v", err)
+	}
+
+	// 2. POST /api/v1/ai/settings
+	updatePayload := `{"gpu_layers": 33, "context_length": 8192, "idle_timeout_seconds": 600}`
+	reqPost := httptest.NewRequest(http.MethodPost, "/api/v1/ai/settings", strings.NewReader(updatePayload))
+	reqPost.Header.Set("Content-Type", "application/json")
+	wPost := httptest.NewRecorder()
+	srv.router.ServeHTTP(wPost, reqPost)
+
+	if wPost.Code != http.StatusOK {
+		t.Fatalf("expected HTTP 200 from POST /api/v1/ai/settings, got %d: %s", wPost.Code, wPost.Body.String())
+	}
+
+	var updated ai.AISettings
+	if err := json.Unmarshal(wPost.Body.Bytes(), &updated); err != nil {
+		t.Fatalf("failed to decode updated settings: %v", err)
+	}
+
+	if updated.GPULayers != 33 {
+		t.Errorf("expected GPULayers 33, got %d", updated.GPULayers)
+	}
+	if updated.ContextLength != 8192 {
+		t.Errorf("expected ContextLength 8192, got %d", updated.ContextLength)
+	}
+	if updated.IdleTimeoutSeconds != 600 {
+		t.Errorf("expected IdleTimeoutSeconds 600, got %d", updated.IdleTimeoutSeconds)
+	}
+}
+
+func TestServer_AI_ReloadAndLogs(t *testing.T) {
+	srv, _ := setupTestServer(t)
+	defer srv.Close()
+
+	// 1. POST /api/v1/ai/reload
+	reqReload := httptest.NewRequest(http.MethodPost, "/api/v1/ai/reload", nil)
+	wReload := httptest.NewRecorder()
+	srv.router.ServeHTTP(wReload, reqReload)
+
+	if wReload.Code != http.StatusOK {
+		t.Fatalf("expected HTTP 200 from POST /api/v1/ai/reload, got %d: %s", wReload.Code, wReload.Body.String())
+	}
+
+	// 2. GET /api/v1/ai/logs
+	reqLogs := httptest.NewRequest(http.MethodGet, "/api/v1/ai/logs", nil)
+	wLogs := httptest.NewRecorder()
+	srv.router.ServeHTTP(wLogs, reqLogs)
+
+	if wLogs.Code != http.StatusOK {
+		t.Fatalf("expected HTTP 200 from GET /api/v1/ai/logs, got %d: %s", wLogs.Code, wLogs.Body.String())
+	}
+
+	var logsResp ai.AIInferenceLogsResponse
+	if err := json.Unmarshal(wLogs.Body.Bytes(), &logsResp); err != nil {
+		t.Fatalf("failed to decode logs response: %v", err)
+	}
+
+	if len(logsResp.Logs) == 0 {
+		t.Errorf("expected at least one log entry")
+	}
+}
+
+func TestServer_AI_Models_DownloadAndCancel(t *testing.T) {
+	srv, tmpDir := setupTestServer(t)
+	defer srv.Close()
+
+	modelsDir := filepath.Join(tmpDir, "models")
+	_ = os.MkdirAll(modelsDir, 0755)
+
+	modelData := []byte("GGUF\x03\x00\x00\x00\x01\x00\x00\x00\x00\x00\x00\x00\x01\x00\x00\x00\x00\x00\x00\x00dummy-payload-data")
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", fmt.Sprintf("%d", len(modelData)))
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(modelData)
+	}))
+	defer ts.Close()
+	srv.ModelManager().SetDiskFree(func(path string) (int64, error) {
+		return 50 * 1024 * 1024 * 1024, nil
+	})
+
+	// 1. POST /api/v1/ai/models/download
+	dlPayload := fmt.Sprintf(`{"url": "%s/test-model.gguf", "filename": "test-model.gguf"}`, ts.URL)
+	reqDl := httptest.NewRequest(http.MethodPost, "/api/v1/ai/models/download", strings.NewReader(dlPayload))
+	reqDl.Header.Set("Content-Type", "application/json")
+	wDl := httptest.NewRecorder()
+	srv.router.ServeHTTP(wDl, reqDl)
+
+	if wDl.Code != http.StatusAccepted {
+		t.Fatalf("expected HTTP 202 from POST download, got %d: %s", wDl.Code, wDl.Body.String())
+	}
+
+	var prog ai.AIModelDownloadProgress
+	if err := json.Unmarshal(wDl.Body.Bytes(), &prog); err != nil {
+		t.Fatalf("failed to decode download progress: %v", err)
+	}
+
+	if prog.ID == "" {
+		t.Errorf("expected non-empty download job ID")
+	}
+
+	// 2. GET /api/v1/ai/models/downloads
+	reqList := httptest.NewRequest(http.MethodGet, "/api/v1/ai/models/downloads", nil)
+	wList := httptest.NewRecorder()
+	srv.router.ServeHTTP(wList, reqList)
+
+	if wList.Code != http.StatusOK {
+		t.Fatalf("expected HTTP 200 from GET downloads, got %d: %s", wList.Code, wList.Body.String())
+	}
+
+	// 3. DELETE /api/v1/ai/models/downloads/{id}
+	reqCancel := httptest.NewRequest(http.MethodDelete, "/api/v1/ai/models/downloads/"+prog.ID, nil)
+	wCancel := httptest.NewRecorder()
+	srv.router.ServeHTTP(wCancel, reqCancel)
+
+	if wCancel.Code != http.StatusOK {
+		t.Fatalf("expected HTTP 200 from cancel download, got %d: %s", wCancel.Code, wCancel.Body.String())
+	}
+}
+
 
 
 

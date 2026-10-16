@@ -1799,6 +1799,275 @@ paths:
               schema:
                 $ref: '#/components/schemas/ProblemDetails'
 
+  /api/v1/ai/models:
+    get:
+      summary: List installed AI models
+      description: Returns all installed GGUF models with RAM/VRAM resource footprint, inference speed, FlashAttention status, and active selection.
+      operationId: getAIModels
+      responses:
+        '200':
+          description: List of models and active model filename.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AIModelsResponse'
+        '500':
+          description: Model scan error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/v1/ai/models/active:
+    post:
+      summary: Switch active AI model
+      description: Validates GGUF binary magic header, atomically creates active.gguf symlink, updates setting, and gracefully reloads inference engine.
+      operationId: setActiveAIModel
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - filename
+              properties:
+                filename:
+                  type: string
+                  example: qwen2.5-7b.gguf
+      responses:
+        '200':
+          description: Active model switched successfully.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+                  active_model:
+                    type: string
+                    example: qwen2.5-7b.gguf
+                  message:
+                    type: string
+        '400':
+          description: Invalid header magic or missing filename
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '404':
+          description: Model file not found
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/v1/ai/models/download:
+    post:
+      summary: Download GGUF model
+      description: Initiates an atomic resumable model download with pre-flight storage reservation (+5 GB buffer) and optional SHA-256 verification.
+      operationId: downloadAIModel
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AIModelDownloadRequest'
+      responses:
+        '202':
+          description: Download accepted and background transfer initiated.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AIModelDownloadProgress'
+        '400':
+          description: Invalid URL or parameters
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '409':
+          description: Download for this model is already running
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '507':
+          description: Insufficient storage space (model size + 5 GB safety reserve required)
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/v1/ai/models/downloads:
+    get:
+      summary: List model downloads
+      description: Returns active and historical download jobs with transfer speed, ETA, and verification progress.
+      operationId: getAIModelDownloads
+      responses:
+        '200':
+          description: List of download progress entries.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  downloads:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/AIModelDownloadProgress'
+
+  /api/v1/ai/models/downloads/{id}:
+    delete:
+      summary: Cancel model download
+      description: Cancels an active model download job.
+      operationId: cancelAIModelDownload
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Download cancelled.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: cancelled
+                  id:
+                    type: string
+        '404':
+          description: Download job not found
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/v1/ai/models/{filename}:
+    delete:
+      summary: Delete unmounted GGUF model
+      description: Safely removes an inactive GGUF model from storage. Prevents deletion of the currently active model.
+      operationId: deleteAIModel
+      parameters:
+        - name: filename
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Model deleted successfully.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+                  deleted:
+                    type: string
+        '400':
+          description: Invalid model filename
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '404':
+          description: Model file not found
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '409':
+          description: Cannot delete currently active model
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/v1/ai/settings:
+    get:
+      summary: Get AI operational parameters
+      description: Returns active model, GPU offload layers (-ngl), context window size (-c), idle surrender timeout, and telemetry footprints.
+      operationId: getAISettings
+      responses:
+        '200':
+          description: Current AI operational parameters and memory footprints.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AISettingsResponse'
+
+    post:
+      summary: Update AI operational parameters
+      description: Updates GPU layers, context length, or idle surrender timeout with immediate effect.
+      operationId: updateAISettings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AISettingsUpdateRequest'
+      responses:
+        '200':
+          description: Updated AI parameters.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AISettingsResponse'
+        '400':
+          description: Validation error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/v1/ai/reload:
+    post:
+      summary: Reload AI inference engine
+      description: Gracefully reloads the llama-server inference backend container and resets arbitrator state.
+      operationId: reloadAIEngine
+      responses:
+        '200':
+          description: Backend engine reloaded successfully.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+                  message:
+                    type: string
+        '500':
+          description: Reload failed
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/v1/ai/logs:
+    get:
+      summary: Get scrubbed inference logs
+      description: Returns recent operational and inference logs stripped of personal user prompts or sensitive query text.
+      operationId: getAIInferenceLogs
+      responses:
+        '200':
+          description: List of scrubbed inference logs.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AIInferenceLogsResponse'
+
 components:
   schemas:
     HealthResponse:
@@ -3780,6 +4049,258 @@ components:
         notice:
           type: string
           example: ""
+
+    AIModelInfo:
+      type: object
+      required:
+        - filename
+        - name
+        - path
+        - size_bytes
+        - modified_at
+        - is_active
+        - valid
+        - ram_usage_bytes
+        - vram_usage_bytes
+        - tokens_per_sec
+        - flash_attention
+      properties:
+        filename:
+          type: string
+          example: qwen2.5-7b.gguf
+        name:
+          type: string
+          example: qwen2.5-7b
+        path:
+          type: string
+          example: /data/models/qwen2.5-7b.gguf
+        size_bytes:
+          type: integer
+          format: int64
+          example: 4684534880
+        modified_at:
+          type: string
+          format: date-time
+          example: '2026-10-16T20:00:00Z'
+        is_active:
+          type: boolean
+          example: true
+        valid:
+          type: boolean
+          example: true
+        ram_usage_bytes:
+          type: integer
+          format: int64
+          example: 1288490188
+        vram_usage_bytes:
+          type: integer
+          format: int64
+          example: 4684534880
+        tokens_per_sec:
+          type: number
+          example: 42.5
+        flash_attention:
+          type: boolean
+          example: true
+        header:
+          type: object
+          properties:
+            magic:
+              type: array
+              items:
+                type: integer
+            version:
+              type: integer
+              example: 3
+            tensor_count:
+              type: integer
+              example: 338
+            metadata_kv_count:
+              type: integer
+              example: 28
+
+    AIModelsResponse:
+      type: object
+      required:
+        - models
+        - active_model
+      properties:
+        models:
+          type: array
+          items:
+            $ref: '#/components/schemas/AIModelInfo'
+        active_model:
+          type: string
+          example: qwen2.5-7b.gguf
+
+    AIModelDownloadRequest:
+      type: object
+      required:
+        - url
+      properties:
+        url:
+          type: string
+          example: https://huggingface.co/Qwen/Qwen2.5-7B-Instruct-GGUF/resolve/main/qwen2.5-7b-instruct-q4_k_m.gguf
+        filename:
+          type: string
+          example: qwen2.5-7b-instruct-q4_k_m.gguf
+        sha256:
+          type: string
+          example: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+
+    AIModelDownloadProgress:
+      type: object
+      required:
+        - id
+        - url
+        - filename
+        - bytes_downloaded
+        - total_bytes
+        - percent
+        - speed_bytes_per_sec
+        - eta_seconds
+        - status
+        - created_at
+      properties:
+        id:
+          type: string
+          example: dl-1729112400000000000
+        url:
+          type: string
+          example: https://huggingface.co/Qwen/Qwen2.5-7B-Instruct-GGUF/resolve/main/qwen2.5-7b-instruct-q4_k_m.gguf
+        filename:
+          type: string
+          example: qwen2.5-7b-instruct-q4_k_m.gguf
+        bytes_downloaded:
+          type: integer
+          format: int64
+          example: 2147483648
+        total_bytes:
+          type: integer
+          format: int64
+          example: 4684534880
+        percent:
+          type: number
+          example: 45.8
+        speed_bytes_per_sec:
+          type: integer
+          format: int64
+          example: 25165824
+        eta_seconds:
+          type: integer
+          example: 100
+        status:
+          type: string
+          enum: [pending, downloading, verifying, completed, cancelled, failed]
+          example: downloading
+        error:
+          type: string
+          example: ""
+        created_at:
+          type: string
+          format: date-time
+          example: '2026-10-16T20:00:00Z'
+        sha256:
+          type: string
+          example: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+
+    AISettingsResponse:
+      type: object
+      required:
+        - active_model
+        - gpu_layers
+        - context_length
+        - idle_timeout_seconds
+        - flash_attention
+        - tokens_per_sec
+        - vram_usage_bytes
+        - ram_usage_bytes
+      properties:
+        active_model:
+          type: string
+          example: qwen2.5-7b.gguf
+        gpu_layers:
+          type: integer
+          example: 99
+        context_length:
+          type: integer
+          example: 4096
+        idle_timeout_seconds:
+          type: integer
+          example: 300
+        flash_attention:
+          type: boolean
+          example: true
+        tokens_per_sec:
+          type: number
+          example: 42.5
+        vram_usage_bytes:
+          type: integer
+          format: int64
+          example: 4684534880
+        ram_usage_bytes:
+          type: integer
+          format: int64
+          example: 1288490188
+
+    AISettingsUpdateRequest:
+      type: object
+      properties:
+        gpu_layers:
+          type: integer
+          example: 99
+        context_length:
+          type: integer
+          example: 4096
+        idle_timeout_seconds:
+          type: integer
+          example: 300
+        active_model:
+          type: string
+          example: qwen2.5-7b.gguf
+
+    AIInferenceLogEntry:
+      type: object
+      required:
+        - timestamp
+        - level
+        - component
+        - message
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+          example: '2026-10-16T20:00:00Z'
+        level:
+          type: string
+          example: INFO
+        component:
+          type: string
+          example: ai-engine
+        message:
+          type: string
+          example: Active model switched to qwen2.5-7b.gguf; inference engine reloaded
+        tokens_generated:
+          type: integer
+          example: 128
+        duration_ms:
+          type: integer
+          format: int64
+          example: 3012
+        tokens_per_sec:
+          type: number
+          example: 42.5
+
+    AIInferenceLogsResponse:
+      type: object
+      required:
+        - logs
+      properties:
+        logs:
+          type: array
+          items:
+            $ref: '#/components/schemas/AIInferenceLogEntry'
+
 
 
 

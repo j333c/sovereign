@@ -209,6 +209,7 @@ type Config struct {
 	LlamaURL          string
 	PersonaStore      *ai.PersonaStore
 	RAGEngine         *ai.RAGEngine
+	ModelManager      *ai.ModelManager
 }
 
 type sseEvent struct {
@@ -245,6 +246,7 @@ type Server struct {
 	llamaURL          string
 	personaStore      *ai.PersonaStore
 	ragEngine         *ai.RAGEngine
+	modelManager      *ai.ModelManager
 	stopChan          chan struct{}
 	closeOnce         sync.Once
 	mu                sync.RWMutex
@@ -253,6 +255,23 @@ type Server struct {
 	eventSubscribers map[chan sseEvent]struct{}
 }
 
+
+type serviceReloaderAdapter struct {
+	mgr *supervisor.ServiceManager
+}
+
+func (a *serviceReloaderAdapter) ReloadService(ctx context.Context, id string) error {
+	if a.mgr != nil {
+		st, err := a.mgr.GetService(ctx, id)
+		if err == nil && st != nil && (st.Status == supervisor.StatusInactive || st.Status == supervisor.StatusStopped) {
+			_, err = a.mgr.ActivateService(ctx, id)
+			return err
+		}
+		_, err = a.mgr.RestartService(ctx, id)
+		return err
+	}
+	return nil
+}
 
 // NewServer initializes the supervisor server, ensures storage directories,
 // connects to SQLite WAL, and initializes ingress/mDNS managers.
@@ -475,6 +494,27 @@ func NewServer(cfg Config) (*Server, error) {
 		})
 	} else {
 		s.ragEngine = cfg.RAGEngine
+	}
+
+	if cfg.ModelManager == nil {
+		modelsDir := filepath.Join(cfg.DataDir, "models")
+		var arb *ai.GPUArbitrator
+		if s.aiGateway != nil {
+			arb = s.aiGateway.Arbitrator()
+		}
+		var reloader ai.ServiceReloader
+		if s.serviceMgr != nil {
+			reloader = &serviceReloaderAdapter{mgr: s.serviceMgr}
+		}
+		s.modelManager = ai.NewModelManager(ai.ModelManagerConfig{
+			ModelsDir:  modelsDir,
+			Store:      s.db,
+			Reloader:   reloader,
+			Arbitrator: arb,
+			Logger:     cfg.Logger,
+		})
+	} else {
+		s.modelManager = cfg.ModelManager
 	}
 
 	if cfg.DropzoneEngine == nil {
@@ -1072,6 +1112,18 @@ func (s *Server) routes() {
 	// Single-Source-of-Truth RAG Endpoints
 	s.router.HandleFunc("POST /api/v1/ai/rag/search", s.handleRAGSearch)
 	s.router.HandleFunc("POST /api/v1/ai/rag/query", s.handleRAGQuery)
+
+	// AI Model and Backend Administration Endpoints
+	s.router.HandleFunc("GET /api/v1/ai/models", s.handleListAIModels)
+	s.router.HandleFunc("POST /api/v1/ai/models/active", s.requireSetupOrAdmin(s.handleSetActiveAIModel))
+	s.router.HandleFunc("POST /api/v1/ai/models/download", s.requireSetupOrAdmin(s.handleDownloadAIModel))
+	s.router.HandleFunc("GET /api/v1/ai/models/downloads", s.handleListAIModelDownloads)
+	s.router.HandleFunc("DELETE /api/v1/ai/models/downloads/{id}", s.requireSetupOrAdmin(s.handleCancelAIModelDownload))
+	s.router.HandleFunc("DELETE /api/v1/ai/models/{filename}", s.requireSetupOrAdmin(s.handleDeleteAIModel))
+	s.router.HandleFunc("GET /api/v1/ai/settings", s.handleGetAISettings)
+	s.router.HandleFunc("POST /api/v1/ai/settings", s.requireSetupOrAdmin(s.handleUpdateAISettings))
+	s.router.HandleFunc("POST /api/v1/ai/reload", s.requireSetupOrAdmin(s.handleReloadAIEngine))
+	s.router.HandleFunc("GET /api/v1/ai/logs", s.handleGetAIInferenceLogs)
 }
 
 // handleAIGateway mediates /v1 inference requests to the internal llama-server spoke,
@@ -1414,6 +1466,318 @@ func (s *Server) handleRAGQuery(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(resp)
+}
+
+// ModelManager returns the active ModelManager instance.
+func (s *Server) ModelManager() *ai.ModelManager {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.modelManager
+}
+
+// handleListAIModels returns all installed GGUF models, their RAM/VRAM footprint, tokens/sec, and active status.
+func (s *Server) handleListAIModels(w http.ResponseWriter, r *http.Request) {
+	s.mu.RLock()
+	mm := s.modelManager
+	s.mu.RUnlock()
+
+	if mm == nil {
+		s.writeProblem(w, http.StatusInternalServerError, "Internal Server Error", "Model manager is not initialized", r.URL.Path)
+		return
+	}
+
+	resp, err := mm.ListModels(r.Context())
+	if err != nil {
+		s.logger.Error("failed to list AI models", "error", err)
+		s.writeProblem(w, http.StatusInternalServerError, "Model Scan Failed", err.Error(), r.URL.Path)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(resp)
+}
+
+// handleSetActiveAIModel switches the active GGUF model by filename with pre-flight header validation.
+func (s *Server) handleSetActiveAIModel(w http.ResponseWriter, r *http.Request) {
+	s.mu.RLock()
+	mm := s.modelManager
+	s.mu.RUnlock()
+
+	if mm == nil {
+		s.writeProblem(w, http.StatusInternalServerError, "Internal Server Error", "Model manager is not initialized", r.URL.Path)
+		return
+	}
+
+	var req struct {
+		Filename string `json:"filename"`
+		Model    string `json:"model"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.writeProblem(w, http.StatusBadRequest, "Invalid Request", "Malformed JSON request payload", r.URL.Path)
+		return
+	}
+
+	target := req.Filename
+	if target == "" {
+		target = req.Model
+	}
+	if target == "" {
+		s.writeProblem(w, http.StatusBadRequest, "Invalid Request", "Filename or model name is required", r.URL.Path)
+		return
+	}
+
+	if err := mm.SetActiveModel(r.Context(), target); err != nil {
+		if errors.Is(err, ai.ErrModelNotFound) {
+			s.writeProblem(w, http.StatusNotFound, "Model Not Found", err.Error(), r.URL.Path)
+			return
+		}
+		s.logger.Warn("failed to switch active AI model", "filename", target, "error", err)
+		s.writeProblem(w, http.StatusBadRequest, "Model Switch Failed", err.Error(), r.URL.Path)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"status":       "ok",
+		"active_model": target,
+		"message":      fmt.Sprintf("Active model successfully switched to %s", target),
+	})
+}
+
+// handleDownloadAIModel initiates a background model download with pre-flight storage reservation.
+func (s *Server) handleDownloadAIModel(w http.ResponseWriter, r *http.Request) {
+	s.mu.RLock()
+	mm := s.modelManager
+	s.mu.RUnlock()
+
+	if mm == nil {
+		s.writeProblem(w, http.StatusInternalServerError, "Internal Server Error", "Model manager is not initialized", r.URL.Path)
+		return
+	}
+
+	var req ai.AIModelDownloadRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.writeProblem(w, http.StatusBadRequest, "Invalid Request", "Malformed JSON request payload", r.URL.Path)
+		return
+	}
+
+	if req.URL == "" {
+		s.writeProblem(w, http.StatusBadRequest, "Invalid Request", "Download URL is required", r.URL.Path)
+		return
+	}
+
+	progress, err := mm.StartDownload(r.Context(), req)
+	if err != nil {
+		if errors.Is(err, ai.ErrInsufficientStorageSpace) {
+			s.writeProblem(w, http.StatusInsufficientStorage, "Insufficient Storage", err.Error(), r.URL.Path)
+			return
+		}
+		if errors.Is(err, ai.ErrDownloadInProgress) {
+			s.writeProblem(w, http.StatusConflict, "Download In Progress", err.Error(), r.URL.Path)
+			return
+		}
+		s.logger.Warn("failed to initiate model download", "url", req.URL, "error", err)
+		s.writeProblem(w, http.StatusBadRequest, "Download Initiation Failed", err.Error(), r.URL.Path)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusAccepted)
+	_ = json.NewEncoder(w).Encode(progress)
+}
+
+// handleListAIModelDownloads returns all active and historical download jobs with progress metrics.
+func (s *Server) handleListAIModelDownloads(w http.ResponseWriter, r *http.Request) {
+	s.mu.RLock()
+	mm := s.modelManager
+	s.mu.RUnlock()
+
+	if mm == nil {
+		s.writeProblem(w, http.StatusInternalServerError, "Internal Server Error", "Model manager is not initialized", r.URL.Path)
+		return
+	}
+
+	downloads := mm.ListDownloads()
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"downloads": downloads,
+	})
+}
+
+// handleCancelAIModelDownload terminates an in-flight download job.
+func (s *Server) handleCancelAIModelDownload(w http.ResponseWriter, r *http.Request) {
+	s.mu.RLock()
+	mm := s.modelManager
+	s.mu.RUnlock()
+
+	if mm == nil {
+		s.writeProblem(w, http.StatusInternalServerError, "Internal Server Error", "Model manager is not initialized", r.URL.Path)
+		return
+	}
+
+	id := r.PathValue("id")
+	if id == "" {
+		s.writeProblem(w, http.StatusBadRequest, "Invalid Request", "Download ID is required", r.URL.Path)
+		return
+	}
+
+	if err := mm.CancelDownload(id); err != nil {
+		if errors.Is(err, ai.ErrDownloadNotFound) {
+			s.writeProblem(w, http.StatusNotFound, "Download Not Found", err.Error(), r.URL.Path)
+			return
+		}
+		s.writeProblem(w, http.StatusInternalServerError, "Cancel Failed", err.Error(), r.URL.Path)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"status": "cancelled",
+		"id":     id,
+	})
+}
+
+// handleDeleteAIModel deletes an unmounted GGUF model file from disk.
+func (s *Server) handleDeleteAIModel(w http.ResponseWriter, r *http.Request) {
+	s.mu.RLock()
+	mm := s.modelManager
+	s.mu.RUnlock()
+
+	if mm == nil {
+		s.writeProblem(w, http.StatusInternalServerError, "Internal Server Error", "Model manager is not initialized", r.URL.Path)
+		return
+	}
+
+	filename := r.PathValue("filename")
+	if filename == "" {
+		s.writeProblem(w, http.StatusBadRequest, "Invalid Request", "Model filename is required", r.URL.Path)
+		return
+	}
+
+	if err := mm.DeleteModel(r.Context(), filename); err != nil {
+		if errors.Is(err, ai.ErrActiveModelDeletion) {
+			s.writeProblem(w, http.StatusConflict, "Active Model Conflict", err.Error(), r.URL.Path)
+			return
+		}
+		if errors.Is(err, ai.ErrModelNotFound) || errors.Is(err, os.ErrNotExist) {
+			s.writeProblem(w, http.StatusNotFound, "Model Not Found", fmt.Sprintf("Model %q not found", filename), r.URL.Path)
+			return
+		}
+		s.logger.Warn("failed to delete AI model", "filename", filename, "error", err)
+		s.writeProblem(w, http.StatusInternalServerError, "Delete Failed", err.Error(), r.URL.Path)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"status":  "ok",
+		"deleted": filename,
+	})
+}
+
+// handleGetAISettings returns operational AI parameters and hardware footprints.
+func (s *Server) handleGetAISettings(w http.ResponseWriter, r *http.Request) {
+	s.mu.RLock()
+	mm := s.modelManager
+	s.mu.RUnlock()
+
+	if mm == nil {
+		s.writeProblem(w, http.StatusInternalServerError, "Internal Server Error", "Model manager is not initialized", r.URL.Path)
+		return
+	}
+
+	settings, err := mm.GetSettings(r.Context())
+	if err != nil {
+		s.logger.Error("failed to get AI settings", "error", err)
+		s.writeProblem(w, http.StatusInternalServerError, "Settings Query Failed", err.Error(), r.URL.Path)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(settings)
+}
+
+// handleUpdateAISettings updates operational AI parameters with immediate effect.
+func (s *Server) handleUpdateAISettings(w http.ResponseWriter, r *http.Request) {
+	s.mu.RLock()
+	mm := s.modelManager
+	s.mu.RUnlock()
+
+	if mm == nil {
+		s.writeProblem(w, http.StatusInternalServerError, "Internal Server Error", "Model manager is not initialized", r.URL.Path)
+		return
+	}
+
+	var update ai.AISettingsUpdate
+	if err := json.NewDecoder(r.Body).Decode(&update); err != nil {
+		s.writeProblem(w, http.StatusBadRequest, "Invalid Request", "Malformed JSON request payload", r.URL.Path)
+		return
+	}
+
+	updated, err := mm.UpdateSettings(r.Context(), update)
+	if err != nil {
+		s.writeProblem(w, http.StatusBadRequest, "Settings Update Failed", err.Error(), r.URL.Path)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(updated)
+}
+
+// handleReloadAIEngine triggers a graceful reload of the AI inference engine container.
+func (s *Server) handleReloadAIEngine(w http.ResponseWriter, r *http.Request) {
+	s.mu.RLock()
+	mm := s.modelManager
+	s.mu.RUnlock()
+
+	if mm == nil {
+		s.writeProblem(w, http.StatusInternalServerError, "Internal Server Error", "Model manager is not initialized", r.URL.Path)
+		return
+	}
+
+	if err := mm.ReloadAIEngine(r.Context()); err != nil {
+		s.logger.Error("failed to reload AI backend engine", "error", err)
+		s.writeProblem(w, http.StatusInternalServerError, "Engine Reload Failed", err.Error(), r.URL.Path)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"status":  "ok",
+		"message": "AI inference engine reloaded successfully",
+	})
+}
+
+// handleGetAIInferenceLogs returns scrubbed inference and operational logs.
+func (s *Server) handleGetAIInferenceLogs(w http.ResponseWriter, r *http.Request) {
+	s.mu.RLock()
+	mm := s.modelManager
+	s.mu.RUnlock()
+
+	if mm == nil {
+		s.writeProblem(w, http.StatusInternalServerError, "Internal Server Error", "Model manager is not initialized", r.URL.Path)
+		return
+	}
+
+	logs, err := mm.GetScrubbedLogs(r.Context())
+	if err != nil {
+		s.writeProblem(w, http.StatusInternalServerError, "Log Query Failed", err.Error(), r.URL.Path)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(ai.AIInferenceLogsResponse{
+		Logs: logs,
+	})
 }
 
 
