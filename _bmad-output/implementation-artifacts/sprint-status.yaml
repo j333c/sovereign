@@ -53,11 +53,11 @@ development_status:
   2-5-staged-dropzone-ingestion-pipeline-web-upload-interface: done
   epic-2-retrospective: optional
 
-  epic-3: in-progress
+  epic-3: done
   3-1-optical-drive-detection-automated-disc-ripping-engine: done
   3-2-automated-media-metadata-artwork-enrichment: done
   3-3-off-peak-transcoding-queue-universal-direct-play-pre-encodin: done
-  3-4-mobile-offline-profile-generation-ipad-sync: review
+  3-4-mobile-offline-profile-generation-ipad-sync: done
   epic-3-retrospective: optional
 
   epic-4: backlog

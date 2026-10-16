@@ -236,7 +236,11 @@ func (f *FFmpegTranscoder) BuildFFmpegArgs(src, dst, profile string, hw Hardware
 
 	// If mobile profile, apply standardized resolution scaling and bounded bitrates
 	if mobCfg, isMobile := GetMobileProfile(profile); isMobile {
-		args = append(args, "-vf", mobCfg.ScaleFilter)
+		if hw == HardwareVAAPI {
+			args = append(args, "-vf", mobCfg.VAAPIScaleFilter)
+		} else {
+			args = append(args, "-vf", mobCfg.ScaleFilter)
+		}
 
 		var encoder string
 		switch hw {
@@ -250,7 +254,7 @@ func (f *FFmpegTranscoder) BuildFFmpegArgs(src, dst, profile string, hw Hardware
 			args = append(args, "-c:v", "h264_vaapi")
 			encoder = "vaapi"
 		default:
-			args = append(args, "-c:v", "libx264", "-preset", "fast", "-crf", "22", "-pix_fmt", "yuv420p")
+			args = append(args, "-c:v", "libx264", "-preset", "fast", "-pix_fmt", "yuv420p")
 			encoder = "cpu-x264"
 		}
 

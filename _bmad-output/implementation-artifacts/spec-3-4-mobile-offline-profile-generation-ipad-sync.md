@@ -2,10 +2,10 @@
 title: 'Story 3.4: Mobile Offline Profile Generation & iPad Sync'
 type: 'feature'
 created: '2026-10-16'
-status: 'review'
+status: 'done'
 route: 'dispatch'
 baseline_commit: '0d026a47f06cab287bd22b87fa5e2acffc525638'
-review_loop_iteration: 0
+review_loop_iteration: 1
 context:
   - '_bmad-output/planning-artifacts/architecture/architecture-sovereign-2026-10-15/ARCHITECTURE-SPINE.md'
   - '_bmad-output/planning-artifacts/ux-designs/ux-sovereign-2026-10-15/DESIGN.md'
@@ -82,24 +82,25 @@ context:
 ## Implementation Notes
 
 - **Mobile Profile Definitions & Filename Resolution (`internal/transcode/profiles.go`)**:
-  - Implemented `ProfileMobile720p` (`scale=-2:720`, bounded 2.5 Mbps with `-maxrate 3000k -bufsize 5000k`, 128k stereo AAC, faststart MP4) and `ProfileMobile1080p` (`scale=-2:1080`, bounded 4.5 Mbps with `-maxrate 5500k -bufsize 9000k`, 192k stereo AAC, faststart MP4).
-  - Implemented `ResolveMultiVersionPath` following Jellyfin's multi-version file naming convention (e.g. `<Title> - 720p.mp4` / `<Title> - 1080p.mp4`) placed directly alongside the master file in the library, stripping existing quality suffixes to prevent duplicate suffix stacking, and preventing self-overwrite.
+  - Implemented `ProfileMobile720p` (`scale=-2:'min(720,ih)'`, bounded 2.5 Mbps with `-maxrate 3000k -bufsize 5000k`, 128k stereo AAC, faststart MP4) and `ProfileMobile1080p` (`scale=-2:'min(1080,ih)'`, bounded 4.5 Mbps with `-maxrate 5500k -bufsize 9000k`, 192k stereo AAC, faststart MP4).
+  - Implemented `ResolveMultiVersionPath` following Jellyfin's multi-version file naming convention (e.g. `<Title> - 720p.mp4` / `<Title> - 1080p.mp4`) placed directly alongside the master file in the library, stripping existing quality suffixes iteratively to prevent duplicate suffix stacking, and preventing self-overwrite.
 - **FFmpeg Argument Builder (`internal/transcode/transcoder.go`)**:
-  - Updated `BuildFFmpegArgs` to apply resolution scaling (`-vf scale=-2:720` / `-vf scale=-2:1080`), bounded video bitrates, and stereo AAC audio. Enforces universal direct-play H.264 video codec across QSV, NVENC, VAAPI, and software CPU encoders.
+  - Updated `BuildFFmpegArgs` to apply resolution scaling (`-vf scale=-2:'min(720,ih)'` / `-vf scale=-2:'min(1080,ih)'`), bounded video bitrates, and stereo AAC audio. Dedicated VAAPI surface scaling filter `scale_vaapi=w=-2:h='min(...,ih)'` ensures hardware VAAPI surface compatibility. Enforces universal direct-play H.264 video codec across QSV, NVENC, VAAPI, and software CPU encoders. Removed conflicting `-crf` flag for software encoding when constrained bitrate flags are present.
 - **Transcode Persistence Store (`internal/transcode/store.go`)**:
   - Added `FindJobByTarget` method and `idx_transcode_queue_target` index to SQLiteStore for rapid lookup by target path.
 - **Transcode Engine (`internal/transcode/engine.go`)**:
-  - Added `EnqueueMobile` method with full path and profile validation, pre-existing profile detection, and deduplication.
+  - Added `EnqueueMobile` method with full path and profile validation, pre-existing profile detection, and deduplication across queued/processing/paused states.
   - Implemented duplicate encode skipping in `executeJob` when the target profile already exists and is non-empty on disk, preserving master media intact and dispatching Jellyfin library refresh webhooks.
+  - Resolved concurrency locking and dispatch deadlocks by running Jellyfin library refresh outside the `e.mu` critical section.
   - Integrated mobile target path resolution into `Enqueue`.
 - **API Endpoint (`cmd/sovereign-daemon/server.go`)**:
   - Registered `POST /api/v1/transcode/mobile` with admin authentication (`requireSetupOrAdmin`) and input validation.
-  - Returns `201 Created` for newly enqueued jobs, `200 OK` for pre-existing profiles, and RFC 7807 problem details on error.
+  - Returns `201 Created` for newly enqueued jobs, `200 OK` for pre-existing profiles or duplicate pending requests, and RFC 7807 problem details on error (HTTP 400 for validation errors, HTTP 500 for internal store errors).
 - **OpenAPI 3.1 Documentation (`api/openapi.yaml`)**:
-  - Documented `POST /api/v1/transcode/mobile` and added `EnqueueMobileRequest` schema.
+  - Documented `POST /api/v1/transcode/mobile` and added `EnqueueMobileRequest` schema, including HTTP 200, 201, 400, 401, 403, and 500 status codes.
 - **Automated Verification (`internal/transcode/mobile_test.go` & `cmd/sovereign-daemon/server_test.go`)**:
-  - Unit tests covering mobile profile parameters, Jellyfin multi-version naming, FFmpeg flags, master file preservation, duplicate skip avoidance, and storage headroom floor enforcement.
-  - Integration tests covering REST API validation, 720p/1080p enqueuing, pre-existing skip (200 OK), auth gating post-setup (401 vs 200), end-to-end background execution, and Jellyfin library refresh dispatching.
+  - Unit tests covering mobile profile parameters, Jellyfin multi-version naming, FFmpeg flags (NVENC, VAAPI, QSV, software no-CRF), non-upscaling bound filters, stacked suffix stripping, master file preservation, duplicate skip avoidance, and storage headroom floor enforcement.
+  - Integration tests covering REST API validation, 720p/1080p enqueuing, duplicate pending enqueuing, pre-existing skip (200 OK), auth gating post-setup (401 vs 200), end-to-end background execution, and Jellyfin library refresh dispatching.
 
 ## Spec Change Log
 
@@ -107,4 +108,10 @@ context:
 
 ## Review Triage Log
 
-*(To be populated during code review)*
+- **Non-Upscaling Bound Filters & VAAPI Surface Scaling**: Changed resolution filters to `scale=-2:'min(720,ih)'` and `scale=-2:'min(1080,ih)'` to prevent low-resolution inputs from upscaling. Added `VAAPIScaleFilter` (`scale_vaapi=w=-2:h=...`) to properly scale VAAPI hardware surfaces without software pipeline failures.
+- **Software Encoder Rate-Control**: Eliminated conflicting `-crf` argument in `BuildFFmpegArgs` when bounded bitrate parameters (`-b:v`, `-maxrate`, `-bufsize`) are set for software `libx264`.
+- **Iterative Suffix Stripping**: In `ResolveMultiVersionPath`, implemented an iterative stripping loop with case-insensitivity to handle stacked suffixes (e.g., `Movie - 720p - 720p.mp4`).
+- **Encapsulation & Shared Sentinels**: Encapsulated `mobileProfiles` map with `GetMobileProfile`, and exported shared sentinels (`ErrUnsupportedVideoFormat`, `ErrSourceOutsideDataDir`, `ErrSourceNotFound`, `ErrSourceIsDir`).
+- **Concurrency & Deadlock Resolution**: Added mutex protection around target lookup/job insertion, deduplication across `StatusQueued`, `StatusProcessing`, and `StatusPaused` states, and refactored critical sections so background Jellyfin refresh dispatch runs outside `e.mu.Lock()`.
+- **API Error Code Differentiation**: Differentiated validation errors (HTTP 400) from store errors (HTTP 500) in `handleEnqueueMobile`. Added HTTP 401 and 403 responses in `api/openapi.yaml`.
+- **Test Coverage Expansion**: Added comprehensive tests verifying NVENC/VAAPI argument generation, software VBR rate-control, stacked suffix cleanup, synthetic job completion on pre-existing disk targets, deduplication across pending states, and single-entry queue preservation in daemon integration tests.

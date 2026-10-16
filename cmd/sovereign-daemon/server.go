@@ -2098,7 +2098,21 @@ func (s *Server) handleEnqueueMobile(w http.ResponseWriter, r *http.Request) {
 		TargetProfile: targetProfile,
 	})
 	if err != nil {
-		s.writeProblem(w, http.StatusBadRequest, "Invalid File Path", err.Error(), r.URL.Path)
+		if errors.Is(err, transcode.ErrUnknownMobileProfile) ||
+			errors.Is(err, transcode.ErrInvalidSourcePath) ||
+			errors.Is(err, transcode.ErrIdenticalPaths) ||
+			errors.Is(err, transcode.ErrUnsupportedVideoFormat) ||
+			errors.Is(err, transcode.ErrSourceOutsideDataDir) ||
+			errors.Is(err, transcode.ErrSourceNotFound) ||
+			errors.Is(err, transcode.ErrSourceIsDir) ||
+			strings.Contains(err.Error(), "required") ||
+			strings.Contains(err.Error(), "unsupported") ||
+			strings.Contains(err.Error(), "cannot be empty") {
+			s.writeProblem(w, http.StatusBadRequest, "Invalid Mobile Request", err.Error(), r.URL.Path)
+			return
+		}
+		s.logger.Error("failed to enqueue mobile transcode job", "error", err)
+		s.writeProblem(w, http.StatusInternalServerError, "Enqueue Failed", err.Error(), r.URL.Path)
 		return
 	}
 

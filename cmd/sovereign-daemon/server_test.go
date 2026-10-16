@@ -4032,6 +4032,41 @@ func TestServer_Transcode_Mobile_Endpoint(t *testing.T) {
 		t.Errorf("expected status queued, got %q", job720.Status)
 	}
 
+	// 5b. Duplicate mobile-720p enqueue while queued: returns 200 OK, identical job ID, single queue entry
+	req720Dup := httptest.NewRequest(http.MethodPost, "/api/v1/transcode/mobile", bytes.NewReader(body720))
+	req720Dup.Header.Set("Content-Type", "application/json")
+	w720Dup := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(w720Dup, req720Dup)
+
+	if w720Dup.Code != http.StatusCreated && w720Dup.Code != http.StatusOK {
+		t.Fatalf("expected 201 Created or 200 OK for duplicate pending enqueue, got %d: %s", w720Dup.Code, w720Dup.Body.String())
+	}
+	var job720Dup TranscodeJobResponse
+	if err := json.Unmarshal(w720Dup.Body.Bytes(), &job720Dup); err != nil {
+		t.Fatalf("failed to decode duplicate job response: %v", err)
+	}
+	if job720Dup.ID != job720.ID {
+		t.Errorf("expected identical job ID %q on duplicate enqueue, got %q", job720.ID, job720Dup.ID)
+	}
+
+	qReq := httptest.NewRequest(http.MethodGet, "/api/v1/transcode/queue", nil)
+	qW := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(qW, qReq)
+	if qW.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK from queue endpoint, got %d", qW.Code)
+	}
+	var qResp TranscodeQueueResponse
+	_ = json.Unmarshal(qW.Body.Bytes(), &qResp)
+	matchingJobs := 0
+	for _, j := range qResp.Jobs {
+		if j.TargetPath == expectedTarget720 {
+			matchingJobs++
+		}
+	}
+	if matchingJobs != 1 {
+		t.Errorf("expected exactly 1 queue entry for target %q, got %d", expectedTarget720, matchingJobs)
+	}
+
 	// 6. Valid mobile-1080p enqueue
 	enq1080Payload := map[string]string{
 		"source_path":    masterFile,

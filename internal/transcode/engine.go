@@ -274,10 +274,33 @@ func (e *TranscodeEngine) EnqueueMobile(ctx context.Context, req MobileEnqueueRe
 	cleanSource := filepath.Clean(req.SourcePath)
 	fi, err := os.Stat(cleanSource)
 	if err != nil {
-		return nil, false, fmt.Errorf("source file %q does not exist or is inaccessible: %w", cleanSource, err)
+		return nil, false, fmt.Errorf("%w: %q (%v)", ErrSourceNotFound, cleanSource, err)
 	}
 	if fi.IsDir() {
-		return nil, false, fmt.Errorf("source path %q is a directory, not a video file", cleanSource)
+		return nil, false, fmt.Errorf("%w: %q", ErrSourceIsDir, cleanSource)
+	}
+
+	ext := strings.ToLower(filepath.Ext(cleanSource))
+	validVideoExts := map[string]bool{
+		".mp4":  true,
+		".mkv":  true,
+		".avi":  true,
+		".ts":   true,
+		".mov":  true,
+		".m4v":  true,
+		".webm": true,
+		".iso":  true,
+	}
+	if !validVideoExts[ext] {
+		return nil, false, fmt.Errorf("%w: %q (must be .mp4, .mkv, .avi, .ts, .mov, .m4v, .webm, or .iso)", ErrUnsupportedVideoFormat, ext)
+	}
+
+	if e.dataDir != "" && e.dataDir != "/" {
+		cleanDataDir := filepath.Clean(e.dataDir)
+		rel, err := filepath.Rel(cleanDataDir, cleanSource)
+		if err != nil || strings.HasPrefix(rel, "..") {
+			return nil, false, fmt.Errorf("%w: %q is outside data directory %q", ErrSourceOutsideDataDir, cleanSource, cleanDataDir)
+		}
 	}
 
 	targetProfile := strings.TrimSpace(req.TargetProfile)
@@ -298,75 +321,109 @@ func (e *TranscodeEngine) EnqueueMobile(ctx context.Context, req MobileEnqueueRe
 		return nil, false, fmt.Errorf("failed to resolve target path: %w", err)
 	}
 
-	// 1. Check if the target file already exists on disk and is non-empty
-	if tfi, statErr := os.Stat(targetPath); statErr == nil && !tfi.IsDir() && tfi.Size() > 0 {
-		e.logger.Info("mobile profile already exists on disk, skipping redundant encode",
-			"target", targetPath,
-			"source", cleanSource,
-			"profile", mobCfg.Name,
-		)
+	var (
+		job           *Job
+		isExisting    bool
+		shouldRefresh bool
+	)
 
+	// Concurrency protection: acquire lock around target lookup and job insertion
+	err = func() error {
+		e.mu.Lock()
+		defer e.mu.Unlock()
+
+		// 1. Check if the target file already exists on disk and is non-empty
+		if tfi, statErr := os.Stat(targetPath); statErr == nil && !tfi.IsDir() && tfi.Size() > 0 {
+			e.logger.Info("mobile profile already exists on disk, skipping redundant encode",
+				"target", targetPath,
+				"source", cleanSource,
+				"profile", mobCfg.Name,
+			)
+
+			now := time.Now().UTC()
+			if e.store != nil {
+				if existingJob, _ := e.store.FindJobByTarget(ctx, targetPath); existingJob != nil {
+					if existingJob.Status != StatusCompleted {
+						_ = e.store.MarkCompleted(ctx, existingJob.ID, targetPath, "existing")
+						existingJob.Status = StatusCompleted
+						existingJob.Progress = 100.0
+						existingJob.EncoderUsed = "existing"
+						existingJob.CompletedAt = &now
+					}
+					job = existingJob
+					isExisting = true
+					shouldRefresh = true
+					return nil
+				}
+			}
+
+			job = &Job{
+				ID:          generateJobID(),
+				SourcePath:  cleanSource,
+				TargetPath:  targetPath,
+				Profile:     mobCfg.Name,
+				Status:      StatusCompleted,
+				Progress:    100.0,
+				EncoderUsed: "existing",
+				CreatedAt:   now,
+				StartedAt:   &now,
+				CompletedAt: &now,
+			}
+			if e.store != nil {
+				_ = e.store.Enqueue(ctx, job)
+			}
+			isExisting = true
+			shouldRefresh = true
+			return nil
+		}
+
+		// 2. Deduplication: Check if a job is already queued, processing, or paused for this target
 		if e.store != nil {
 			if existingJob, _ := e.store.FindJobByTarget(ctx, targetPath); existingJob != nil {
-				go e.dispatchRefresh("jellyfin")
-				return existingJob, true, nil
+				if existingJob.Status == StatusQueued || existingJob.Status == StatusProcessing || existingJob.Status == StatusPaused {
+					e.logger.Info("mobile profile job already queued/processing/paused", "id", existingJob.ID, "target", targetPath, "status", existingJob.Status)
+					job = existingJob
+					isExisting = false
+					return nil
+				}
 			}
 		}
 
-		now := time.Now().UTC()
-		job := &Job{
-			ID:          generateJobID(),
-			SourcePath:  cleanSource,
-			TargetPath:  targetPath,
-			Profile:     mobCfg.Name,
-			Status:      StatusCompleted,
-			Progress:    100.0,
-			EncoderUsed: "existing",
-			CreatedAt:   now,
-			StartedAt:   &now,
-			CompletedAt: &now,
+		// 3. Enqueue new job
+		job = &Job{
+			SourcePath: cleanSource,
+			TargetPath: targetPath,
+			Profile:    mobCfg.Name,
+			Status:     StatusQueued,
+			Progress:   0.0,
+			CreatedAt:  time.Now().UTC(),
 		}
+
 		if e.store != nil {
-			_ = e.store.Enqueue(ctx, job)
-		}
-		go e.dispatchRefresh("jellyfin")
-		return job, true, nil
-	}
-
-	// 2. Check if a job is already queued or processing for this target
-	if e.store != nil {
-		if existingJob, _ := e.store.FindJobByTarget(ctx, targetPath); existingJob != nil {
-			if existingJob.Status == StatusQueued || existingJob.Status == StatusProcessing {
-				e.logger.Info("mobile profile job already queued/processing", "id", existingJob.ID, "target", targetPath)
-				return existingJob, false, nil
+			if err := e.store.Enqueue(ctx, job); err != nil {
+				return fmt.Errorf("failed to persist mobile transcode job: %w", err)
 			}
 		}
+		return nil
+	}()
+	if err != nil {
+		return nil, false, err
 	}
 
-	// 3. Enqueue new job
-	job := &Job{
-		SourcePath: cleanSource,
-		TargetPath: targetPath,
-		Profile:    mobCfg.Name,
-		Status:     StatusQueued,
-		Progress:   0.0,
-		CreatedAt:  time.Now().UTC(),
+	if shouldRefresh {
+		e.dispatchRefresh("jellyfin")
 	}
 
-	if e.store != nil {
-		if err := e.store.Enqueue(ctx, job); err != nil {
-			return nil, false, fmt.Errorf("failed to persist mobile transcode job: %w", err)
+	if !isExisting && job.Status == StatusQueued {
+		e.logger.Info("enqueued mobile transcode job", "id", job.ID, "source", job.SourcePath, "target", job.TargetPath, "profile", job.Profile)
+
+		// Wake up background worker if active
+		if e.scheduler.IsActiveNow() {
+			e.triggerWake()
 		}
 	}
 
-	e.logger.Info("enqueued mobile transcode job", "id", job.ID, "source", job.SourcePath, "target", job.TargetPath, "profile", job.Profile)
-
-	// Wake up background worker if active
-	if e.scheduler.IsActiveNow() {
-		e.triggerWake()
-	}
-
-	return job, false, nil
+	return job, isExisting, nil
 }
 
 // GetQueue returns all jobs in the transcoding queue.
@@ -613,7 +670,7 @@ func (e *TranscodeEngine) executeJob(ctx context.Context, job *Job) error {
 			"duration_seconds": 0.0,
 		})
 		e.resetActiveState()
-		go e.dispatchRefresh("jellyfin")
+		e.dispatchRefresh("jellyfin")
 		return nil
 	}
 
@@ -754,7 +811,7 @@ func (e *TranscodeEngine) executeJob(ctx context.Context, job *Job) error {
 	e.resetActiveState()
 
 	// Trigger immediate Jellyfin library refresh
-	go e.dispatchRefresh("jellyfin")
+	e.dispatchRefresh("jellyfin")
 
 	return nil
 }
@@ -779,14 +836,18 @@ func (e *TranscodeEngine) dispatchRefresh(serviceID string) {
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
+	e.wg.Add(1)
+	go func() {
+		defer e.wg.Done()
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
 
-	if err := refresher.RefreshService(ctx, serviceID); err != nil {
-		e.logger.Info("library refresh dispatched (service may be inactive or unavailable)", "service", serviceID, "error", err)
-	} else {
-		e.logger.Info("library refresh dispatched successfully", "service", serviceID)
-	}
+		if err := refresher.RefreshService(ctx, serviceID); err != nil {
+			e.logger.Info("library refresh dispatched (service may be inactive or unavailable)", "service", serviceID, "error", err)
+		} else {
+			e.logger.Info("library refresh dispatched successfully", "service", serviceID)
+		}
+	}()
 }
 
 // DefaultHeadroomChecker calculates free capacity percentage on Linux filesystems.
