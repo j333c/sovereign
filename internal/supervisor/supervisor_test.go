@@ -58,11 +58,11 @@ func TestSupervisor_InitialListServices_InactiveAndNotDownloaded(t *testing.T) {
 		t.Fatalf("ListServices failed: %v", err)
 	}
 
-	if len(services) != 4 {
-		t.Fatalf("expected 4 services, got %d", len(services))
+	if len(services) != 5 {
+		t.Fatalf("expected 5 services, got %d", len(services))
 	}
 
-	expectedIDs := []string{ServiceJellyfin, ServiceNavidrome, ServiceAudiobookshelf, ServicePaperless}
+	expectedIDs := []string{ServiceJellyfin, ServiceNavidrome, ServiceAudiobookshelf, ServicePaperless, ServiceLlama}
 	for i, id := range expectedIDs {
 		svc := services[i]
 		if svc.ID != id {
@@ -611,13 +611,55 @@ func TestSupervisor_ResolveID(t *testing.T) {
 		t.Errorf("expected resolveID(\"custom\") == \"custom\", got %s", resolved)
 	}
 
-	// Verify GetService accepts alias "video"
-	ctx := context.Background()
-	svc, err := mgr.GetService(ctx, "video")
-	if err != nil {
-		t.Fatalf("GetService(\"video\") failed: %v", err)
+	if resolved := mgr.resolveID("llama"); resolved != ServiceLlama {
+		t.Errorf("expected resolveID(\"llama\") == %s, got %s", ServiceLlama, resolved)
 	}
-	if svc.ID != ServiceJellyfin {
-		t.Errorf("expected service ID %s, got %s", ServiceJellyfin, svc.ID)
+	if resolved := mgr.resolveID("ai"); resolved != ServiceLlama {
+		t.Errorf("expected resolveID(\"ai\") == %s, got %s", ServiceLlama, resolved)
+	}
+	if resolved := mgr.resolveID("llm"); resolved != ServiceLlama {
+		t.Errorf("expected resolveID(\"llm\") == %s, got %s", ServiceLlama, resolved)
+	}
+	if resolved := mgr.resolveID("llama-server"); resolved != ServiceLlama {
+		t.Errorf("expected resolveID(\"llama-server\") == %s, got %s", ServiceLlama, resolved)
+	}
+
+	// Verify GetService accepts alias "ai"
+	ctx := context.Background()
+	svcAI, err := mgr.GetService(ctx, "ai")
+	if err != nil {
+		t.Fatalf("GetService(\"ai\") failed: %v", err)
+	}
+	if svcAI.ID != ServiceLlama {
+		t.Errorf("expected service ID %s, got %s", ServiceLlama, svcAI.ID)
 	}
 }
+
+func TestSupervisor_LlamaActivation_SafeStubMode(t *testing.T) {
+	mgr, _, tempDir, _ := setupTestManager(t, nil)
+	defer mgr.Close()
+
+	ctx := context.Background()
+	// Activate llama without models in tempDir/models
+	st, err := mgr.ActivateService(ctx, "ai")
+	if err != nil {
+		t.Fatalf("ActivateService(\"ai\") failed: %v", err)
+	}
+
+	if st.ID != ServiceLlama {
+		t.Errorf("expected service ID %s, got %s", ServiceLlama, st.ID)
+	}
+	if st.Status != StatusRunning {
+		t.Errorf("expected status running in safe stub mode, got %s", st.Status)
+	}
+	if st.Health != HealthDegraded {
+		t.Errorf("expected health degraded in safe stub mode, got %s", st.Health)
+	}
+
+	// Verify /data/models directory was created
+	modelsDir := filepath.Join(tempDir, "models")
+	if _, err := os.Stat(modelsDir); err != nil {
+		t.Errorf("expected models directory to be created: %v", err)
+	}
+}
+

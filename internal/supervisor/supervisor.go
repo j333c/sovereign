@@ -246,6 +246,7 @@ type ServiceManagerConfig struct {
 	JellyfinProvisioner  *JellyfinProvisioner
 	AudioProvisioner     *AudioProvisioner
 	PaperlessProvisioner *PaperlessProvisioner
+	LlamaProvisioner     *LlamaProvisioner
 }
 
 // ServiceManager orchestrates on-demand container lifecycles, health probing, and volume preservation.
@@ -265,6 +266,7 @@ type ServiceManager struct {
 	jellyfinProvisioner  *JellyfinProvisioner
 	audioProvisioner     *AudioProvisioner
 	paperlessProvisioner *PaperlessProvisioner
+	llamaProvisioner     *LlamaProvisioner
 }
 
 // NewServiceManager constructs and initializes the appliance service lifecycle manager.
@@ -292,6 +294,15 @@ func NewServiceManager(cfg ServiceManagerConfig) *ServiceManager {
 	pp := cfg.PaperlessProvisioner
 	if pp == nil {
 		pp = NewPaperlessProvisioner(cfg.DataDir, cfg.Logger)
+	}
+
+	lp := cfg.LlamaProvisioner
+	if lp == nil {
+		lp = NewLlamaProvisioner(cfg.DataDir, cfg.Logger, LlamaProvisionerOptions{
+			DevRoot:   cfg.HardwareOpts.DevRoot,
+			SysfsRoot: cfg.HardwareOpts.SysfsRoot,
+			ProcRoot:  cfg.HardwareOpts.ProcRoot,
+		})
 	}
 
 	timeFunc := cfg.WatchdogConfig.TimeFunc
@@ -365,6 +376,19 @@ func NewServiceManager(cfg ServiceManagerConfig) *ServiceManager {
 				"state/services/paperless:/usr/src/paperless/state",
 			},
 		},
+		ServiceLlama: {
+			ID:                  ServiceLlama,
+			Name:                "llama.cpp",
+			Description:         "Local AI Inference",
+			Image:               ImageLlama,
+			MemLimitBytes:       MemLimitLlama,
+			MemReservationBytes: MemReservationLlama,
+			Port:                DefaultLlamaPort,
+			Subpath:             "/v1",
+			VolumeTemplates: []string{
+				"models:/models:ro",
+			},
+		},
 	}
 
 	statuses := make(map[string]*ServiceStatus)
@@ -400,6 +424,7 @@ func NewServiceManager(cfg ServiceManagerConfig) *ServiceManager {
 		jellyfinProvisioner:  jp,
 		audioProvisioner:     ap,
 		paperlessProvisioner: pp,
+		llamaProvisioner:     lp,
 	}
 }
 
@@ -430,8 +455,8 @@ func (m *ServiceManager) ListServices(ctx context.Context) ([]ServiceStatus, err
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	// Ordered list for deterministic responses: jellyfin, navidrome, audiobookshelf, paperless
-	order := []string{ServiceJellyfin, ServiceNavidrome, ServiceAudiobookshelf, ServicePaperless}
+	// Ordered list for deterministic responses: jellyfin, navidrome, audiobookshelf, paperless, llama
+	order := []string{ServiceJellyfin, ServiceNavidrome, ServiceAudiobookshelf, ServicePaperless, ServiceLlama}
 	result := make([]ServiceStatus, 0, len(order))
 
 	for _, id := range order {
@@ -460,6 +485,8 @@ func (m *ServiceManager) resolveID(id string) string {
 		return ServiceAudiobookshelf
 	case "dms", "documents", "paperless":
 		return ServicePaperless
+	case "llama", "ai", "llm", "llama-server":
+		return ServiceLlama
 	default:
 		return id
 	}
@@ -494,6 +521,9 @@ func (m *ServiceManager) ActivateService(ctx context.Context, id string) (*Servi
 	}
 	if m.paperlessProvisioner == nil {
 		m.paperlessProvisioner = NewPaperlessProvisioner(m.dataDir, m.logger)
+	}
+	if m.llamaProvisioner == nil {
+		m.llamaProvisioner = NewLlamaProvisioner(m.dataDir, m.logger)
 	}
 	m.mu.Unlock()
 
@@ -635,17 +665,53 @@ func (m *ServiceManager) ActivateService(ctx context.Context, id string) (*Servi
 	}
 
 	// 3. Synthesize Compose specification
-	containerSpec := ContainerSpec{
-		Name:                   def.ID,
-		Image:                  def.Image,
-		MemoryLimitBytes:       def.MemLimitBytes,
-		MemoryReservationBytes: def.MemReservationBytes,
-		Ports:                  map[int]int{def.Port: def.Port},
-		UDPPorts:               udpPorts,
-		Devices:                devices,
-		Volumes:                volumes,
-		Networks:               []string{"sovereign-ingress", "sovereign-control"},
-		Env:                    env,
+	var containerSpec ContainerSpec
+
+	if id == ServiceLlama && m.llamaProvisioner != nil {
+		llamaRes, err := m.llamaProvisioner.Provision(ctx)
+		if err != nil {
+			m.logger.Error("failed to provision llama specialized environment", "service", id, "error", err)
+			emitError(fmt.Sprintf("Failed to provision %s: %v", id, err))
+			return nil, fmt.Errorf("failed to provision %s: %w", id, err)
+		}
+		if llamaRes.InSafeStub {
+			m.mu.Lock()
+			st.Status = StatusRunning
+			st.Health = HealthDegraded
+			st.ImageDownloaded = true
+			st.UpdatedAt = m.timeNow().UTC().Format(time.RFC3339)
+			stCopy := *st
+			m.mu.Unlock()
+
+			m.debouncer.Reset(id)
+
+			if m.broadcaster != nil {
+				m.broadcaster("service.health_changed", ServiceHealthChanged{
+					ServiceID: id,
+					Status:    StatusRunning,
+					Health:    HealthDegraded,
+					Detail:    "Safe Stub Mode: No AI model provisioned in /data/models",
+					Timestamp: m.timeNow().UTC().Format(time.RFC3339),
+				})
+			}
+
+			m.logger.Info("service activated in safe stub mode (no model provisioned)", "service", id)
+			return &stCopy, nil
+		}
+		containerSpec = llamaRes.ContainerSpec
+	} else {
+		containerSpec = ContainerSpec{
+			Name:                   def.ID,
+			Image:                  def.Image,
+			MemoryLimitBytes:       def.MemLimitBytes,
+			MemoryReservationBytes: def.MemReservationBytes,
+			Ports:                  map[int]int{def.Port: def.Port},
+			UDPPorts:               udpPorts,
+			Devices:                devices,
+			Volumes:                volumes,
+			Networks:               []string{"sovereign-ingress", "sovereign-control"},
+			Env:                    env,
+		}
 	}
 
 	if _, err := SynthesizeComposeSpec(m.dataDir, containerSpec); err != nil {
@@ -779,6 +845,20 @@ func (m *ServiceManager) RestartService(ctx context.Context, id string) (*Servic
 
 	m.logger.Info("restarting service", "service", id)
 
+	if id == ServiceLlama && m.llamaProvisioner != nil {
+		llamaRes, err := m.llamaProvisioner.Provision(ctx)
+		if err == nil && llamaRes != nil && llamaRes.InSafeStub {
+			m.debouncer.Reset(id)
+			m.mu.Lock()
+			st.Status = StatusRunning
+			st.Health = HealthDegraded
+			st.UpdatedAt = m.timeNow().UTC().Format(time.RFC3339)
+			stCopy := *st
+			m.mu.Unlock()
+			return &stCopy, nil
+		}
+	}
+
 	if err := m.engine.RestartContainer(ctx, id); err != nil {
 		m.logger.Error("failed to restart container", "service", id, "error", err)
 		return nil, fmt.Errorf("failed to restart service: %w", err)
@@ -848,6 +928,12 @@ func (m *ServiceManager) probeActiveServices(ctx context.Context) {
 			continue
 		}
 		m.mu.RUnlock()
+
+		if id == ServiceLlama && m.llamaProvisioner != nil {
+			if res, err := m.llamaProvisioner.Provision(ctx); err == nil && res != nil && res.InSafeStub {
+				continue
+			}
+		}
 
 		healthy, err := m.engine.ProbeHealth(ctx, id)
 		if err != nil {

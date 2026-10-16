@@ -462,7 +462,7 @@ paths:
         - name: id
           in: path
           required: true
-          description: Unique service identifier or alias (e.g. jellyfin, navidrome, audiobookshelf, paperless, dms, documents, audio, video).
+          description: Unique service identifier or alias (e.g. jellyfin, navidrome, audiobookshelf, paperless, llama, ai, llm, llama-server, dms, documents, audio, video).
           schema:
             type: string
             example: paperless
@@ -495,7 +495,7 @@ paths:
         - name: id
           in: path
           required: true
-          description: Unique service identifier or alias (e.g. jellyfin, navidrome, audiobookshelf, paperless, dms, documents, audio).
+          description: Unique service identifier or alias (e.g. jellyfin, navidrome, audiobookshelf, paperless, llama, ai, llm, llama-server, dms, documents, audio).
           schema:
             type: string
             example: paperless
@@ -540,7 +540,7 @@ paths:
         - name: id
           in: path
           required: true
-          description: Unique service identifier or alias (e.g. jellyfin, navidrome, audiobookshelf, paperless, dms, documents, audio).
+          description: Unique service identifier or alias (e.g. jellyfin, navidrome, audiobookshelf, paperless, llama, ai, llm, llama-server, dms, documents, audio).
           schema:
             type: string
             example: paperless
@@ -573,7 +573,7 @@ paths:
         - name: id
           in: path
           required: true
-          description: Unique service identifier or alias (e.g. jellyfin, navidrome, audiobookshelf, paperless, dms, documents, audio).
+          description: Unique service identifier or alias (e.g. jellyfin, navidrome, audiobookshelf, paperless, llama, ai, llm, llama-server, dms, documents, audio).
           schema:
             type: string
             example: paperless
@@ -606,7 +606,7 @@ paths:
   /api/v1/services/{id}/refresh:
     post:
       summary: Refresh media service library
-      description: Triggers immediate library refresh webhook in the specified media service (e.g. Jellyfin, Navidrome, Audiobookshelf). Non-media services such as Paperless (`paperless`, `dms`, `documents`) do not support library refresh and return 400 Bad Request.
+      description: Triggers immediate library refresh webhook in the specified media service (e.g. Jellyfin, Navidrome, Audiobookshelf). Non-media services such as Paperless (`paperless`, `dms`, `documents`) and Llama (`llama`, `ai`, `llm`) do not support library refresh and return 400 Bad Request.
       operationId: refreshService
       parameters:
         - name: id

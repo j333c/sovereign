@@ -19,6 +19,7 @@ import (
 	"sync"
 	"time"
 
+	"sovereign/internal/ai"
 	"sovereign/internal/auth"
 	"sovereign/internal/documents"
 	"sovereign/internal/enrichment"
@@ -203,6 +204,9 @@ type Config struct {
 	DeadlineStore     *store.DeadlineStore
 	ObligationScanner *documents.ObligationScanner
 	AlertDispatcher   *notify.AlertDispatcher
+	LlamaProvisioner  *supervisor.LlamaProvisioner
+	AIGateway         ai.Gateway
+	LlamaURL          string
 }
 
 type sseEvent struct {
@@ -234,6 +238,9 @@ type Server struct {
 	deadlineStore     *store.DeadlineStore
 	obligationScanner *documents.ObligationScanner
 	alertDispatcher   *notify.AlertDispatcher
+	llamaProvisioner  *supervisor.LlamaProvisioner
+	aiGateway         ai.Gateway
+	llamaURL          string
 	stopChan          chan struct{}
 	closeOnce         sync.Once
 	mu                sync.RWMutex
@@ -345,6 +352,12 @@ func NewServer(cfg Config) (*Server, error) {
 		eventSubscribers:  make(map[chan sseEvent]struct{}),
 	}
 
+	if cfg.LlamaProvisioner == nil {
+		s.llamaProvisioner = supervisor.NewLlamaProvisioner(cfg.DataDir, cfg.Logger)
+	} else {
+		s.llamaProvisioner = cfg.LlamaProvisioner
+	}
+
 	if cfg.ServiceMgr == nil {
 		var engine supervisor.RuntimeEngine
 		sockPath := "/var/run/docker.sock"
@@ -359,10 +372,30 @@ func NewServer(cfg Config) (*Server, error) {
 			Engine:           engine,
 			Logger:           cfg.Logger,
 			EventBroadcaster: s.BroadcastEvent,
+			LlamaProvisioner: s.llamaProvisioner,
 		})
 	} else {
 		s.serviceMgr = cfg.ServiceMgr
 		s.serviceMgr.SetEventBroadcaster(s.BroadcastEvent)
+	}
+
+	s.llamaURL = cfg.LlamaURL
+	if s.llamaURL == "" {
+		if env := os.Getenv("SOVEREIGN_LLAMA_URL"); env != "" {
+			s.llamaURL = strings.TrimRight(env, "/")
+		} else {
+			s.llamaURL = "http://sovereign-llama:8080"
+		}
+	}
+
+	if cfg.AIGateway == nil {
+		s.aiGateway = ai.NewGateway(ai.GatewayConfig{
+			ModelsDir: filepath.Join(cfg.DataDir, "models"),
+			LlamaURL:  s.llamaURL,
+			Logger:    cfg.Logger,
+		})
+	} else {
+		s.aiGateway = cfg.AIGateway
 	}
 
 	if cfg.DropzoneEngine == nil {
@@ -935,6 +968,42 @@ func (s *Server) routes() {
 	s.router.HandleFunc("POST /api/v1/alerts/test/mqtt", s.requireSetupOrAdmin(s.handleTestMQTT))
 	s.router.HandleFunc("POST /api/v1/alerts/test/email", s.requireSetupOrAdmin(s.handleTestEmail))
 	s.router.HandleFunc("POST /api/v1/alerts/dispatch", s.requireSetupOrAdmin(s.handleDispatchAlerts))
+
+	// AI Gateway mediated inference endpoints and Safe Stub Mode fallback
+	s.router.HandleFunc("/v1", s.handleAIGateway)
+	s.router.HandleFunc("/v1/{path...}", s.handleAIGateway)
+}
+
+// handleAIGateway mediates /v1 inference requests to the internal llama-server spoke,
+// falling back to Safe Stub Mode (HTTP 503 Problem Details) when no models are active or provisioned.
+func (s *Server) handleAIGateway(w http.ResponseWriter, r *http.Request) {
+	s.mu.RLock()
+	gw := s.aiGateway
+	mgr := s.serviceMgr
+	s.mu.RUnlock()
+
+	if gw == nil {
+		ai.SafeStubHandler(w, r)
+		return
+	}
+
+	hasModel, err := gw.CheckModelAvailability(r.Context())
+	if err != nil || !hasModel {
+		ai.SafeStubHandler(w, r)
+		return
+	}
+
+	if mgr != nil {
+		st, err := mgr.GetService(r.Context(), supervisor.ServiceLlama)
+		if err == nil && st != nil {
+			if st.Status == supervisor.StatusInactive || st.Status == supervisor.StatusStopped || st.Health == supervisor.HealthDegraded {
+				ai.SafeStubHandler(w, r)
+				return
+			}
+		}
+	}
+
+	gw.ServeHTTP(w, r)
 }
 
 

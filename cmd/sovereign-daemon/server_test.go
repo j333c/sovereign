@@ -20,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	"sovereign/internal/ai"
 	"sovereign/internal/documents"
 	"sovereign/internal/enrichment"
 	"sovereign/internal/hardware"
@@ -1493,11 +1494,11 @@ func TestServer_Services_ListInitial(t *testing.T) {
 		t.Fatalf("failed to decode services response: %v", err)
 	}
 
-	if len(res.Services) != 4 {
-		t.Fatalf("expected 4 services, got %d", len(res.Services))
+	if len(res.Services) != 5 {
+		t.Fatalf("expected 5 services, got %d", len(res.Services))
 	}
 
-	expectedIDs := []string{"jellyfin", "navidrome", "audiobookshelf", "paperless"}
+	expectedIDs := []string{"jellyfin", "navidrome", "audiobookshelf", "paperless", "llama"}
 	for i, id := range expectedIDs {
 		svc := res.Services[i]
 		if svc.ID != id {
@@ -5224,6 +5225,93 @@ func TestServer_Deadlines_IngestionTrigger(t *testing.T) {
 		t.Errorf("expected amount 350.00, got %v", deadlines[0].Amount)
 	}
 }
+
+// Story 5.1: Managed llama.cpp Backend & Appliance Boundary Guard Suite Tests
+
+func TestServer_AIGateway_SafeStubMode(t *testing.T) {
+	srv, _ := setupTestServer(t)
+	defer srv.Close()
+
+	// Queries to /v1/chat/completions without a model must return HTTP 503 RFC 7807 Problem Details
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"qwen2.5","messages":[{"role":"user","content":"hello"}]}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected HTTP 503 Service Unavailable, got %d: %s", w.Code, w.Body.String())
+	}
+
+	ct := w.Header().Get("Content-Type")
+	if !strings.Contains(ct, "problem+json") {
+		t.Errorf("expected application/problem+json content-type, got: %s", ct)
+	}
+
+	var prob ai.SafeStubProblemDetails
+	if err := json.Unmarshal(w.Body.Bytes(), &prob); err != nil {
+		t.Fatalf("failed to decode problem details: %v", err)
+	}
+	if prob.Status != 503 {
+		t.Errorf("expected status 503, got %d", prob.Status)
+	}
+	if prob.Title != "No AI Model Available" {
+		t.Errorf("expected title 'No AI Model Available', got: %s", prob.Title)
+	}
+	if !strings.Contains(prob.Detail, "Settings") {
+		t.Errorf("expected reassurance copy directing to Settings, got: %s", prob.Detail)
+	}
+}
+
+func TestServer_Services_LlamaAliasesAndActivation(t *testing.T) {
+	srv, _ := setupTestServer(t)
+	defer srv.Close()
+
+	aliases := []string{"llama", "ai", "llm", "llama-server"}
+	for _, alias := range aliases {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/services/"+alias, nil)
+		w := httptest.NewRecorder()
+		srv.router.ServeHTTP(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected 200 OK for alias %q, got %d: %s", alias, w.Code, w.Body.String())
+		}
+
+		var st supervisor.ServiceStatus
+		if err := json.Unmarshal(w.Body.Bytes(), &st); err != nil {
+			t.Fatalf("failed to parse service status for %s: %v", alias, err)
+		}
+		if st.ID != supervisor.ServiceLlama {
+			t.Errorf("expected resolved service ID %s for alias %s, got %s", supervisor.ServiceLlama, alias, st.ID)
+		}
+	}
+
+	// Activate AI without models on disk: enters Safe Stub Mode (running + degraded) without crashing
+	reqAct := httptest.NewRequest(http.MethodPost, "/api/v1/services/ai/activate", nil)
+	wAct := httptest.NewRecorder()
+	srv.router.ServeHTTP(wAct, reqAct)
+
+	if wAct.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK activating ai in safe stub mode, got %d: %s", wAct.Code, wAct.Body.String())
+	}
+
+	var actSt supervisor.ServiceStatus
+	_ = json.Unmarshal(wAct.Body.Bytes(), &actSt)
+	if actSt.Status != supervisor.StatusRunning {
+		t.Errorf("expected status running in safe stub mode, got %s", actSt.Status)
+	}
+	if actSt.Health != supervisor.HealthDegraded {
+		t.Errorf("expected health degraded in safe stub mode, got %s", actSt.Health)
+	}
+
+	// Non-media service refresh returns 400 Bad Request
+	reqRef := httptest.NewRequest(http.MethodPost, "/api/v1/services/ai/refresh", nil)
+	wRef := httptest.NewRecorder()
+	srv.router.ServeHTTP(wRef, reqRef)
+	if wRef.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 Bad Request on AI library refresh, got %d: %s", wRef.Code, wRef.Body.String())
+	}
+}
+
 
 
 

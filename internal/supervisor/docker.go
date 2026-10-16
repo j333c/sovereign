@@ -33,6 +33,7 @@ type ContainerSpec struct {
 	Volumes                []string          `yaml:"volumes"` // hostPath:containerPath[:ro]
 	Networks               []string          `yaml:"networks"`
 	Env                    map[string]string `yaml:"environment,omitempty"`
+	Command                []string          `yaml:"command,omitempty"`
 }
 
 // ContainerInfo describes the runtime status of a container instance.
@@ -507,6 +508,9 @@ func (d *DockerEngine) StartContainer(ctx context.Context, spec ContainerSpec) e
 		"ExposedPorts": exposedPorts,
 		"HostConfig":   hostConfig,
 	}
+	if len(spec.Command) > 0 {
+		createPayload["Cmd"] = spec.Command
+	}
 
 	if len(spec.Env) > 0 {
 		var envList []string
@@ -694,6 +698,7 @@ type ComposeServiceSpec struct {
 	Volumes       []string          `yaml:"volumes,omitempty"`
 	Devices       []string          `yaml:"devices,omitempty"`
 	Environment   map[string]string `yaml:"environment,omitempty"`
+	Command       []string          `yaml:"command,omitempty"`
 	Deploy        *ComposeDeploy    `yaml:"deploy,omitempty"`
 	Networks      []string          `yaml:"networks,omitempty"`
 }
@@ -746,6 +751,15 @@ func SynthesizeComposeSpec(dataDir string, spec ContainerSpec) (string, error) {
 	limitMB := spec.MemoryLimitBytes / (1024 * 1024)
 	resMB := spec.MemoryReservationBytes / (1024 * 1024)
 
+	networks := spec.Networks
+	if len(networks) == 0 {
+		networks = []string{"sovereign-ingress", "sovereign-control"}
+	}
+	networksMap := make(map[string]map[string]any)
+	for _, n := range networks {
+		networksMap[n] = map[string]any{"external": true}
+	}
+
 	composeData := ComposeFile{
 		Services: map[string]ComposeServiceSpec{
 			spec.Name: {
@@ -756,6 +770,7 @@ func SynthesizeComposeSpec(dataDir string, spec ContainerSpec) (string, error) {
 				Volumes:       spec.Volumes,
 				Devices:       spec.Devices,
 				Environment:   spec.Env,
+				Command:       spec.Command,
 				Deploy: &ComposeDeploy{
 					Resources: ComposeResources{
 						Limits: ComposeResourceLimits{
@@ -766,13 +781,10 @@ func SynthesizeComposeSpec(dataDir string, spec ContainerSpec) (string, error) {
 						},
 					},
 				},
-				Networks: []string{"sovereign-ingress", "sovereign-control"},
+				Networks: networks,
 			},
 		},
-		Networks: map[string]map[string]any{
-			"sovereign-ingress": {"external": true},
-			"sovereign-control": {"external": true},
-		},
+		Networks: networksMap,
 	}
 
 	yamlBytes, err := yaml.Marshal(composeData)
