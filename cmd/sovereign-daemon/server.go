@@ -313,18 +313,34 @@ func NewServer(cfg Config) (*Server, error) {
 	}
 	s.opticalRipper = cfg.OpticalRipper
 
+	ripGuard := func(discDirPath string) bool {
+		if s.opticalRipper == nil {
+			return false
+		}
+		st := s.opticalRipper.GetStatus()
+		if st.State == optical.StateRipping {
+			if st.StagingPath == "" || filepath.Clean(st.StagingPath) == filepath.Clean(discDirPath) {
+				return true
+			}
+		}
+		return false
+	}
+
 	if cfg.EnrichmentEngine == nil {
 		client := cfg.MetadataClient
 		if client == nil {
-			client = enrichment.NewHTTPMetadataClient(enrichment.HTTPMetadataConfig{})
+			client = enrichment.NewHTTPMetadataClient(enrichment.HTTPMetadataConfig{
+				TMDbAPIKey: os.Getenv("TMDB_API_KEY"),
+			})
 		}
 		var err error
 		cfg.EnrichmentEngine, err = enrichment.NewEnrichmentEngine(enrichment.EngineConfig{
-			DataDir:     cfg.DataDir,
-			Client:      client,
-			Refresher:   s.serviceMgr,
-			Broadcaster: s.BroadcastEvent,
-			Logger:      cfg.Logger,
+			DataDir:        cfg.DataDir,
+			Client:         client,
+			Refresher:      s.serviceMgr,
+			Broadcaster:    s.BroadcastEvent,
+			ActiveRipGuard: ripGuard,
+			Logger:         cfg.Logger,
 		})
 		if err != nil {
 			cfg.Logger.Error("enrichment engine initialization failed", "error", err)
@@ -335,6 +351,7 @@ func NewServer(cfg Config) (*Server, error) {
 			cfg.EnrichmentEngine.SetRefresher(s.serviceMgr)
 		}
 		cfg.EnrichmentEngine.SetBroadcaster(s.BroadcastEvent)
+		cfg.EnrichmentEngine.SetActiveRipGuard(ripGuard)
 	}
 	s.enrichmentEngine = cfg.EnrichmentEngine
 

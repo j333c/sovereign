@@ -543,6 +543,12 @@ func TestServer_StartBackgroundServices(t *testing.T) {
 	if !mdnsSvc.IsActive() {
 		t.Errorf("expected mDNS responder to be active after StartBackgroundServices")
 	}
+	if srv.EnrichmentEngine() == nil {
+		t.Errorf("expected EnrichmentEngine to be initialized")
+	}
+	if srv.OpticalRipper() == nil {
+		t.Errorf("expected OpticalRipper to be initialized")
+	}
 }
 
 func TestServer_StartBackgroundServices_DiagnosticsAutoIntegrityCheck(t *testing.T) {

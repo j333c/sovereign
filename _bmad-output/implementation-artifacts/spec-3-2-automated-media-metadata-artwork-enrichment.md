@@ -2,10 +2,10 @@
 title: 'Story 3.2: Automated Media Metadata & Artwork Enrichment'
 type: 'feature'
 created: '2026-10-16'
-status: 'review'
+status: 'done'
 route: 'dispatch'
 baseline_commit: 'd3b3bae27431a7c4fd31ffeb9c6646c4a2cfa0c5'
-review_loop_iteration: 0
+review_loop_iteration: 1
 context:
   - '_bmad-output/planning-artifacts/architecture/architecture-sovereign-2026-10-15/ARCHITECTURE-SPINE.md'
   - '_bmad-output/planning-artifacts/ux-designs/ux-sovereign-2026-10-15/DESIGN.md'
@@ -97,4 +97,10 @@ context:
 
 ## Review Triage Log
 
-*(To be populated during code review)*
+- **Active Optical Rip In-Progress Guard & Write Stability Window**: Added `ActiveRipGuard` callback and `writeStabilityWindow` check in `EnrichmentEngine.Scan()` to ensure staged discs currently being ripped or written to are safely skipped until write completion. Wired in `cmd/sovereign-daemon/server.go` against `s.opticalRipper.GetStatus()`.
+- **Recursive Subdirectory Promotion (`VIDEO_TS`, `BDMV`)**: Implemented recursive `promoteEntry` helper in `engine.go` ensuring complex disc directory trees and sub-folders are fully migrated into canonical library destinations without discarding subdirectories.
+- **Disambiguation Guard, Deferred Reset, and Path Sanitization**: Implemented `SanitizePathSegment` replacing illegal filesystem characters (`/`, `:`, `*`, etc.), added safety loop bounds on `disambiguateDestination`, and added deferred status reset in `enrichDisc` to ensure `EngineStatus` transitions back to `StateIdle` on errors.
+- **TMDb Environment Key & Genre Mapping**: Read `TMDB_API_KEY` from environment in `server.go` and implemented `tmdbGenreNames` mapping to convert numeric TMDb genre IDs into descriptive names.
+- **Non-blocking MusicBrainz Rate Limiting & Track Extraction**: Reworked MusicBrainz rate limiter to avoid holding mutex across sleeps, and integrated release recordings fetching (`?inc=recordings&fmt=json`) to format and rename audio tracks (`%02d - %s%s`).
+- **Comprehensive Verification Test Matrix**: Added `internal/enrichment/client_test.go` covering TMDb and MusicBrainz parsing, rate limiting, and errors; expanded `internal/enrichment/engine_test.go` with background polling, recursive directory promotion, active rip guard, and path sanitization tests; updated `cmd/sovereign-daemon/server_test.go` background service assertions.
+

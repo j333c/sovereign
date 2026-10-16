@@ -562,3 +562,217 @@ func TestEnrichmentEngine_RefresherInactiveGraceful(t *testing.T) {
 		t.Errorf("expected refresh attempt")
 	}
 }
+
+func TestEnrichmentEngine_Start_BackgroundPolling(t *testing.T) {
+	tmpDir := t.TempDir()
+	stagingDir := filepath.Join(tmpDir, "staging")
+	moviesDir := filepath.Join(tmpDir, "movies")
+
+	mockClient := NewMockMetadataClient()
+	mockClient.MockMovie = &MovieMetadata{Title: "Inception", Year: 2010}
+
+	engine, err := NewEnrichmentEngine(EngineConfig{
+		DataDir:         tmpDir,
+		StagingDir:      stagingDir,
+		MoviesDir:       moviesDir,
+		Client:          mockClient,
+		PollInterval:    50 * time.Millisecond,
+		HeadroomChecker: func(path string) (float64, error) {
+			return 0.50, nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	engine.Start(ctx)
+
+	// Add disc to staging after background polling has started
+	stagedMovie := filepath.Join(stagingDir, "INCEPTION_2010")
+	if err := os.MkdirAll(stagedMovie, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(stagedMovie, "disc.iso"), []byte("iso-data"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Wait up to 2 seconds for polling to detect and process the disc
+	deadline := time.Now().Add(2 * time.Second)
+	targetMovie := filepath.Join(moviesDir, "Inception (2010)", "disc.iso")
+	found := false
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(targetMovie); err == nil {
+			found = true
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	if !found {
+		t.Fatalf("background polling did not promote movie to %q in time", targetMovie)
+	}
+
+	// Verify engine status returned to idle
+	status := engine.GetStatus()
+	if status.State != StateIdle {
+		t.Errorf("expected state %s, got %s", StateIdle, status.State)
+	}
+
+	_ = engine.Close()
+}
+
+func TestEnrichmentEngine_RecursiveDirectoryPromotion(t *testing.T) {
+	tmpDir := t.TempDir()
+	stagingDir := filepath.Join(tmpDir, "staging")
+	moviesDir := filepath.Join(tmpDir, "movies")
+
+	// Structure with VIDEO_TS containing nested files
+	stagedMovie := filepath.Join(stagingDir, "GLADIATOR_2000")
+	videoTS := filepath.Join(stagedMovie, "VIDEO_TS")
+	if err := os.MkdirAll(videoTS, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(videoTS, "VIDEO_TS.IFO"), []byte("ifo-bytes"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(videoTS, "VTS_01_1.VOB"), []byte("vob-bytes"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	mockClient := NewMockMetadataClient()
+	mockClient.MockMovie = &MovieMetadata{Title: "Gladiator", Year: 2000}
+
+	engine, err := NewEnrichmentEngine(EngineConfig{
+		DataDir:    tmpDir,
+		StagingDir: stagingDir,
+		MoviesDir:  moviesDir,
+		Client:     mockClient,
+		HeadroomChecker: func(path string) (float64, error) {
+			return 0.50, nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	processed, err := engine.Scan(context.Background())
+	if err != nil {
+		t.Fatalf("scan failed: %v", err)
+	}
+	if processed != 1 {
+		t.Fatalf("expected 1 processed disc, got %d", processed)
+	}
+
+	// Verify destination contains VIDEO_TS and both files
+	destVideoTS := filepath.Join(moviesDir, "Gladiator (2000)", "VIDEO_TS")
+	if _, err := os.Stat(filepath.Join(destVideoTS, "VIDEO_TS.IFO")); err != nil {
+		t.Errorf("expected VIDEO_TS.IFO in destination: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(destVideoTS, "VTS_01_1.VOB")); err != nil {
+		t.Errorf("expected VTS_01_1.VOB in destination: %v", err)
+	}
+
+	// Verify staging was cleaned up
+	if _, err := os.Stat(stagedMovie); !os.IsNotExist(err) {
+		t.Errorf("expected staging dir %q to be removed", stagedMovie)
+	}
+}
+
+func TestEnrichmentEngine_ActiveRipGuard_And_StabilityWindow(t *testing.T) {
+	tmpDir := t.TempDir()
+	stagingDir := filepath.Join(tmpDir, "staging")
+	moviesDir := filepath.Join(tmpDir, "movies")
+
+	stagedMovie := filepath.Join(stagingDir, "INTERSTELLAR_2014")
+	if err := os.MkdirAll(stagedMovie, 0755); err != nil {
+		t.Fatal(err)
+	}
+	filePath := filepath.Join(stagedMovie, "disc.iso")
+	if err := os.WriteFile(filePath, []byte("interstellar-iso"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	mockClient := NewMockMetadataClient()
+	mockClient.MockMovie = &MovieMetadata{Title: "Interstellar", Year: 2014}
+
+	isRipping := true
+	guard := func(discDirPath string) bool {
+		return isRipping
+	}
+
+	engine, err := NewEnrichmentEngine(EngineConfig{
+		DataDir:        tmpDir,
+		StagingDir:     stagingDir,
+		MoviesDir:      moviesDir,
+		Client:         mockClient,
+		ActiveRipGuard: guard,
+		HeadroomChecker: func(path string) (float64, error) {
+			return 0.50, nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Step 1: Active rip guard is true -> should skip
+	processed, err := engine.Scan(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if processed != 0 {
+		t.Fatalf("expected 0 processed while rip is active, got %d", processed)
+	}
+
+	// Step 2: Rip finished, but file write stability window is active
+	isRipping = false
+	engine.SetWriteStabilityWindow(5 * time.Second)
+
+	// File was created just now, so modTime is within the 5s window
+	processed, err = engine.Scan(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if processed != 0 {
+		t.Fatalf("expected 0 processed during write stability window, got %d", processed)
+	}
+
+	// Step 3: Stability window disabled or expired -> promotion proceeds
+	engine.SetWriteStabilityWindow(0)
+	processed, err = engine.Scan(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if processed != 1 {
+		t.Fatalf("expected 1 processed once rip and stability conditions satisfied, got %d", processed)
+	}
+
+	destMovie := filepath.Join(moviesDir, "Interstellar (2014)", "disc.iso")
+	if _, err := os.Stat(destMovie); err != nil {
+		t.Fatalf("expected movie in destination: %v", err)
+	}
+}
+
+func TestSanitizePathSegment(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{"AC/DC", "AC-DC"},
+		{"Mission: Impossible", "Mission- Impossible"},
+		{"Alien vs. Predator", "Alien vs. Predator"},
+		{"What*If? <Now> | \"Yes\"", "What-If- -Now- - -Yes-"},
+		{"   ..Dangerous Path..   ", "Dangerous Path"},
+		{"", ""},
+	}
+
+	for _, tt := range tests {
+		got := SanitizePathSegment(tt.input)
+		if got != tt.expected {
+			t.Errorf("SanitizePathSegment(%q) = %q, want %q", tt.input, got, tt.expected)
+		}
+	}
+}
+

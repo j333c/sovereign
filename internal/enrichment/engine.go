@@ -8,6 +8,8 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -49,32 +51,36 @@ type EngineStatus struct {
 
 // EngineConfig holds configuration parameters for EnrichmentEngine.
 type EngineConfig struct {
-	DataDir         string
-	StagingDir      string
-	MoviesDir       string
-	TVDir           string
-	MusicDir        string
-	Client          MetadataClient
-	Refresher       LibraryRefresher
-	Broadcaster     func(event string, data any)
-	HeadroomChecker func(path string) (float64, error)
-	PollInterval    time.Duration
-	Logger          *slog.Logger
+	DataDir              string
+	StagingDir           string
+	MoviesDir            string
+	TVDir                string
+	MusicDir             string
+	Client               MetadataClient
+	Refresher            LibraryRefresher
+	Broadcaster          func(event string, data any)
+	HeadroomChecker      func(path string) (float64, error)
+	ActiveRipGuard       func(dirPath string) bool
+	WriteStabilityWindow time.Duration
+	PollInterval         time.Duration
+	Logger               *slog.Logger
 }
 
 // EnrichmentEngine monitors disc staging, enriches metadata, downloads artwork,
 // promotes media into canonical library structures, and dispatches refresh triggers.
 type EnrichmentEngine struct {
-	stagingDir      string
-	moviesDir       string
-	tvDir           string
-	musicDir        string
-	client          MetadataClient
-	refresher       LibraryRefresher
-	broadcaster     func(event string, data any)
-	headroomChecker func(path string) (float64, error)
-	pollInterval    time.Duration
-	logger          *slog.Logger
+	stagingDir           string
+	moviesDir            string
+	tvDir                string
+	musicDir             string
+	client               MetadataClient
+	refresher            LibraryRefresher
+	broadcaster          func(event string, data any)
+	headroomChecker      func(path string) (float64, error)
+	activeRipGuard       func(dirPath string) bool
+	writeStabilityWindow time.Duration
+	pollInterval         time.Duration
+	logger               *slog.Logger
 
 	mu        sync.RWMutex
 	scanMu    sync.Mutex
@@ -129,6 +135,11 @@ func NewEnrichmentEngine(cfg EngineConfig) (*EnrichmentEngine, error) {
 		headroomChecker = defaultHeadroomChecker
 	}
 
+	stability := cfg.WriteStabilityWindow
+	if stability < 0 {
+		stability = 0
+	}
+
 	// Ensure directories exist
 	_ = os.MkdirAll(stagingDir, 0755)
 	_ = os.MkdirAll(moviesDir, 0755)
@@ -136,17 +147,19 @@ func NewEnrichmentEngine(cfg EngineConfig) (*EnrichmentEngine, error) {
 	_ = os.MkdirAll(musicDir, 0755)
 
 	e := &EnrichmentEngine{
-		stagingDir:      stagingDir,
-		moviesDir:       moviesDir,
-		tvDir:           tvDir,
-		musicDir:        musicDir,
-		client:          client,
-		refresher:       cfg.Refresher,
-		broadcaster:     cfg.Broadcaster,
-		headroomChecker: headroomChecker,
-		pollInterval:    pollInterval,
-		logger:          cfg.Logger,
-		stopChan:        make(chan struct{}),
+		stagingDir:           stagingDir,
+		moviesDir:            moviesDir,
+		tvDir:                tvDir,
+		musicDir:             musicDir,
+		client:               client,
+		refresher:            cfg.Refresher,
+		broadcaster:          cfg.Broadcaster,
+		headroomChecker:      headroomChecker,
+		activeRipGuard:       cfg.ActiveRipGuard,
+		writeStabilityWindow: stability,
+		pollInterval:         pollInterval,
+		logger:               cfg.Logger,
+		stopChan:             make(chan struct{}),
 		status: EngineStatus{
 			State:      StateIdle,
 			StatusText: StatusTextIdle,
@@ -175,6 +188,23 @@ func (e *EnrichmentEngine) SetHeadroomChecker(checker func(path string) (float64
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.headroomChecker = checker
+}
+
+// SetActiveRipGuard sets the guard callback to prevent enriching active rips.
+func (e *EnrichmentEngine) SetActiveRipGuard(guard func(dirPath string) bool) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.activeRipGuard = guard
+}
+
+// SetWriteStabilityWindow updates the modification stability window.
+func (e *EnrichmentEngine) SetWriteStabilityWindow(d time.Duration) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if d < 0 {
+		d = 0
+	}
+	e.writeStabilityWindow = d
 }
 
 // SetBroadcaster updates the SSE event broadcast callback dynamically.
@@ -298,6 +328,23 @@ func (e *EnrichmentEngine) Scan(ctx context.Context) (int, error) {
 		}
 
 		discDirPath := filepath.Join(e.stagingDir, entry.Name())
+
+		// Active Rip In-Progress Guard
+		e.mu.RLock()
+		ripGuard := e.activeRipGuard
+		stabilityWindow := e.writeStabilityWindow
+		e.mu.RUnlock()
+
+		if ripGuard != nil && ripGuard(discDirPath) {
+			e.logger.Info("skipping staged disc: optical ripping actively in-progress", "dir", discDirPath)
+			continue
+		}
+
+		if stabilityWindow > 0 && isDirectoryActivelyWritten(discDirPath, stabilityWindow) {
+			e.logger.Info("skipping staged disc: files actively being written", "dir", discDirPath)
+			continue
+		}
+
 		if err := e.enrichDisc(ctx, discDirPath); err != nil {
 			e.logger.Error("failed to enrich staged disc", "dir", discDirPath, "error", err)
 			e.mu.Lock()
@@ -336,8 +383,16 @@ func (e *EnrichmentEngine) enrichDisc(ctx context.Context, discDirPath string) e
 		return nil
 	}
 
-	// Step 2: Live SSE Telemetry - Matching metadata
+	// Step 2: Live SSE Telemetry - Matching metadata with deferred reset safety
 	e.setStatus(StateEnriching, StatusTextMatching, discName, 10.0, "")
+	defer func() {
+		e.mu.RLock()
+		isStillEnriching := (e.status.State == StateEnriching && e.status.CurrentDisc == discName)
+		e.mu.RUnlock()
+		if isStillEnriching {
+			e.setStatus(StateIdle, StatusTextIdle, "", 0.0, "")
+		}
+	}()
 
 	// Step 3: Parse volume label and file structure
 	parsed, err := ParseStagedDisc(discDirPath, "")
@@ -420,9 +475,12 @@ func (e *EnrichmentEngine) enrichDisc(ctx context.Context, discDirPath string) e
 
 	switch parsed.MediaType {
 	case MediaTypeTV:
-		showDir := tvMeta.Title
+		showDir := SanitizePathSegment(tvMeta.Title)
 		if showDir == "" {
-			showDir = parsed.Title
+			showDir = SanitizePathSegment(parsed.Title)
+		}
+		if showDir == "" {
+			showDir = "Unknown TV Show"
 		}
 		seasonFolder := fmt.Sprintf("Season %02d", tvMeta.Season)
 		if tvMeta.Season == 0 {
@@ -432,13 +490,16 @@ func (e *EnrichmentEngine) enrichDisc(ctx context.Context, discDirPath string) e
 		serviceToRefresh = "jellyfin"
 
 	case MediaTypeMusic:
-		artist := musicMeta.Artist
+		artist := SanitizePathSegment(musicMeta.Artist)
 		if artist == "" {
 			artist = "Unknown Artist"
 		}
-		albumFolder := musicMeta.Album
+		albumFolder := SanitizePathSegment(musicMeta.Album)
 		if albumFolder == "" {
-			albumFolder = parsed.Title
+			albumFolder = SanitizePathSegment(parsed.Title)
+		}
+		if albumFolder == "" {
+			albumFolder = "Unknown Album"
 		}
 		if musicMeta.Year > 0 {
 			albumFolder = fmt.Sprintf("%s (%d)", albumFolder, musicMeta.Year)
@@ -447,9 +508,12 @@ func (e *EnrichmentEngine) enrichDisc(ctx context.Context, discDirPath string) e
 		serviceToRefresh = "navidrome"
 
 	default: // Movie
-		movieFolder := movieMeta.Title
+		movieFolder := SanitizePathSegment(movieMeta.Title)
 		if movieFolder == "" {
-			movieFolder = parsed.Title
+			movieFolder = SanitizePathSegment(parsed.Title)
+		}
+		if movieFolder == "" {
+			movieFolder = "Unknown Movie"
 		}
 		if movieMeta.Year > 0 {
 			movieFolder = fmt.Sprintf("%s (%d)", movieFolder, movieMeta.Year)
@@ -484,19 +548,38 @@ func (e *EnrichmentEngine) enrichDisc(ctx context.Context, discDirPath string) e
 		}
 	}
 
-	// Step 7: Atomically Move Media Files with Collision Safeguards
-	for _, f := range files {
-		if f.IsDir() {
-			continue
+	// Build track number -> title lookup if available for audio files
+	trackTitleMap := make(map[int]string)
+	if musicMeta != nil {
+		for _, trk := range musicMeta.Tracks {
+			if trk.Number > 0 && trk.Title != "" {
+				trackTitleMap[trk.Number] = trk.Title
+			}
 		}
+	}
+	trackNumRegex := regexp.MustCompile(`(?i)(?:track|title)?0*(\d+)`)
+
+	// Step 7: Atomically Move Media Files with Collision Safeguards & Recursive Subdirectory Promotion
+	for _, f := range files {
 		srcFile := filepath.Join(discDirPath, f.Name())
-		destFile := filepath.Join(targetDir, f.Name())
+		destFileName := f.Name()
 
-		// Collision disambiguation: never overwrite existing files in destination
-		destFile = disambiguateDestination(destFile)
+		// If music and track metadata is available, format audio track names cleanly
+		if parsed.MediaType == MediaTypeMusic && len(trackTitleMap) > 0 && !f.IsDir() {
+			ext := filepath.Ext(f.Name())
+			base := strings.TrimSuffix(f.Name(), ext)
+			if m := trackNumRegex.FindStringSubmatch(base); len(m) > 1 {
+				if num, err := strconv.Atoi(m[1]); err == nil {
+					if title, ok := trackTitleMap[num]; ok {
+						destFileName = fmt.Sprintf("%02d - %s%s", num, SanitizePathSegment(title), ext)
+					}
+				}
+			}
+		}
 
-		if err := moveFile(srcFile, destFile); err != nil {
-			return fmt.Errorf("failed to move media file %q to %q: %w", srcFile, destFile, err)
+		destFile := filepath.Join(targetDir, destFileName)
+		if err := promoteEntry(srcFile, destFile); err != nil {
+			return fmt.Errorf("failed to promote media entry %q to %q: %w", srcFile, destFile, err)
 		}
 	}
 
@@ -542,9 +625,37 @@ func (e *EnrichmentEngine) dispatchRefresh(serviceID string) {
 	}
 }
 
+// promoteEntry recursively moves directories (like VIDEO_TS or BDMV) or individual media files.
+func promoteEntry(src, dest string) error {
+	info, err := os.Stat(src)
+	if err != nil {
+		return err
+	}
+	if info.IsDir() {
+		if err := os.MkdirAll(dest, 0755); err != nil {
+			return fmt.Errorf("create dir %q: %w", dest, err)
+		}
+		entries, err := os.ReadDir(src)
+		if err != nil {
+			return fmt.Errorf("read dir %q: %w", src, err)
+		}
+		for _, e := range entries {
+			subSrc := filepath.Join(src, e.Name())
+			subDest := filepath.Join(dest, e.Name())
+			if err := promoteEntry(subSrc, subDest); err != nil {
+				return err
+			}
+		}
+		return os.Remove(src)
+	}
+
+	dest = disambiguateDestination(dest)
+	return moveFile(src, dest)
+}
+
 // disambiguateDestination appends numerical counter suffixes if a file already exists at targetPath.
 func disambiguateDestination(targetPath string) string {
-	if _, err := os.Stat(targetPath); os.IsNotExist(err) {
+	if _, err := os.Stat(targetPath); err != nil {
 		return targetPath
 	}
 
@@ -553,11 +664,51 @@ func disambiguateDestination(targetPath string) string {
 	counter := 1
 	for {
 		candidate := fmt.Sprintf("%s (%d)%s", base, counter, ext)
-		if _, err := os.Stat(candidate); os.IsNotExist(err) {
+		if _, err := os.Stat(candidate); err != nil {
 			return candidate
 		}
 		counter++
+		if counter > 10000 {
+			return fmt.Sprintf("%s (%d)%s", base, time.Now().UnixNano(), ext)
+		}
 	}
+}
+
+// SanitizePathSegment replaces filesystem-illegal characters with safe dashes.
+func SanitizePathSegment(s string) string {
+	replacer := strings.NewReplacer(
+		"/", "-",
+		"\\", "-",
+		":", "-",
+		"*", "-",
+		"?", "-",
+		"\"", "-",
+		"<", "-",
+		">", "-",
+		"|", "-",
+	)
+	s = replacer.Replace(s)
+	s = strings.Trim(s, " .")
+	return s
+}
+
+// isDirectoryActivelyWritten checks if any regular file was modified within the stability window.
+func isDirectoryActivelyWritten(dirPath string, stabilityWindow time.Duration) bool {
+	now := time.Now()
+	var isRecent bool
+	_ = filepath.Walk(dirPath, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil
+		}
+		if info.Mode().IsRegular() {
+			if now.Sub(info.ModTime()) < stabilityWindow {
+				isRecent = true
+				return filepath.SkipAll
+			}
+		}
+		return nil
+	})
+	return isRecent
 }
 
 // moveFile attempts atomic rename, falling back to copy+sync+delete for cross-device links.

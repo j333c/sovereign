@@ -19,6 +19,51 @@ var (
 	ErrNoAPIKey         = errors.New("no API key configured")
 )
 
+// Standard TMDb Genre ID to name mappings
+var tmdbGenreNames = map[int]string{
+	28:    "Action",
+	12:    "Adventure",
+	16:    "Animation",
+	35:    "Comedy",
+	80:    "Crime",
+	99:    "Documentary",
+	18:    "Drama",
+	10751: "Family",
+	14:    "Fantasy",
+	36:    "History",
+	27:    "Horror",
+	10402: "Music",
+	9648:  "Mystery",
+	10749: "Romance",
+	878:   "Science Fiction",
+	10770: "TV Movie",
+	53:    "Thriller",
+	10752: "War",
+	37:    "Western",
+	// TV specific
+	10759: "Action & Adventure",
+	10762: "Kids",
+	10763: "News",
+	10764: "Reality",
+	10765: "Sci-Fi & Fantasy",
+	10766: "Soap",
+	10767: "Talk",
+	10768: "War & Politics",
+}
+
+func mapTMDbGenres(genreIDs []int, explicitNames []string) []string {
+	if len(explicitNames) > 0 {
+		return explicitNames
+	}
+	var genres []string
+	for _, id := range genreIDs {
+		if name, ok := tmdbGenreNames[id]; ok {
+			genres = append(genres, name)
+		}
+	}
+	return genres
+}
+
 // MovieMetadata represents enriched metadata for a movie.
 type MovieMetadata struct {
 	Title       string   `json:"title"`
@@ -239,6 +284,7 @@ func (c *HTTPMetadataClient) FetchMovieMetadata(ctx context.Context, query strin
 			ReleaseDate  string   `json:"release_date"`
 			Overview     string   `json:"overview"`
 			PosterPath   string   `json:"poster_path"`
+			GenreIDs     []int    `json:"genre_ids"`
 			GenreNames   []string `json:"genre_names"`
 		} `json:"results"`
 	}
@@ -262,11 +308,13 @@ func (c *HTTPMetadataClient) FetchMovieMetadata(ctx context.Context, query strin
 		posterURL = "https://image.tmdb.org/t/p/w500" + top.PosterPath
 	}
 
+	genres := mapTMDbGenres(top.GenreIDs, top.GenreNames)
+
 	return &MovieMetadata{
 		Title:     top.Title,
 		Year:      relYear,
 		Overview:  top.Overview,
-		Genres:    top.GenreNames,
+		Genres:    genres,
 		PosterURL: posterURL,
 	}, nil
 }
@@ -301,6 +349,7 @@ func (c *HTTPMetadataClient) FetchTVMetadata(ctx context.Context, query string, 
 			FirstAirDate string   `json:"first_air_date"`
 			Overview     string   `json:"overview"`
 			PosterPath   string   `json:"poster_path"`
+			GenreIDs     []int    `json:"genre_ids"`
 			GenreNames   []string `json:"genre_names"`
 		} `json:"results"`
 	}
@@ -324,26 +373,40 @@ func (c *HTTPMetadataClient) FetchTVMetadata(ctx context.Context, query string, 
 		posterURL = "https://image.tmdb.org/t/p/w500" + top.PosterPath
 	}
 
+	genres := mapTMDbGenres(top.GenreIDs, top.GenreNames)
+
 	return &TVMetadata{
 		Title:     top.Name,
 		Year:      year,
 		Season:    season,
 		Overview:  top.Overview,
-		Genres:    top.GenreNames,
+		Genres:    genres,
 		PosterURL: posterURL,
 	}, nil
 }
 
-// FetchMusicMetadata queries MusicBrainz with 1 req/sec rate limiting for album metadata.
+// FetchMusicMetadata queries MusicBrainz with non-blocking 1 req/sec rate limiting for album metadata.
 func (c *HTTPMetadataClient) FetchMusicMetadata(ctx context.Context, query string, tocFingerprint string) (*MusicMetadata, error) {
-	// Enforce 1 req/sec rate limiting for MusicBrainz
+	// Enforce 1 req/sec rate limiting for MusicBrainz without blocking other threads under lock
 	c.mbMu.Lock()
-	elapsed := time.Since(c.lastMBReq)
-	if elapsed < 1*time.Second {
-		time.Sleep(1*time.Second - elapsed)
+	now := time.Now()
+	var delay time.Duration
+	if !c.lastMBReq.IsZero() {
+		elapsed := now.Sub(c.lastMBReq)
+		if elapsed < 1*time.Second {
+			delay = 1*time.Second - elapsed
+		}
 	}
-	c.lastMBReq = time.Now()
+	c.lastMBReq = now.Add(delay)
 	c.mbMu.Unlock()
+
+	if delay > 0 {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(delay):
+		}
+	}
 
 	searchQuery := fmt.Sprintf("release:%s", query)
 	if tocFingerprint != "" {
@@ -399,10 +462,48 @@ func (c *HTTPMetadataClient) FetchMusicMetadata(ctx context.Context, query strin
 
 	coverURL := fmt.Sprintf("%s/%s/front", c.cfg.CoverArtBaseURL, rel.ID)
 
+	var trackList []TrackMetadata
+	if rel.ID != "" {
+		relDetailURL := fmt.Sprintf("%s/release/%s?inc=recordings&fmt=json", c.cfg.MusicBrainzBaseURL, rel.ID)
+		if detailReq, err := http.NewRequestWithContext(ctx, http.MethodGet, relDetailURL, nil); err == nil {
+			detailReq.Header.Set("User-Agent", c.cfg.UserAgent)
+			detailReq.Header.Set("Accept", "application/json")
+			if detailResp, err := c.httpClient.Do(detailReq); err == nil {
+				defer detailResp.Body.Close()
+				if detailResp.StatusCode == http.StatusOK {
+					var detailResult struct {
+						Media []struct {
+							Tracks []struct {
+								Position int    `json:"position"`
+								Number   string `json:"number"`
+								Title    string `json:"title"`
+							} `json:"tracks"`
+						} `json:"media"`
+					}
+					if err := json.NewDecoder(detailResp.Body).Decode(&detailResult); err == nil {
+						for _, med := range detailResult.Media {
+							for _, trk := range med.Tracks {
+								num := trk.Position
+								if num == 0 {
+									num, _ = strconv.Atoi(trk.Number)
+								}
+								trackList = append(trackList, TrackMetadata{
+									Number: num,
+									Title:  trk.Title,
+								})
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
 	return &MusicMetadata{
 		Artist:   artist,
 		Album:    rel.Title,
 		Year:     year,
+		Tracks:   trackList,
 		CoverURL: coverURL,
 	}, nil
 }
