@@ -214,6 +214,11 @@ func (f *FFmpegTranscoder) Transcode(ctx context.Context, opts TranscodeOptions)
 }
 
 func (f *FFmpegTranscoder) buildFFmpegArgs(src, dst, profile string, hw HardwareCapability) ([]string, string) {
+	return f.BuildFFmpegArgs(src, dst, profile, hw)
+}
+
+// BuildFFmpegArgs constructs FFmpeg CLI flags for the specified profile, source, destination, and hardware encoder.
+func (f *FFmpegTranscoder) BuildFFmpegArgs(src, dst, profile string, hw HardwareCapability) ([]string, string) {
 	args := []string{"-y"}
 
 	// Hardware acceleration input flags (must precede -i)
@@ -229,7 +234,42 @@ func (f *FFmpegTranscoder) buildFFmpegArgs(src, dst, profile string, hw Hardware
 	// Input file specification
 	args = append(args, "-i", src)
 
-	// Output video codec & options (must follow -i)
+	// If mobile profile, apply standardized resolution scaling and bounded bitrates
+	if mobCfg, isMobile := GetMobileProfile(profile); isMobile {
+		args = append(args, "-vf", mobCfg.ScaleFilter)
+
+		var encoder string
+		switch hw {
+		case HardwareQSV:
+			args = append(args, "-c:v", "h264_qsv")
+			encoder = "qsv"
+		case HardwareNVENC:
+			args = append(args, "-c:v", "h264_nvenc")
+			encoder = "nvenc"
+		case HardwareVAAPI:
+			args = append(args, "-c:v", "h264_vaapi")
+			encoder = "vaapi"
+		default:
+			args = append(args, "-c:v", "libx264", "-preset", "fast", "-crf", "22", "-pix_fmt", "yuv420p")
+			encoder = "cpu-x264"
+		}
+
+		args = append(args,
+			"-b:v", mobCfg.VideoBitrate,
+			"-maxrate", mobCfg.MaxRate,
+			"-bufsize", mobCfg.BufSize,
+			"-c:a", mobCfg.AudioCodec,
+			"-b:a", mobCfg.AudioBitrate,
+			"-ac", fmt.Sprintf("%d", mobCfg.AudioChannels),
+			"-movflags", "+faststart",
+			"-f", mobCfg.Container,
+			dst,
+		)
+
+		return args, encoder
+	}
+
+	// Output video codec & options for standard profiles (must follow -i)
 	var encoder string
 	isH265 := strings.EqualFold(profile, "h265")
 

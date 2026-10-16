@@ -186,6 +186,13 @@ func (e *TranscodeEngine) cancelActiveJob() {
 	}
 }
 
+// MobileEnqueueRequest defines arguments for enqueuing a mobile offline profile transcode job.
+type MobileEnqueueRequest struct {
+	SourcePath    string `json:"source_path"`
+	TargetProfile string `json:"target_profile"`
+	Profile       string `json:"profile,omitempty"`
+}
+
 // Enqueue adds a media file to the transcoding queue.
 func (e *TranscodeEngine) Enqueue(ctx context.Context, req EnqueueRequest) (*Job, error) {
 	if strings.TrimSpace(req.SourcePath) == "" {
@@ -201,14 +208,27 @@ func (e *TranscodeEngine) Enqueue(ctx context.Context, req EnqueueRequest) (*Job
 		return nil, fmt.Errorf("source path %q is a directory, not a video file", cleanSource)
 	}
 
+	profile := strings.TrimSpace(req.Profile)
+	if profile == "" {
+		profile = "universal"
+	}
+
 	targetPath := strings.TrimSpace(req.TargetPath)
 	if targetPath == "" {
-		ext := filepath.Ext(cleanSource)
-		baseWithoutExt := strings.TrimSuffix(cleanSource, ext)
-		if strings.EqualFold(ext, ".mp4") {
-			targetPath = baseWithoutExt + ".direct-play.mp4"
+		if IsMobileProfile(profile) {
+			var err error
+			targetPath, err = ResolveMultiVersionPath(cleanSource, profile)
+			if err != nil {
+				return nil, fmt.Errorf("failed to resolve mobile target path: %w", err)
+			}
 		} else {
-			targetPath = baseWithoutExt + ".mp4"
+			ext := filepath.Ext(cleanSource)
+			baseWithoutExt := strings.TrimSuffix(cleanSource, ext)
+			if strings.EqualFold(ext, ".mp4") {
+				targetPath = baseWithoutExt + ".direct-play.mp4"
+			} else {
+				targetPath = baseWithoutExt + ".mp4"
+			}
 		}
 	} else {
 		targetPath = filepath.Clean(targetPath)
@@ -216,11 +236,6 @@ func (e *TranscodeEngine) Enqueue(ctx context.Context, req EnqueueRequest) (*Job
 
 	if cleanSource == targetPath {
 		return nil, errors.New("target_path cannot be identical to source_path")
-	}
-
-	profile := strings.TrimSpace(req.Profile)
-	if profile == "" {
-		profile = "universal"
 	}
 
 	job := &Job{
@@ -246,6 +261,112 @@ func (e *TranscodeEngine) Enqueue(ctx context.Context, req EnqueueRequest) (*Job
 	}
 
 	return job, nil
+}
+
+// EnqueueMobile enqueues a media file for mobile profile transcoding.
+// If the target profile file already exists and is non-empty on disk, it returns the existing job
+// (or generates a completed record) with isExisting=true, skipping redundant encoding.
+func (e *TranscodeEngine) EnqueueMobile(ctx context.Context, req MobileEnqueueRequest) (*Job, bool, error) {
+	if strings.TrimSpace(req.SourcePath) == "" {
+		return nil, false, errors.New("source_path cannot be empty")
+	}
+
+	cleanSource := filepath.Clean(req.SourcePath)
+	fi, err := os.Stat(cleanSource)
+	if err != nil {
+		return nil, false, fmt.Errorf("source file %q does not exist or is inaccessible: %w", cleanSource, err)
+	}
+	if fi.IsDir() {
+		return nil, false, fmt.Errorf("source path %q is a directory, not a video file", cleanSource)
+	}
+
+	targetProfile := strings.TrimSpace(req.TargetProfile)
+	if targetProfile == "" {
+		targetProfile = strings.TrimSpace(req.Profile)
+	}
+	if targetProfile == "" {
+		return nil, false, errors.New("target_profile is required (e.g. 'mobile-720p' or 'mobile-1080p')")
+	}
+
+	mobCfg, ok := GetMobileProfile(targetProfile)
+	if !ok {
+		return nil, false, fmt.Errorf("%w: %q (must be %s or %s)", ErrUnknownMobileProfile, targetProfile, ProfileMobile720p, ProfileMobile1080p)
+	}
+
+	targetPath, err := ResolveMultiVersionPath(cleanSource, mobCfg.Name)
+	if err != nil {
+		return nil, false, fmt.Errorf("failed to resolve target path: %w", err)
+	}
+
+	// 1. Check if the target file already exists on disk and is non-empty
+	if tfi, statErr := os.Stat(targetPath); statErr == nil && !tfi.IsDir() && tfi.Size() > 0 {
+		e.logger.Info("mobile profile already exists on disk, skipping redundant encode",
+			"target", targetPath,
+			"source", cleanSource,
+			"profile", mobCfg.Name,
+		)
+
+		if e.store != nil {
+			if existingJob, _ := e.store.FindJobByTarget(ctx, targetPath); existingJob != nil {
+				go e.dispatchRefresh("jellyfin")
+				return existingJob, true, nil
+			}
+		}
+
+		now := time.Now().UTC()
+		job := &Job{
+			ID:          generateJobID(),
+			SourcePath:  cleanSource,
+			TargetPath:  targetPath,
+			Profile:     mobCfg.Name,
+			Status:      StatusCompleted,
+			Progress:    100.0,
+			EncoderUsed: "existing",
+			CreatedAt:   now,
+			StartedAt:   &now,
+			CompletedAt: &now,
+		}
+		if e.store != nil {
+			_ = e.store.Enqueue(ctx, job)
+		}
+		go e.dispatchRefresh("jellyfin")
+		return job, true, nil
+	}
+
+	// 2. Check if a job is already queued or processing for this target
+	if e.store != nil {
+		if existingJob, _ := e.store.FindJobByTarget(ctx, targetPath); existingJob != nil {
+			if existingJob.Status == StatusQueued || existingJob.Status == StatusProcessing {
+				e.logger.Info("mobile profile job already queued/processing", "id", existingJob.ID, "target", targetPath)
+				return existingJob, false, nil
+			}
+		}
+	}
+
+	// 3. Enqueue new job
+	job := &Job{
+		SourcePath: cleanSource,
+		TargetPath: targetPath,
+		Profile:    mobCfg.Name,
+		Status:     StatusQueued,
+		Progress:   0.0,
+		CreatedAt:  time.Now().UTC(),
+	}
+
+	if e.store != nil {
+		if err := e.store.Enqueue(ctx, job); err != nil {
+			return nil, false, fmt.Errorf("failed to persist mobile transcode job: %w", err)
+		}
+	}
+
+	e.logger.Info("enqueued mobile transcode job", "id", job.ID, "source", job.SourcePath, "target", job.TargetPath, "profile", job.Profile)
+
+	// Wake up background worker if active
+	if e.scheduler.IsActiveNow() {
+		e.triggerWake()
+	}
+
+	return job, false, nil
 }
 
 // GetQueue returns all jobs in the transcoding queue.
@@ -477,6 +598,23 @@ func (e *TranscodeEngine) executeJob(ctx context.Context, job *Job) error {
 
 	if tc == nil {
 		return errors.New("transcoder not configured")
+	}
+
+	// Check if target file already exists and is non-empty on disk (prevent duplicate re-encoding)
+	if tfi, err := os.Stat(job.TargetPath); err == nil && !tfi.IsDir() && tfi.Size() > 0 {
+		e.logger.Info("target file already exists on disk, skipping redundant encode", "target", job.TargetPath)
+		if e.store != nil {
+			_ = e.store.MarkCompleted(ctx, job.ID, job.TargetPath, "existing")
+		}
+		e.broadcast("transcode.job_completed", map[string]any{
+			"job_id":           job.ID,
+			"target_path":      job.TargetPath,
+			"encoder_used":     "existing",
+			"duration_seconds": 0.0,
+		})
+		e.resetActiveState()
+		go e.dispatchRefresh("jellyfin")
+		return nil
 	}
 
 	jobCtx, jobCancel := context.WithCancel(ctx)

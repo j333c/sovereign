@@ -57,7 +57,7 @@ development_status:
   3-1-optical-drive-detection-automated-disc-ripping-engine: done
   3-2-automated-media-metadata-artwork-enrichment: done
   3-3-off-peak-transcoding-queue-universal-direct-play-pre-encodin: done
-  3-4-mobile-offline-profile-generation-ipad-sync: backlog
+  3-4-mobile-offline-profile-generation-ipad-sync: review
   epic-3-retrospective: optional
 
   epic-4: backlog

@@ -61,6 +61,13 @@ type EnqueueTranscodeRequest struct {
 	Profile    string `json:"profile,omitempty"`
 }
 
+// EnqueueMobileRequest matches the OpenAPI 3.1 contract.
+type EnqueueMobileRequest struct {
+	SourcePath    string `json:"source_path"`
+	TargetProfile string `json:"target_profile"`
+	Profile       string `json:"profile,omitempty"`
+}
+
 // TranscodeScheduleResponse matches the OpenAPI 3.1 contract.
 type TranscodeScheduleResponse struct {
 	StartHour      int    `json:"start_hour"`
@@ -770,6 +777,7 @@ func (s *Server) routes() {
 	// Off-peak transcoding queue and pre-encoding endpoints
 	s.router.HandleFunc("GET /api/v1/transcode/queue", s.handleTranscodeQueue)
 	s.router.HandleFunc("POST /api/v1/transcode/queue", s.handleEnqueueTranscode)
+	s.router.HandleFunc("POST /api/v1/transcode/mobile", s.requireSetupOrAdmin(s.handleEnqueueMobile))
 	s.router.HandleFunc("GET /api/v1/transcode/schedule", s.handleGetTranscodeSchedule)
 	s.router.HandleFunc("POST /api/v1/transcode/schedule", s.requireSetupOrAdmin(s.handleUpdateTranscodeSchedule))
 	s.router.HandleFunc("POST /api/v1/transcode/override", s.requireSetupOrAdmin(s.handleTranscodeOverride))
@@ -2051,6 +2059,73 @@ func (s *Server) handleEnqueueTranscode(w http.ResponseWriter, r *http.Request) 
 	}
 
 	s.writeJSON(w, http.StatusCreated, resp)
+}
+
+// handleEnqueueMobile enqueues a media file for mobile direct-play profile generation.
+func (s *Server) handleEnqueueMobile(w http.ResponseWriter, r *http.Request) {
+	if s.transcodeEngine == nil {
+		s.writeProblem(w, http.StatusServiceUnavailable, "Transcode Engine Unavailable", "Transcode engine is not initialized", r.URL.Path)
+		return
+	}
+
+	var req EnqueueMobileRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.writeProblem(w, http.StatusBadRequest, "Invalid JSON", "Failed to parse request body: "+err.Error(), r.URL.Path)
+		return
+	}
+
+	if strings.TrimSpace(req.SourcePath) == "" {
+		s.writeProblem(w, http.StatusBadRequest, "Missing Source Path", "source_path is required", r.URL.Path)
+		return
+	}
+
+	targetProfile := strings.TrimSpace(req.TargetProfile)
+	if targetProfile == "" {
+		targetProfile = strings.TrimSpace(req.Profile)
+	}
+	if targetProfile == "" {
+		s.writeProblem(w, http.StatusBadRequest, "Missing Target Profile", "target_profile is required (e.g. 'mobile-720p' or 'mobile-1080p')", r.URL.Path)
+		return
+	}
+
+	if !transcode.IsMobileProfile(targetProfile) {
+		s.writeProblem(w, http.StatusBadRequest, "Unknown Mobile Profile", fmt.Sprintf("target_profile %q is not supported: must be 'mobile-720p' or 'mobile-1080p'", targetProfile), r.URL.Path)
+		return
+	}
+
+	job, isExisting, err := s.transcodeEngine.EnqueueMobile(r.Context(), transcode.MobileEnqueueRequest{
+		SourcePath:    req.SourcePath,
+		TargetProfile: targetProfile,
+	})
+	if err != nil {
+		s.writeProblem(w, http.StatusBadRequest, "Invalid File Path", err.Error(), r.URL.Path)
+		return
+	}
+
+	resp := TranscodeJobResponse{
+		ID:           job.ID,
+		SourcePath:   job.SourcePath,
+		TargetPath:   job.TargetPath,
+		Profile:      job.Profile,
+		Status:       string(job.Status),
+		Progress:     job.Progress,
+		EncoderUsed:  job.EncoderUsed,
+		ErrorMessage: job.ErrorMessage,
+		CreatedAt:    job.CreatedAt.Format(time.RFC3339),
+	}
+	if job.StartedAt != nil {
+		resp.StartedAt = job.StartedAt.Format(time.RFC3339)
+	}
+	if job.CompletedAt != nil {
+		resp.CompletedAt = job.CompletedAt.Format(time.RFC3339)
+	}
+
+	statusCode := http.StatusCreated
+	if isExisting {
+		statusCode = http.StatusOK
+	}
+
+	s.writeJSON(w, statusCode, resp)
 }
 
 // handleGetTranscodeSchedule returns current off-peak schedule configuration and live status.

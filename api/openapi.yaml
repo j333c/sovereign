@@ -907,6 +907,53 @@ paths:
               schema:
                 $ref: '#/components/schemas/ProblemDetails'
 
+  /api/v1/transcode/mobile:
+    post:
+      summary: Enqueue media file for mobile offline profile generation
+      description: |
+        Generates an optimized, space-efficient 720p or 1080p mobile direct-play profile
+        alongside the master media file following Jellyfin multi-version naming conventions
+        (e.g., `<Title> - 720p.mp4` / `<Title> - 1080p.mp4`). If the pre-encoded mobile profile
+        already exists on disk, skips redundant re-encoding and returns existing completed status.
+      operationId: enqueueMobileTranscode
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EnqueueMobileRequest'
+      responses:
+        '200':
+          description: Pre-existing mobile profile found on disk; re-encoding skipped.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TranscodeJobResponse'
+        '201':
+          description: Mobile profile transcode job enqueued successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TranscodeJobResponse'
+        '400':
+          description: Missing or invalid source file path or unsupported target profile.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '500':
+          description: Failed to enqueue mobile transcode job.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '503':
+          description: Transcode engine unavailable.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
   /api/v1/transcode/schedule:
     get:
       summary: Get off-peak transcoding schedule
@@ -2022,6 +2069,22 @@ components:
           type: string
           enum: [universal, h264, h265]
           example: "universal"
+
+    EnqueueMobileRequest:
+      type: object
+      required:
+        - source_path
+        - target_profile
+      properties:
+        source_path:
+          type: string
+          description: Absolute path to the master video file in media storage.
+          example: "/data/media/movies/Inception (2010)/Inception (2010).mkv"
+        target_profile:
+          type: string
+          enum: [mobile-720p, mobile-1080p]
+          description: Target standardized mobile direct-play profile.
+          example: "mobile-720p"
 
     TranscodeScheduleResponse:
       type: object

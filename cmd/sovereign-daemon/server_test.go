@@ -3952,4 +3952,307 @@ func TestServer_Transcode_BackgroundProcessing(t *testing.T) {
 	}
 }
 
+func TestServer_Transcode_Mobile_Endpoint(t *testing.T) {
+	srv, dataDir := setupTestServer(t)
+	defer srv.Close()
+
+	// 1. Validation error: empty source_path
+	emptyBody := bytes.NewBufferString(`{"source_path": "", "target_profile": "mobile-720p"}`)
+	emptyReq := httptest.NewRequest(http.MethodPost, "/api/v1/transcode/mobile", emptyBody)
+	emptyReq.Header.Set("Content-Type", "application/json")
+	emptyW := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(emptyW, emptyReq)
+	if emptyW.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for empty source_path, got %d", emptyW.Code)
+	}
+
+	// 2. Validation error: non-existent file
+	missingBody := bytes.NewBufferString(`{"source_path": "/data/media/movies/NonExistent (2024)/movie.mkv", "target_profile": "mobile-720p"}`)
+	missingReq := httptest.NewRequest(http.MethodPost, "/api/v1/transcode/mobile", missingBody)
+	missingReq.Header.Set("Content-Type", "application/json")
+	missingW := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(missingW, missingReq)
+	if missingW.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for non-existent file, got %d", missingW.Code)
+	}
+
+	// 3. Validation error: missing target_profile
+	noProfBody := bytes.NewBufferString(`{"source_path": "/data/media/staging/test.mkv"}`)
+	noProfReq := httptest.NewRequest(http.MethodPost, "/api/v1/transcode/mobile", noProfBody)
+	noProfReq.Header.Set("Content-Type", "application/json")
+	noProfW := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(noProfW, noProfReq)
+	if noProfW.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for missing target_profile, got %d", noProfW.Code)
+	}
+
+	// 4. Validation error: unknown profile (e.g. mobile-4k)
+	badProfBody := bytes.NewBufferString(`{"source_path": "/data/media/staging/test.mkv", "target_profile": "mobile-4k"}`)
+	badProfReq := httptest.NewRequest(http.MethodPost, "/api/v1/transcode/mobile", badProfBody)
+	badProfReq.Header.Set("Content-Type", "application/json")
+	badProfW := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(badProfW, badProfReq)
+	if badProfW.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for unsupported mobile-4k profile, got %d", badProfW.Code)
+	}
+
+	// Create test movie master
+	movieDir := filepath.Join(dataDir, "media", "movies", "Inception (2010)")
+	_ = os.MkdirAll(movieDir, 0755)
+	masterFile := filepath.Join(movieDir, "Inception (2010).mkv")
+	_ = os.WriteFile(masterFile, []byte("MASTER_INCEPTION_RAW_STREAM"), 0644)
+
+	// 5. Valid mobile-720p enqueue
+	enq720Payload := map[string]string{
+		"source_path":    masterFile,
+		"target_profile": "mobile-720p",
+	}
+	body720, _ := json.Marshal(enq720Payload)
+	req720 := httptest.NewRequest(http.MethodPost, "/api/v1/transcode/mobile", bytes.NewReader(body720))
+	req720.Header.Set("Content-Type", "application/json")
+	w720 := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(w720, req720)
+
+	if w720.Code != http.StatusCreated {
+		t.Fatalf("expected 201 Created for mobile-720p, got %d: %s", w720.Code, w720.Body.String())
+	}
+
+	var job720 TranscodeJobResponse
+	if err := json.Unmarshal(w720.Body.Bytes(), &job720); err != nil {
+		t.Fatalf("failed to decode job response: %v", err)
+	}
+	expectedTarget720 := filepath.Join(movieDir, "Inception (2010) - 720p.mp4")
+	if job720.TargetPath != expectedTarget720 {
+		t.Errorf("expected target_path %q, got %q", expectedTarget720, job720.TargetPath)
+	}
+	if job720.Profile != "mobile-720p" {
+		t.Errorf("expected profile mobile-720p, got %q", job720.Profile)
+	}
+	if job720.Status != "queued" {
+		t.Errorf("expected status queued, got %q", job720.Status)
+	}
+
+	// 6. Valid mobile-1080p enqueue
+	enq1080Payload := map[string]string{
+		"source_path":    masterFile,
+		"target_profile": "mobile-1080p",
+	}
+	body1080, _ := json.Marshal(enq1080Payload)
+	req1080 := httptest.NewRequest(http.MethodPost, "/api/v1/transcode/mobile", bytes.NewReader(body1080))
+	req1080.Header.Set("Content-Type", "application/json")
+	w1080 := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(w1080, req1080)
+
+	if w1080.Code != http.StatusCreated {
+		t.Fatalf("expected 201 Created for mobile-1080p, got %d: %s", w1080.Code, w1080.Body.String())
+	}
+
+	var job1080 TranscodeJobResponse
+	if err := json.Unmarshal(w1080.Body.Bytes(), &job1080); err != nil {
+		t.Fatalf("failed to decode job response: %v", err)
+	}
+	expectedTarget1080 := filepath.Join(movieDir, "Inception (2010) - 1080p.mp4")
+	if job1080.TargetPath != expectedTarget1080 {
+		t.Errorf("expected target_path %q, got %q", expectedTarget1080, job1080.TargetPath)
+	}
+
+	// 7. Pre-existing mobile profile: returns 200 OK and skips redundant re-encode
+	avatarDir := filepath.Join(dataDir, "media", "movies", "Avatar (2009)")
+	_ = os.MkdirAll(avatarDir, 0755)
+	avatarMaster := filepath.Join(avatarDir, "Avatar (2009).mkv")
+	_ = os.WriteFile(avatarMaster, []byte("AVATAR_MASTER_STREAM"), 0644)
+	avatarPreExisting := filepath.Join(avatarDir, "Avatar (2009) - 720p.mp4")
+	_ = os.WriteFile(avatarPreExisting, []byte("PRE_ENCODED_720P_AVATAR"), 0644)
+
+	avatarPayload := map[string]string{
+		"source_path":    avatarMaster,
+		"target_profile": "mobile-720p",
+	}
+	bodyAvatar, _ := json.Marshal(avatarPayload)
+	reqAvatar := httptest.NewRequest(http.MethodPost, "/api/v1/transcode/mobile", bytes.NewReader(bodyAvatar))
+	reqAvatar.Header.Set("Content-Type", "application/json")
+	wAvatar := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(wAvatar, reqAvatar)
+
+	if wAvatar.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK for pre-existing mobile profile, got %d: %s", wAvatar.Code, wAvatar.Body.String())
+	}
+	var jobAvatar TranscodeJobResponse
+	_ = json.Unmarshal(wAvatar.Body.Bytes(), &jobAvatar)
+	if jobAvatar.Status != "completed" {
+		t.Errorf("expected status 'completed' for pre-existing profile, got %q", jobAvatar.Status)
+	}
+	if jobAvatar.Progress != 100.0 {
+		t.Errorf("expected progress 100.0, got %f", jobAvatar.Progress)
+	}
+
+	// 8. Auth gating: when admin setup is complete, unauthenticated calls must return 401
+	setupPayload := `{
+		"password": "HouseholdMasterKey2026!",
+		"email": "alex@family.net",
+		"language": "de",
+		"features": ["video", "audio", "dms", "ai"]
+	}`
+	reqSetup := httptest.NewRequest(http.MethodPost, "/api/v1/auth/setup", bytes.NewBufferString(setupPayload))
+	wSetup := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(wSetup, reqSetup)
+	if wSetup.Code != http.StatusOK {
+		t.Fatalf("failed to complete setup: %d", wSetup.Code)
+	}
+
+	var sessionCookie *http.Cookie
+	for _, cookie := range wSetup.Result().Cookies() {
+		if cookie.Name == "sovereign_session" {
+			sessionCookie = cookie
+			break
+		}
+	}
+	if sessionCookie == nil {
+		t.Fatalf("session cookie missing from setup response")
+	}
+
+	// Unauthenticated request post-setup
+	reqUnauth := httptest.NewRequest(http.MethodPost, "/api/v1/transcode/mobile", bytes.NewReader(body720))
+	reqUnauth.Header.Set("Content-Type", "application/json")
+	wUnauth := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(wUnauth, reqUnauth)
+	if wUnauth.Code != http.StatusUnauthorized {
+		t.Errorf("expected 401 Unauthorized for unauthenticated request after setup, got %d", wUnauth.Code)
+	}
+
+	// Authenticated request post-setup
+	reqAuth := httptest.NewRequest(http.MethodPost, "/api/v1/transcode/mobile", bytes.NewReader(bodyAvatar))
+	reqAuth.Header.Set("Content-Type", "application/json")
+	reqAuth.AddCookie(sessionCookie)
+	wAuth := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(wAuth, reqAuth)
+	if wAuth.Code != http.StatusOK {
+		t.Errorf("expected 200 OK for authenticated session, got %d: %s", wAuth.Code, wAuth.Body.String())
+	}
+}
+
+func TestServer_Transcode_Mobile_E2E_ExecutionAndJellyfinRefresh(t *testing.T) {
+	srv, dataDir := setupTestServer(t)
+	defer srv.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// 1. Activate Jellyfin service and track library refresh
+	if _, err := srv.ServiceManager().ActivateService(ctx, supervisor.ServiceJellyfin); err != nil {
+		t.Fatalf("failed to activate jellyfin: %v", err)
+	}
+
+	refreshCalled := make(chan string, 1)
+	srv.ServiceManager().JellyfinProvisioner().RefreshFunc = func(ctx context.Context) error {
+		select {
+		case refreshCalled <- supervisor.ServiceJellyfin:
+		default:
+		}
+		return nil
+	}
+
+	// 2. Configure schedule to be active during night (03:00)
+	srv.TranscodeEngine().Scheduler().SetNowFunc(func() time.Time {
+		return time.Date(2026, 10, 16, 3, 0, 0, 0, time.Local)
+	})
+
+	// 3. Start background services
+	srv.StartBackgroundServices(ctx)
+
+	// 4. Create master movie file
+	movieDir := filepath.Join(dataDir, "media", "movies", "Gladiator (2000)")
+	_ = os.MkdirAll(movieDir, 0755)
+	masterFile := filepath.Join(movieDir, "Gladiator (2000).mkv")
+	masterInitialBytes := []byte("GLADIATOR_UNTOUCHED_ORIGINAL_MASTER_20GB")
+	_ = os.WriteFile(masterFile, masterInitialBytes, 0644)
+	masterFiBefore, err := os.Stat(masterFile)
+	if err != nil {
+		t.Fatalf("failed to stat master file: %v", err)
+	}
+
+	// 5. Enqueue mobile-720p transcode via REST API
+	enqPayload := map[string]string{
+		"source_path":    masterFile,
+		"target_profile": "mobile-720p",
+	}
+	body, _ := json.Marshal(enqPayload)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/transcode/mobile", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(w, req)
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("failed to enqueue mobile transcode: %d - %s", w.Code, w.Body.String())
+	}
+
+	var jobResp TranscodeJobResponse
+	_ = json.Unmarshal(w.Body.Bytes(), &jobResp)
+	targetMP4 := filepath.Join(movieDir, "Gladiator (2000) - 720p.mp4")
+	if jobResp.TargetPath != targetMP4 {
+		t.Errorf("expected target path %q, got %q", targetMP4, jobResp.TargetPath)
+	}
+
+	// 6. Poll until background worker completes transcode
+	var completed bool
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		qReq := httptest.NewRequest(http.MethodGet, "/api/v1/transcode/queue", nil)
+		qW := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(qW, qReq)
+
+		var qResp TranscodeQueueResponse
+		_ = json.Unmarshal(qW.Body.Bytes(), &qResp)
+		for _, j := range qResp.Jobs {
+			if j.ID == jobResp.ID && j.Status == "completed" {
+				completed = true
+				break
+			}
+		}
+		if completed {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	if !completed {
+		t.Fatalf("mobile transcode job did not complete within timeout")
+	}
+
+	// 7. Verify mobile profile was generated alongside master and is non-empty
+	fiTarget, err := os.Stat(targetMP4)
+	if err != nil {
+		t.Fatalf("target mobile profile does not exist: %v", err)
+	}
+	if fiTarget.Size() == 0 {
+		t.Errorf("target mobile profile is empty")
+	}
+
+	// 8. Verify master video file is completely untouched
+	fiMasterAfter, err := os.Stat(masterFile)
+	if err != nil {
+		t.Fatalf("master file was deleted or lost: %v", err)
+	}
+	if fiMasterAfter.Size() != masterFiBefore.Size() {
+		t.Errorf("master file size changed: before=%d, after=%d", masterFiBefore.Size(), fiMasterAfter.Size())
+	}
+	masterCurrentBytes, err := os.ReadFile(masterFile)
+	if err != nil {
+		t.Fatalf("failed to read master file: %v", err)
+	}
+	if string(masterCurrentBytes) != string(masterInitialBytes) {
+		t.Errorf("master file contents altered")
+	}
+
+	// 9. Verify immediate Jellyfin library refresh was dispatched
+	select {
+	case svc := <-refreshCalled:
+		if svc != supervisor.ServiceJellyfin {
+			t.Errorf("expected refresh on %s, got %s", supervisor.ServiceJellyfin, svc)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatalf("timed out waiting for Jellyfin refresh webhook upon mobile transcode completion")
+	}
+}
+
 

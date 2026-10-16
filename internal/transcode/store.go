@@ -51,6 +51,7 @@ type Store interface {
 	MarkCompleted(ctx context.Context, id string, targetPath, encoderUsed string) error
 	MarkFailed(ctx context.Context, id string, errMsg string) error
 	ResetProcessingJobs(ctx context.Context) error
+	FindJobByTarget(ctx context.Context, targetPath string) (*Job, error)
 }
 
 // SQLiteStore implements Store using SQLite.
@@ -80,6 +81,7 @@ func (s *SQLiteStore) InitSchema(ctx context.Context) error {
 		completed_at TIMESTAMP NULL
 	);
 	CREATE INDEX IF NOT EXISTS idx_transcode_queue_status ON transcode_queue(status, created_at);
+	CREATE INDEX IF NOT EXISTS idx_transcode_queue_target ON transcode_queue(target_path);
 	`
 	_, err := s.db.ExecContext(ctx, query)
 	if err != nil {
@@ -283,6 +285,26 @@ func (s *SQLiteStore) ResetProcessingJobs(ctx context.Context) error {
 		return fmt.Errorf("failed to reset processing jobs: %w", err)
 	}
 	return nil
+}
+
+// FindJobByTarget retrieves the most recently created job for a given target path.
+func (s *SQLiteStore) FindJobByTarget(ctx context.Context, targetPath string) (*Job, error) {
+	query := `
+	SELECT id, source_path, target_path, profile, status, progress, encoder_used, error_message, created_at, started_at, completed_at
+	FROM transcode_queue
+	WHERE target_path = ?
+	ORDER BY created_at DESC
+	LIMIT 1
+	`
+	row := s.db.QueryRowContext(ctx, query, targetPath)
+	job, err := scanJob(row)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil // No job exists for this target
+		}
+		return nil, fmt.Errorf("failed to query job for target %q: %w", targetPath, err)
+	}
+	return job, nil
 }
 
 type rowScanner interface {
