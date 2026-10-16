@@ -139,9 +139,9 @@ func buildConnectPacket(clientID, username, password string) []byte {
 	var connectFlags byte = 0x02
 	if username != "" {
 		connectFlags |= 0x80
-	}
-	if password != "" {
-		connectFlags |= 0x40
+		if password != "" {
+			connectFlags |= 0x40
+		}
 	}
 	varHeaderAndPayload = append(varHeaderAndPayload, connectFlags)
 
@@ -152,14 +152,12 @@ func buildConnectPacket(clientID, username, password string) []byte {
 	clientBytes := []byte(clientID)
 	varHeaderAndPayload = appendStringWithLength(varHeaderAndPayload, clientBytes)
 
-	// Payload: Username (if set)
+	// Payload: Username and Password (password only allowed if username is set per MQTT 3.1.1)
 	if username != "" {
 		varHeaderAndPayload = appendStringWithLength(varHeaderAndPayload, []byte(username))
-	}
-
-	// Payload: Password (if set)
-	if password != "" {
-		varHeaderAndPayload = appendStringWithLength(varHeaderAndPayload, []byte(password))
+		if password != "" {
+			varHeaderAndPayload = appendStringWithLength(varHeaderAndPayload, []byte(password))
+		}
 	}
 
 	// Build fixed header
@@ -213,8 +211,8 @@ func readConnack(r io.Reader) error {
 	if err != nil {
 		return fmt.Errorf("failed to read CONNACK length: %w", err)
 	}
-	if remLen < 2 {
-		return fmt.Errorf("invalid CONNACK remaining length: %d", remLen)
+	if remLen != 2 {
+		return fmt.Errorf("invalid CONNACK remaining length: %d (expected 2)", remLen)
 	}
 
 	body := make([]byte, remLen)
@@ -254,8 +252,8 @@ func readPuback(r io.Reader, expectedPID uint16) error {
 	if err != nil {
 		return fmt.Errorf("failed to read PUBACK length: %w", err)
 	}
-	if remLen < 2 {
-		return fmt.Errorf("invalid PUBACK remaining length: %d", remLen)
+	if remLen != 2 {
+		return fmt.Errorf("invalid PUBACK remaining length: %d (expected 2)", remLen)
 	}
 
 	body := make([]byte, remLen)

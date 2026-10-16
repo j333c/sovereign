@@ -590,3 +590,51 @@ func TestObligationScanner_LLMFallbackToRegexOn503(t *testing.T) {
 		t.Errorf("expected amount 500.00, got %v", results[0].Amount)
 	}
 }
+
+type testMockDispatcher struct {
+	called chan struct{}
+}
+
+func (m *testMockDispatcher) DispatchCycle(ctx context.Context) (int, error) {
+	select {
+	case m.called <- struct{}{}:
+	default:
+	}
+	return 1, nil
+}
+
+func TestObligationScanner_TriggersAlertDispatch(t *testing.T) {
+	tempDir := t.TempDir()
+	db, err := store.Open(filepath.Join(tempDir, "dispatch_trigger_test.db"))
+	if err != nil {
+		t.Fatalf("Open store failed: %v", err)
+	}
+	defer db.Close()
+
+	dStore, err := store.NewDeadlineStore(db)
+	if err != nil {
+		t.Fatalf("NewDeadlineStore failed: %v", err)
+	}
+
+	scanner := NewObligationScanner(dStore, nil, nil, nil)
+	mockDisp := &testMockDispatcher{called: make(chan struct{}, 5)}
+	scanner.SetAlertDispatcher(mockDisp)
+
+	t0 := time.Date(2026, 10, 1, 10, 0, 0, 0, time.UTC)
+	scanner.SetNowFunc(func() time.Time { return t0 })
+
+	// Scan text with a deadline 5 days out (within 14 days threshold)
+	doc := "Payment due by 2026-10-06. Total: $50.00"
+	_, err = scanner.ScanDocumentText(context.Background(), "doc-alert", "AlertDoc", doc, false)
+	if err != nil {
+		t.Fatalf("ScanDocumentText failed: %v", err)
+	}
+
+	select {
+	case <-mockDisp.called:
+		// Succeeded in receiving dispatch trigger
+	case <-time.After(2 * time.Second):
+		t.Fatal("expected DispatchCycle to be triggered on pending deadline scan, timed out")
+	}
+}
+

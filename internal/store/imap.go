@@ -162,6 +162,11 @@ func NewIMAPStore(db *DB, key []byte) (*IMAPStore, error) {
 }
 
 func generateUUIDv4() string {
+	return GenerateUUIDv4()
+}
+
+// GenerateUUIDv4 generates a standard random RFC 4122 v4 UUID string.
+func GenerateUUIDv4() string {
 	b := make([]byte, 16)
 	_, _ = rand.Read(b)
 	b[6] = (b[6] & 0x0f) | 0x40 // Version 4

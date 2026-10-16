@@ -559,6 +559,11 @@ func NewServer(cfg Config) (*Server, error) {
 	if s.obligationScanner != nil && s.alertDispatcher != nil {
 		s.obligationScanner.SetAlertDispatcher(s.alertDispatcher)
 	}
+	if s.obligationScanner != nil && db != nil {
+		if nCfg, err := notify.LoadConfig(context.Background(), db); err == nil && nCfg != nil && nCfg.DeadlineAlertThreshold > 0 {
+			s.obligationScanner.SetAlertThreshold(nCfg.DeadlineAlertThreshold)
+		}
+	}
 
 	s.routes()
 	return s, nil
@@ -2755,11 +2760,11 @@ func (s *Server) handleGetDeadlines(w http.ResponseWriter, r *http.Request) {
 
 	status := r.URL.Query().Get("status")
 	if status == "" {
-		status = store.DeadlineStatusPending
+		status = store.DeadlineStatusActive
 	}
 
 	withinDays := 0
-	if status == store.DeadlineStatusPending {
+	if status == store.DeadlineStatusPending || status == store.DeadlineStatusActive {
 		withinDays = 14
 	}
 	if q := r.URL.Query().Get("within_days"); q != "" {
@@ -2975,25 +2980,64 @@ func (s *Server) handleUpdateAlertConfig(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	cfg := &notify.AlertConfig{
-		HAWebhookURL:           req.HAWebhookURL,
-		MQTTBrokerHost:         req.MQTTBrokerHost,
-		MQTTBrokerPort:         req.MQTTBrokerPort,
-		MQTTTopic:              req.MQTTTopic,
-		MQTTUsername:           req.MQTTUsername,
-		MQTTPassword:           req.MQTTPassword,
-		AlertEmail:             req.AlertEmail,
-		SMTPHost:               req.SMTPHost,
-		SMTPPort:               req.SMTPPort,
-		SMTPUsername:           req.SMTPUsername,
-		SMTPPassword:           req.SMTPPassword,
-		SMTPFrom:               req.SMTPFrom,
-		DeadlineAlertThreshold: req.DeadlineAlertThreshold,
+	current, err := notify.LoadConfig(r.Context(), s.db)
+	if err != nil || current == nil {
+		current = &notify.AlertConfig{
+			MQTTBrokerPort:         notify.DefaultMQTTBrokerPort,
+			MQTTTopic:              notify.DefaultMQTTTopic,
+			SMTPPort:               notify.DefaultSMTPPort,
+			SMTPFrom:               notify.DefaultSMTPFrom,
+			DeadlineAlertThreshold: notify.DefaultDeadlineAlertThreshold,
+		}
 	}
 
-	if err := notify.SaveConfig(r.Context(), s.db, cfg); err != nil {
+	if req.HAWebhookURL != "" {
+		current.HAWebhookURL = req.HAWebhookURL
+	}
+	if req.MQTTBrokerHost != "" {
+		current.MQTTBrokerHost = req.MQTTBrokerHost
+	}
+	if req.MQTTBrokerPort > 0 {
+		current.MQTTBrokerPort = req.MQTTBrokerPort
+	}
+	if req.MQTTTopic != "" {
+		current.MQTTTopic = req.MQTTTopic
+	}
+	if req.MQTTUsername != "" {
+		current.MQTTUsername = req.MQTTUsername
+	}
+	if req.MQTTPassword != "" {
+		current.MQTTPassword = req.MQTTPassword
+	}
+	if req.AlertEmail != "" {
+		current.AlertEmail = req.AlertEmail
+	}
+	if req.SMTPHost != "" {
+		current.SMTPHost = req.SMTPHost
+	}
+	if req.SMTPPort > 0 {
+		current.SMTPPort = req.SMTPPort
+	}
+	if req.SMTPUsername != "" {
+		current.SMTPUsername = req.SMTPUsername
+	}
+	if req.SMTPPassword != "" {
+		current.SMTPPassword = req.SMTPPassword
+	}
+	if req.SMTPFrom != "" {
+		current.SMTPFrom = req.SMTPFrom
+	}
+	if req.DeadlineAlertThreshold > 0 {
+		current.DeadlineAlertThreshold = req.DeadlineAlertThreshold
+	}
+
+	if err := notify.SaveConfig(r.Context(), s.db, current); err != nil {
 		s.writeProblem(w, http.StatusInternalServerError, "Internal Server Error", "Failed to save alert configuration: "+err.Error(), r.URL.Path)
 		return
+	}
+
+	if s.obligationScanner != nil && current.DeadlineAlertThreshold > 0 {
+		s.obligationScanner.SetAlertThreshold(current.DeadlineAlertThreshold)
 	}
 
 	saved, err := notify.LoadConfig(r.Context(), s.db)

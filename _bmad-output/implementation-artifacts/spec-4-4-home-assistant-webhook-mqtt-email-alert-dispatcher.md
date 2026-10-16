@@ -2,10 +2,10 @@
 title: 'Story 4.4: Home Assistant Webhook, MQTT & Email Alert Dispatcher'
 type: 'feature'
 created: '2026-10-16'
-status: 'review'
+status: 'done'
 route: 'dispatch'
 baseline_commit: '35fb2d40a3c46dd9f018e819427c24c12b81daf4'
-review_loop_iteration: 0
+review_loop_iteration: 1
 context:
   - '_bmad-output/planning-artifacts/architecture/architecture-sovereign-2026-10-15/ARCHITECTURE-SPINE.md'
   - '_bmad-output/planning-artifacts/ux-designs/ux-sovereign-2026-10-15/DESIGN.md'
@@ -99,3 +99,22 @@ context:
 - Dispatcher formats and transmits consolidated email digest via SMTP with document URLs.
 - Once successfully dispatched, deadline status updates to `notified` to prevent duplicate notifications.
 - Administrative test endpoints allow testing webhook, MQTT, and SMTP channels with sanitized error feedback.
+
+## Review Triage Log
+
+- **Review Iteration**: 1
+- **Reviewers**: Blind Hunter, Edge Case Hunter, Verification Gap Hunter
+- **Triaged Findings & Remediations**:
+  1. *Blind Hunter / Edge Cases*: Concurrent dispatch cycles could race and double-deliver notifications before deadlines transition to `notified`.
+     - *Remediation*: Added `dispatchMu sync.Mutex` in `AlertDispatcher` to serialize background and manual dispatch cycles.
+  2. *Edge Cases*: If all enabled alert channels fail or if no channels are configured, deadlines must not transition to `notified`.
+     - *Remediation*: Tracked delivery success across channels; strictly retained `pending` status if no channel succeeded.
+  3. *Edge Cases*: In `internal/store/deadlines.go`, `MarkNotified` was guarding with `WHERE id = ? AND status = 'pending'` so dismissed deadlines are never accidentally resurrected or altered, returning `ErrDeadlineNotFound` if the record does not exist. Added `status="active"` query supporting both `pending` and `notified` deadlines.
+  4. *Edge Cases*: In `cmd/sovereign-daemon/server.go`, `handleGetDeadlines` defaulted query to `active` so alerted deadlines remain visible on the UI dashboard until dismissed.
+  5. *Edge Cases*: In `handleUpdateAlertConfig`, loaded existing config prior to update to merge non-empty fields non-destructively, preserving unmentioned settings and syncing `obligationScanner.SetAlertThreshold`.
+  6. *Edge Cases*: MQTT client strictly enforced MQTT 3.1.1 spec forbidding password flag without username, and checked remaining length byte bounds on CONNACK and PUBACK.
+  7. *Edge Cases*: SMTP client added mandatory RFC 5322 `Date:` and `Message-ID:` headers, sanitized and Q-encoded `Subject:` against CRLF injection, HTML-escaped digest templates (`html.EscapeString`), and cleanly handled negative remaining days ("X days overdue").
+  8. *Verification Gap*: Added unit test `TestObligationScanner_TriggersAlertDispatch` in `internal/documents/deadlines_test.go` verifying that newly scanned deadlines within threshold automatically invoke `DispatchCycle`.
+  9. *Verification Gap*: Enhanced mock MQTT brokers in `internal/notify/notify_test.go` and `cmd/sovereign-daemon/alerts_test.go` to assert received topic (`sovereign/alerts/documents`) and JSON payload fields.
+  10. *Verification Gap*: Added `active` and `notified` to OpenAPI `getDeadlines` `status` enum and regenerated TypeScript client types via `npm run codegen`.
+

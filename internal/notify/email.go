@@ -5,6 +5,8 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"html"
+	"mime"
 	"net"
 	"net/smtp"
 	"strconv"
@@ -125,11 +127,18 @@ func (c *EmailClient) sendMail(ctx context.Context, cfg SMTPConfig, to, subject,
 
 	boundary := fmt.Sprintf("boundary_sovereign_%d", time.Now().UnixNano())
 
+	// Sanitize subject and encode per RFC 2047 if non-ASCII
+	sanitizedSubject := strings.ReplaceAll(strings.ReplaceAll(subject, "\r", ""), "\n", " ")
+	encodedSubject := mime.QEncoding.Encode("utf-8", sanitizedSubject)
+
 	// Build MIME payload
+	now := time.Now()
 	var msg strings.Builder
 	msg.WriteString(fmt.Sprintf("From: %s\r\n", from))
 	msg.WriteString(fmt.Sprintf("To: %s\r\n", to))
-	msg.WriteString(fmt.Sprintf("Subject: %s\r\n", subject))
+	msg.WriteString(fmt.Sprintf("Subject: %s\r\n", encodedSubject))
+	msg.WriteString(fmt.Sprintf("Date: %s\r\n", now.Format(time.RFC1123Z)))
+	msg.WriteString(fmt.Sprintf("Message-ID: <%d.%s@sovereign.local>\r\n", now.UnixNano(), store.GenerateUUIDv4()))
 	msg.WriteString("MIME-Version: 1.0\r\n")
 	msg.WriteString(fmt.Sprintf("Content-Type: multipart/alternative; boundary=\"%s\"\r\n\r\n", boundary))
 
@@ -230,7 +239,9 @@ func buildPlainTextDigest(items []DeadlineDigestItem) string {
 	for i, item := range items {
 		sb.WriteString(fmt.Sprintf("%d. %s\n", i+1, item.Title))
 		daysText := fmt.Sprintf("%d days remaining", item.DaysRemaining)
-		if item.DaysRemaining == 0 {
+		if item.DaysRemaining < 0 {
+			daysText = fmt.Sprintf("%d days overdue", -item.DaysRemaining)
+		} else if item.DaysRemaining == 0 {
 			daysText = "due today"
 		} else if item.DaysRemaining == 1 {
 			daysText = "due tomorrow"
@@ -263,7 +274,10 @@ func buildHTMLDigest(items []DeadlineDigestItem) string {
 	for _, item := range items {
 		daysBadgeColor := "#3B82F6"
 		daysBadgeBg := "#EFF6FF"
-		if item.DaysRemaining <= 3 {
+		if item.DaysRemaining < 0 {
+			daysBadgeColor = "#991B1B"
+			daysBadgeBg = "#FEE2E2"
+		} else if item.DaysRemaining <= 3 {
 			daysBadgeColor = "#EF4444"
 			daysBadgeBg = "#FEF2F2"
 		} else if item.DaysRemaining <= 7 {
@@ -272,7 +286,9 @@ func buildHTMLDigest(items []DeadlineDigestItem) string {
 		}
 
 		daysText := fmt.Sprintf("in %d days", item.DaysRemaining)
-		if item.DaysRemaining == 0 {
+		if item.DaysRemaining < 0 {
+			daysText = fmt.Sprintf("%d days overdue", -item.DaysRemaining)
+		} else if item.DaysRemaining == 0 {
 			daysText = "Today"
 		} else if item.DaysRemaining == 1 {
 			daysText = "Tomorrow"
@@ -284,18 +300,21 @@ func buildHTMLDigest(items []DeadlineDigestItem) string {
 			if cur == "" {
 				cur = "USD"
 			}
-			amountStr = fmt.Sprintf("%.2f %s", *item.Amount, cur)
+			amountStr = html.EscapeString(fmt.Sprintf("%.2f %s", *item.Amount, cur))
 		}
 
 		snippetHTML := ""
 		if item.Snippet != "" {
-			snippetHTML = fmt.Sprintf(`<p style="margin: 4px 0 0 0; font-size: 12px; color: #64748B; font-style: italic;">%s</p>`, item.Snippet)
+			snippetHTML = fmt.Sprintf(`<p style="margin: 4px 0 0 0; font-size: 12px; color: #64748B; font-style: italic;">%s</p>`, html.EscapeString(item.Snippet))
 		}
 
 		urlLink := item.URL
 		if urlLink == "" {
 			urlLink = "http://sovereign.local/docs"
 		}
+		escapedURL := html.EscapeString(urlLink)
+		escapedTitle := html.EscapeString(item.Title)
+		escapedDueDate := html.EscapeString(item.DueDate)
 
 		row := fmt.Sprintf(`
 		<tr style="border-bottom: 1px solid #E5E7EB;">
@@ -317,7 +336,7 @@ func buildHTMLDigest(items []DeadlineDigestItem) string {
 					View Document
 				</a>
 			</td>
-		</tr>`, item.Title, snippetHTML, item.DueDate, daysBadgeBg, daysBadgeColor, daysText, amountStr, urlLink)
+		</tr>`, escapedTitle, snippetHTML, escapedDueDate, daysBadgeBg, daysBadgeColor, daysText, amountStr, escapedURL)
 
 		rows.WriteString(row)
 	}

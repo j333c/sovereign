@@ -14,6 +14,7 @@ var (
 )
 
 const (
+	DeadlineStatusActive    = "active"
 	DeadlineStatusPending   = "pending"
 	DeadlineStatusFuture    = "future"
 	DeadlineStatusDismissed = "dismissed"
@@ -163,7 +164,9 @@ func (s *DeadlineStore) List(ctx context.Context, status string, withinDays int,
 	var conditions []string
 	var args []any
 
-	if status != "" && status != "all" {
+	if status == "active" {
+		conditions = append(conditions, "(status = 'pending' OR status = 'notified')")
+	} else if status != "" && status != "all" {
 		conditions = append(conditions, "status = ?")
 		args = append(args, status)
 	}
@@ -226,19 +229,25 @@ func (s *DeadlineStore) Dismiss(ctx context.Context, id string) (*DocumentDeadli
 	return s.Get(ctx, id)
 }
 
-// MarkNotified updates a deadline's status to 'notified'.
+// MarkNotified updates a pending deadline's status to 'notified', preserving any user dismissal.
 func (s *DeadlineStore) MarkNotified(ctx context.Context, id string) error {
 	res, err := s.db.ExecContext(ctx, `
 		UPDATE document_deadlines
 		SET status = 'notified', updated_at = CURRENT_TIMESTAMP
-		WHERE id = ?
+		WHERE id = ? AND status = 'pending'
 	`, id)
 	if err != nil {
 		return fmt.Errorf("failed to mark deadline as notified: %w", err)
 	}
 	rowsAffected, _ := res.RowsAffected()
 	if rowsAffected == 0 {
-		return ErrDeadlineNotFound
+		_, getErr := s.Get(ctx, id)
+		if errors.Is(getErr, ErrDeadlineNotFound) {
+			return ErrDeadlineNotFound
+		}
+		// If deadline exists but is not pending (e.g. dismissed or already notified),
+		// silently keep its status.
+		return nil
 	}
 	return nil
 }

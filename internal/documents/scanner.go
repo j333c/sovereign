@@ -104,7 +104,7 @@ func (s *ObligationScanner) TriggerAlertDispatch() {
 		return
 	}
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer cancel()
 		if _, err := s.alertDispatcher.DispatchCycle(ctx); err != nil {
 			s.logger.Debug("async alert dispatch cycle failed", "error", err)

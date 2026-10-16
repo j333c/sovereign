@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"math"
 	"strings"
+	"sync"
 	"time"
 
 	"sovereign/internal/store"
@@ -24,6 +25,7 @@ type AlertDispatcher struct {
 	logger        *slog.Logger
 	baseURL       string
 	nowFunc       func() time.Time
+	dispatchMu    sync.Mutex
 }
 
 // NewAlertDispatcher initializes an AlertDispatcher with production defaults.
@@ -70,6 +72,9 @@ func (d *AlertDispatcher) DocumentURL(documentID string) string {
 // DispatchCycle evaluates pending deadlines within the alert threshold and delivers
 // notifications across all enabled channels. Successfully notified deadlines transition to 'notified'.
 func (d *AlertDispatcher) DispatchCycle(ctx context.Context) (int, error) {
+	d.dispatchMu.Lock()
+	defer d.dispatchMu.Unlock()
+
 	if d.db == nil || d.deadlineStore == nil {
 		return 0, errors.New("database or deadline store is not initialized")
 	}
@@ -114,7 +119,9 @@ func (d *AlertDispatcher) DispatchCycle(ctx context.Context) (int, error) {
 	)
 
 	// 1. Channel: Home Assistant Webhook
+	webhookSucceeded := false
 	if hasWebhook {
+		webhookCount := 0
 		for _, dl := range pendingDeadlines {
 			daysRemaining := computeDaysRemaining(dl.DueDate, now)
 			payload := &WebhookDeadlinePayload{
@@ -138,11 +145,16 @@ func (d *AlertDispatcher) DispatchCycle(ctx context.Context) (int, error) {
 				)
 			} else {
 				d.logger.Debug("dispatched webhook alert", "id", dl.ID, "title", dl.Title)
+				webhookCount++
 			}
+		}
+		if webhookCount > 0 {
+			webhookSucceeded = true
 		}
 	}
 
 	// 2. Channel: MQTT Publication (QoS 1)
+	mqttSucceeded := false
 	if hasMQTT {
 		mqttOpts := MQTTConnectOptions{
 			Host:     cfg.MQTTBrokerHost,
@@ -151,6 +163,7 @@ func (d *AlertDispatcher) DispatchCycle(ctx context.Context) (int, error) {
 			Password: cfg.MQTTPassword,
 		}
 
+		mqttCount := 0
 		for _, dl := range pendingDeadlines {
 			daysRemaining := computeDaysRemaining(dl.DueDate, now)
 			payloadMap := map[string]any{
@@ -175,13 +188,18 @@ func (d *AlertDispatcher) DispatchCycle(ctx context.Context) (int, error) {
 				)
 			} else {
 				d.logger.Debug("published MQTT alert", "id", dl.ID, "topic", cfg.MQTTTopic)
+				mqttCount++
 			}
+		}
+		if mqttCount > 0 {
+			mqttSucceeded = true
 		}
 	}
 
 	// 3. Channel: Consolidated Email Digest
 	emailSucceeded := true
 	if hasEmail {
+		emailSucceeded = false
 		smtpCfg := SMTPConfig{
 			Host:     cfg.SMTPHost,
 			Port:     cfg.SMTPPort,
@@ -211,13 +229,12 @@ func (d *AlertDispatcher) DispatchCycle(ctx context.Context) (int, error) {
 				"recipient", cfg.AlertEmail,
 				"error", err,
 			)
-			// Retain pending status so next cycle retries delivery
-			emailSucceeded = false
 		} else {
 			d.logger.Info("sent consolidated email alert digest",
 				"recipient", cfg.AlertEmail,
 				"item_count", len(items),
 			)
+			emailSucceeded = true
 		}
 	}
 
@@ -225,6 +242,12 @@ func (d *AlertDispatcher) DispatchCycle(ctx context.Context) (int, error) {
 	// so the next evaluation cycle retries the digest
 	if hasEmail && !emailSucceeded {
 		d.logger.Warn("retaining pending status for deadlines due to email delivery failure")
+		return 0, nil
+	}
+
+	// If only webhook and/or MQTT were enabled, and all enabled channels failed, do NOT transition to notified
+	if !hasEmail && (hasWebhook || hasMQTT) && !webhookSucceeded && !mqttSucceeded {
+		d.logger.Warn("retaining pending status for deadlines because all configured ambient alert channels failed")
 		return 0, nil
 	}
 

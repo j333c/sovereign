@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -183,7 +184,7 @@ func TestAlerts_TestMQTT_Endpoint(t *testing.T) {
 	}
 
 	// 2. Success with running mock MQTT broker
-	host, port, cleanup := startMockBroker(t)
+	host, port, cleanup, _ := startMockBroker(t)
 	defer cleanup()
 
 	mqttReq := TestMQTTRequest{
@@ -293,7 +294,7 @@ func TestAlerts_Dispatch_Endpoint(t *testing.T) {
 	}))
 	defer mockHA.Close()
 
-	mqttHost, mqttPort, cleanupMQTT := startMockBroker(t)
+	mqttHost, mqttPort, cleanupMQTT, mqttReceived := startMockBroker(t)
 	defer cleanupMQTT()
 
 	smtpHost, smtpPort, cleanupSMTP := startMockSMTP(t)
@@ -333,6 +334,26 @@ func TestAlerts_Dispatch_Endpoint(t *testing.T) {
 		t.Errorf("expected webhook delivery to mock HA server")
 	}
 
+	if len(*mqttReceived) < 1 {
+		t.Errorf("expected at least 1 MQTT message received, got %d", len(*mqttReceived))
+	} else {
+		msg := (*mqttReceived)[0]
+		if msg.Topic != "sovereign/alerts/documents" {
+			t.Errorf("expected MQTT topic 'sovereign/alerts/documents', got %q", msg.Topic)
+		}
+		var payload notify.WebhookDeadlinePayload
+		if err := json.Unmarshal(msg.Payload, &payload); err != nil {
+			t.Errorf("failed to unmarshal MQTT payload: %v", err)
+		} else {
+			if payload.Title != "Gas Utility Bill" {
+				t.Errorf("expected title 'Gas Utility Bill', got %q", payload.Title)
+			}
+			if payload.Amount == nil || *payload.Amount != 75.00 {
+				t.Errorf("expected amount 75.00, got %v", payload.Amount)
+			}
+		}
+	}
+
 	// Verify deadline was updated to 'notified'
 	saved, err := srv.deadlineStore.Get(ctx, dl.ID)
 	if err != nil {
@@ -357,8 +378,13 @@ func TestAlerts_Dispatch_Endpoint(t *testing.T) {
 	}
 }
 
+type mockBrokerMessage struct {
+	Topic   string
+	Payload []byte
+}
+
 // Helpers for mock broker and SMTP
-func startMockBroker(t *testing.T) (string, int, func()) {
+func startMockBroker(t *testing.T) (string, int, func(), *[]mockBrokerMessage) {
 	t.Helper()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -367,6 +393,8 @@ func startMockBroker(t *testing.T) (string, int, func()) {
 
 	tcpAddr := listener.Addr().(*net.TCPAddr)
 	stopCh := make(chan struct{})
+	var messages []mockBrokerMessage
+	var mu sync.Mutex
 
 	go func() {
 		for {
@@ -404,15 +432,25 @@ func startMockBroker(t *testing.T) (string, int, func()) {
 				pubBody := make([]byte, remLen)
 				_, _ = io.ReadFull(c, pubBody)
 
+				topicLen := binary.BigEndian.Uint16(pubBody[0:2])
+				topic := string(pubBody[2 : 2+int(topicLen)])
+				var payload []byte
+
 				// If QoS 1, send PUBACK
 				if qos == 1 && remLen >= 4 {
-					topicLen := binary.BigEndian.Uint16(pubBody[0:2])
 					pidOffset := 2 + int(topicLen)
 					if pidOffset+2 <= len(pubBody) {
 						pid := pubBody[pidOffset : pidOffset+2]
+						payload = pubBody[pidOffset+2:]
 						_, _ = c.Write([]byte{0x40, 0x02, pid[0], pid[1]})
 					}
+				} else {
+					payload = pubBody[2+int(topicLen):]
 				}
+
+				mu.Lock()
+				messages = append(messages, mockBrokerMessage{Topic: topic, Payload: payload})
+				mu.Unlock()
 
 				// Optional DISCONNECT
 				_, _ = io.ReadFull(c, header)
@@ -425,7 +463,7 @@ func startMockBroker(t *testing.T) (string, int, func()) {
 		_ = listener.Close()
 	}
 
-	return tcpAddr.IP.String(), tcpAddr.Port, cleanup
+	return tcpAddr.IP.String(), tcpAddr.Port, cleanup, &messages
 }
 
 func decodeTestLen(r io.Reader) int {

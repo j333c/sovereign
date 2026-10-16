@@ -170,8 +170,14 @@ func TestWebhookClient_SuccessAndErrors(t *testing.T) {
 	}
 }
 
+// MockMQTTMessage records a published MQTT packet.
+type MockMQTTMessage struct {
+	Topic   string
+	Payload []byte
+}
+
 // startMockMQTTBroker spawns a lightweight mock MQTT 3.1.1 broker for testing CONNECT, PUBLISH, PUBACK, DISCONNECT.
-func startMockMQTTBroker(t *testing.T, expectedUser, expectedPass string) (string, int, func()) {
+func startMockMQTTBroker(t *testing.T, expectedUser, expectedPass string) (string, int, func(), *[]MockMQTTMessage) {
 	t.Helper()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -180,6 +186,8 @@ func startMockMQTTBroker(t *testing.T, expectedUser, expectedPass string) (strin
 
 	tcpAddr := listener.Addr().(*net.TCPAddr)
 	stopCh := make(chan struct{})
+	var messages []MockMQTTMessage
+	var mu sync.Mutex
 
 	go func() {
 		for {
@@ -193,7 +201,11 @@ func startMockMQTTBroker(t *testing.T, expectedUser, expectedPass string) (strin
 				}
 			}
 
-			go handleMockMQTTConn(conn, expectedUser, expectedPass)
+			go handleMockMQTTConn(conn, expectedUser, expectedPass, func(msg MockMQTTMessage) {
+				mu.Lock()
+				messages = append(messages, msg)
+				mu.Unlock()
+			})
 		}
 	}()
 
@@ -202,10 +214,10 @@ func startMockMQTTBroker(t *testing.T, expectedUser, expectedPass string) (strin
 		_ = listener.Close()
 	}
 
-	return tcpAddr.IP.String(), tcpAddr.Port, cleanup
+	return tcpAddr.IP.String(), tcpAddr.Port, cleanup, &messages
 }
 
-func handleMockMQTTConn(conn net.Conn, expectedUser, expectedPass string) {
+func handleMockMQTTConn(conn net.Conn, expectedUser, expectedPass string, onPublish func(MockMQTTMessage)) {
 	defer conn.Close()
 	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
 
@@ -269,15 +281,24 @@ func handleMockMQTTConn(conn net.Conn, expectedUser, expectedPass string) {
 	}
 
 	// If QoS 1, find packet ID and send PUBACK
+	topicLen := binary.BigEndian.Uint16(publishBody[0:2])
+	topic := string(publishBody[2 : 2+int(topicLen)])
+	var payload []byte
 	if qos == 1 && remLen >= 4 {
-		topicLen := binary.BigEndian.Uint16(publishBody[0:2])
 		pidOffset := 2 + int(topicLen)
 		if pidOffset+2 <= len(publishBody) {
 			pid := publishBody[pidOffset : pidOffset+2]
+			payload = publishBody[pidOffset+2:]
 			// Send PUBACK: 0x40, 0x02, pid[0], pid[1]
 			puback := []byte{packetPUBACK, 0x02, pid[0], pid[1]}
 			_, _ = conn.Write(puback)
 		}
+	} else {
+		payload = publishBody[2+int(topicLen):]
+	}
+
+	if onPublish != nil {
+		onPublish(MockMQTTMessage{Topic: topic, Payload: payload})
 	}
 
 	// 3. Optional DISCONNECT
@@ -285,7 +306,7 @@ func handleMockMQTTConn(conn net.Conn, expectedUser, expectedPass string) {
 }
 
 func TestMQTTClient_PublishQoS1AndErrors(t *testing.T) {
-	host, port, cleanup := startMockMQTTBroker(t, "", "")
+	host, port, cleanup, _ := startMockMQTTBroker(t, "", "")
 	defer cleanup()
 
 	client := NewMQTTClient()
@@ -524,7 +545,7 @@ func TestAlertDispatcher_FullCycleAndEdgeCases(t *testing.T) {
 	}))
 	defer webhookServer.Close()
 
-	mqttHost, mqttPort, cleanupMQTT := startMockMQTTBroker(t, "", "")
+	mqttHost, mqttPort, cleanupMQTT, mqttReceived := startMockMQTTBroker(t, "", "")
 	defer cleanupMQTT()
 
 	smtpHost, smtpPort, cleanupSMTP, smtpReceived := startMockSMTPServer(t, "", "")
@@ -557,6 +578,20 @@ func TestAlertDispatcher_FullCycleAndEdgeCases(t *testing.T) {
 	}
 	if len(*smtpReceived) != 1 {
 		t.Errorf("expected 1 SMTP digest received, got %d", len(*smtpReceived))
+	}
+	if len(*mqttReceived) < 1 {
+		t.Errorf("expected at least 1 MQTT message received, got %d", len(*mqttReceived))
+	} else {
+		msg := (*mqttReceived)[0]
+		if msg.Topic != DefaultMQTTTopic {
+			t.Errorf("expected MQTT topic %q, got %q", DefaultMQTTTopic, msg.Topic)
+		}
+		var payload WebhookDeadlinePayload
+		if err := json.Unmarshal(msg.Payload, &payload); err != nil {
+			t.Errorf("failed to unmarshal MQTT payload: %v", err)
+		} else if payload.Title != dl.Title {
+			t.Errorf("expected MQTT payload title %q, got %q", dl.Title, payload.Title)
+		}
 	}
 
 	// Verify deadline state transitioned to 'notified'

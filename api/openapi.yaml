@@ -873,11 +873,11 @@ paths:
         - name: status
           in: query
           required: false
-          description: Filter deadlines by status (pending, future, dismissed, all).
+          description: Filter deadlines by status (active, pending, future, dismissed, notified, all).
           schema:
             type: string
-            default: "pending"
-            enum: [pending, future, dismissed, all]
+            default: "active"
+            enum: [active, pending, future, dismissed, notified, all]
         - name: within_days
           in: query
           required: false

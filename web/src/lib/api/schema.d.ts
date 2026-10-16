@@ -3091,8 +3091,8 @@ export interface operations {
     getDeadlines: {
         parameters: {
             query?: {
-                /** @description Filter deadlines by status (pending, future, dismissed, all). */
-                status?: "pending" | "future" | "dismissed" | "all";
+                /** @description Filter deadlines by status (active, pending, future, dismissed, notified, all). */
+                status?: "active" | "pending" | "future" | "dismissed" | "notified" | "all";
                 /** @description Alert threshold in days from today (default 14). */
                 within_days?: number;
             };

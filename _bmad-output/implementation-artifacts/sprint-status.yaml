@@ -60,11 +60,11 @@ development_status:
   3-4-mobile-offline-profile-generation-ipad-sync: done
   epic-3-retrospective: optional
 
-  epic-4: in-progress
+  epic-4: done
   4-1-centralized-document-management-integration-paperless-ngx: done
   4-2-multi-channel-ingestion-mobile-scanner-automated-imap-email: done
   4-3-deadline-extraction-parser-obligation-scanner: done
-  4-4-home-assistant-webhook-mqtt-email-alert-dispatcher: review
+  4-4-home-assistant-webhook-mqtt-email-alert-dispatcher: done
   epic-4-retrospective: optional
 
   epic-5: backlog
