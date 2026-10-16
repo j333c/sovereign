@@ -20,6 +20,7 @@ import (
 	"sovereign/internal/auth"
 	"sovereign/internal/hardware"
 	"sovereign/internal/ingress"
+	"sovereign/internal/optical"
 	"sovereign/internal/storage"
 	"sovereign/internal/store"
 	"sovereign/internal/supervisor"
@@ -28,6 +29,19 @@ import (
 const (
 	AppVersion = "0.1.0"
 )
+
+// OpticalEjectResponse matches the OpenAPI 3.1 contract.
+type OpticalEjectResponse struct {
+	Status  string `json:"status"`
+	Message string `json:"message"`
+}
+
+// OpticalKeysUploadResponse matches the OpenAPI 3.1 contract.
+type OpticalKeysUploadResponse struct {
+	Status    string `json:"status"`
+	KeysCount int    `json:"keys_count"`
+	Message   string `json:"message"`
+}
 
 // TelemetryUpdate matches the OpenAPI 3.1 real-time telemetry schema.
 type TelemetryUpdate struct {
@@ -94,6 +108,9 @@ type Config struct {
 	TelemetryInterval time.Duration
 	ServiceMgr        *supervisor.ServiceManager
 	DropzoneEngine    *storage.DropzoneEngine
+	OpticalDriver     optical.OpticalDriver
+	OpticalRipper     *optical.OpticalRipper
+	KEYDBManager      *optical.KEYDBManager
 }
 
 type sseEvent struct {
@@ -116,6 +133,7 @@ type Server struct {
 	mdnsService       *ingress.MDNSService
 	serviceMgr        *supervisor.ServiceManager
 	dropzoneEngine    *storage.DropzoneEngine
+	opticalRipper     *optical.OpticalRipper
 	stopChan          chan struct{}
 	closeOnce         sync.Once
 	mu                sync.RWMutex
@@ -263,6 +281,27 @@ func NewServer(cfg Config) (*Server, error) {
 	}
 	s.dropzoneEngine = cfg.DropzoneEngine
 
+	if cfg.KEYDBManager == nil {
+		keysPath := filepath.Join(cfg.DataDir, "state", "keys", "KEYDB.cfg")
+		cfg.KEYDBManager = optical.NewKEYDBManager(keysPath, cfg.Logger)
+	}
+
+	if cfg.OpticalRipper == nil {
+		if cfg.OpticalDriver == nil {
+			cfg.OpticalDriver = optical.NewLinuxOpticalDriver("/dev/sr0", cfg.Logger)
+		}
+		cfg.OpticalRipper = optical.NewOpticalRipper(optical.RipperConfig{
+			DataDir:          cfg.DataDir,
+			Driver:           cfg.OpticalDriver,
+			KeyMgr:           cfg.KEYDBManager,
+			EventBroadcaster: s.BroadcastEvent,
+			Logger:           cfg.Logger,
+		})
+	} else {
+		cfg.OpticalRipper.SetEventBroadcaster(s.BroadcastEvent)
+	}
+	s.opticalRipper = cfg.OpticalRipper
+
 	s.routes()
 	return s, nil
 }
@@ -351,6 +390,11 @@ func (s *Server) StartBackgroundServices(ctx context.Context) {
 	if s.dropzoneEngine != nil {
 		s.dropzoneEngine.Start(ctx)
 	}
+
+	// 8. Start optical ripper hardware supervisor loop
+	if s.opticalRipper != nil {
+		s.opticalRipper.Start(ctx)
+	}
 }
 
 // BootManager returns the active BootManager instance.
@@ -395,6 +439,13 @@ func (s *Server) DropzoneEngine() *storage.DropzoneEngine {
 	return s.dropzoneEngine
 }
 
+// OpticalRipper returns the active OpticalRipper instance.
+func (s *Server) OpticalRipper() *optical.OpticalRipper {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.opticalRipper
+}
+
 // BroadcastEvent emits an SSE event to all actively connected SSE clients.
 func (s *Server) BroadcastEvent(event string, data any) {
 	s.eventsMu.RLock()
@@ -420,6 +471,10 @@ func (s *Server) Close() error {
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	if s.opticalRipper != nil {
+		_ = s.opticalRipper.Close()
+	}
 
 	if s.dropzoneEngine != nil {
 		_ = s.dropzoneEngine.Close()
@@ -501,6 +556,11 @@ func (s *Server) routes() {
 	// Media Dropzone ingestion endpoints
 	s.router.HandleFunc("POST /api/v1/drop/upload", s.handleDropUpload)
 	s.router.HandleFunc("GET /api/v1/drop/history", s.handleDropHistory)
+
+	// Optical drive and automated disc ripping endpoints
+	s.router.HandleFunc("GET /api/v1/optical/status", s.handleOpticalStatus)
+	s.router.HandleFunc("POST /api/v1/optical/eject", s.handleOpticalEject)
+	s.router.HandleFunc("POST /api/v1/optical/keys", s.requireSetupOrAdmin(s.handleOpticalKeys))
 }
 
 
@@ -685,6 +745,7 @@ func (s *Server) getTelemetryUpdate(ctx context.Context) TelemetryUpdate {
 	s.mu.RLock()
 	hwCollector := s.hardwareCollector
 	storageEng := s.storageEngine
+	ripper := s.opticalRipper
 	s.mu.RUnlock()
 
 	var cpuPercent float64 = 5.0
@@ -732,6 +793,11 @@ func (s *Server) getTelemetryUpdate(ctx context.Context) TelemetryUpdate {
 		storagePercent = math.Round((float64(storageUsed)/float64(storageTotal))*1000) / 10
 	}
 
+	opticalStatus := "Idle · Ready for disc"
+	if ripper != nil {
+		opticalStatus = ripper.GetStatus().StatusText
+	}
+
 	return TelemetryUpdate{
 		CPUPercent:        cpuPercent,
 		MemoryUsedBytes:   memUsed,
@@ -742,7 +808,7 @@ func (s *Server) getTelemetryUpdate(ctx context.Context) TelemetryUpdate {
 		NASStatus:         nasStatus,
 		NASMessage:        nasMessage,
 		OverallStatus:     overallStatus,
-		OpticalStatus:     "Idle · Ready for disc",
+		OpticalStatus:     opticalStatus,
 		GPUStatus:         "Daytime (AI Priority)",
 		Timestamp:         time.Now().UTC().Format(time.RFC3339),
 	}
@@ -1522,3 +1588,118 @@ func (s *Server) syncIngressRoutes(ctx context.Context) error {
 	}
 	return nil
 }
+
+// handleOpticalStatus returns current optical hardware and disc ripping state.
+func (s *Server) handleOpticalStatus(w http.ResponseWriter, r *http.Request) {
+	s.mu.RLock()
+	ripper := s.opticalRipper
+	s.mu.RUnlock()
+
+	if ripper == nil {
+		s.writeProblem(w, http.StatusServiceUnavailable, "Service Unavailable", "Optical ripping engine is not initialized", r.URL.Path)
+		return
+	}
+
+	status := ripper.GetStatus()
+	s.writeJSON(w, http.StatusOK, status)
+}
+
+// handleOpticalEject issues a hardware eject request to open the optical drive tray.
+func (s *Server) handleOpticalEject(w http.ResponseWriter, r *http.Request) {
+	s.mu.RLock()
+	ripper := s.opticalRipper
+	s.mu.RUnlock()
+
+	if ripper == nil {
+		s.writeProblem(w, http.StatusServiceUnavailable, "Service Unavailable", "Optical ripping engine is not initialized", r.URL.Path)
+		return
+	}
+
+	if err := ripper.Eject(r.Context()); err != nil {
+		s.logger.Error("failed to eject optical drive", "error", err)
+		s.writeProblem(w, http.StatusInternalServerError, "Eject Failed", "Failed to eject optical drive: "+err.Error(), r.URL.Path)
+		return
+	}
+
+	s.writeJSON(w, http.StatusOK, OpticalEjectResponse{
+		Status:  "ejected",
+		Message: "Disc ejected successfully",
+	})
+}
+
+// handleOpticalKeys handles validation and atomic storage of KEYDB.cfg for Blu-ray decryption.
+func (s *Server) handleOpticalKeys(w http.ResponseWriter, r *http.Request) {
+	s.mu.RLock()
+	ripper := s.opticalRipper
+	s.mu.RUnlock()
+
+	if ripper == nil {
+		s.writeProblem(w, http.StatusServiceUnavailable, "Service Unavailable", "Optical ripping engine is not initialized", r.URL.Path)
+		return
+	}
+
+	var content []byte
+	contentType := r.Header.Get("Content-Type")
+
+	if strings.HasPrefix(contentType, "multipart/form-data") {
+		if err := r.ParseMultipartForm(10 << 20); err != nil {
+			s.writeProblem(w, http.StatusBadRequest, "Invalid Form", "Failed to parse multipart form: "+err.Error(), r.URL.Path)
+			return
+		}
+
+		var fileHeader io.Reader
+		file, _, err := r.FormFile("file")
+		if err == nil {
+			fileHeader = file
+			defer file.Close()
+		} else {
+			file, _, err := r.FormFile("keydb")
+			if err == nil {
+				fileHeader = file
+				defer file.Close()
+			}
+		}
+
+		if fileHeader == nil {
+			s.writeProblem(w, http.StatusBadRequest, "Missing File", "No key file provided in form field 'file' or 'keydb'", r.URL.Path)
+			return
+		}
+
+		var readErr error
+		content, readErr = io.ReadAll(fileHeader)
+		if readErr != nil {
+			s.writeProblem(w, http.StatusBadRequest, "Read Error", "Failed to read uploaded key file: "+readErr.Error(), r.URL.Path)
+			return
+		}
+	} else {
+		var readErr error
+		content, readErr = io.ReadAll(io.LimitReader(r.Body, 10<<20))
+		if readErr != nil {
+			s.writeProblem(w, http.StatusBadRequest, "Read Error", "Failed to read request body: "+readErr.Error(), r.URL.Path)
+			return
+		}
+	}
+
+	if len(content) == 0 {
+		s.writeProblem(w, http.StatusBadRequest, "Empty File", "Uploaded KEYDB.cfg is empty", r.URL.Path)
+		return
+	}
+
+	count, err := ripper.SaveKeys(content)
+	if err != nil {
+		if errors.Is(err, optical.ErrEmptyKeyFile) || errors.Is(err, optical.ErrBinaryContent) || errors.Is(err, optical.ErrInvalidFormat) {
+			s.writeProblem(w, http.StatusBadRequest, "Invalid Key File", err.Error(), r.URL.Path)
+			return
+		}
+		s.logger.Error("failed to save KEYDB.cfg", "error", err)
+		s.writeProblem(w, http.StatusInternalServerError, "Storage Error", "Failed to store key file: "+err.Error(), r.URL.Path)
+		return
+	}
+
+	s.writeJSON(w, http.StatusOK, OpticalKeysUploadResponse{
+		Status:    "active",
+		KeysCount: count,
+		Message:   "KEYDB.cfg uploaded successfully",
+	})
+}
+

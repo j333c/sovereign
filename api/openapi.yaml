@@ -723,6 +723,86 @@ paths:
               schema:
                 $ref: '#/components/schemas/ProblemDetails'
 
+  /api/v1/optical/status:
+    get:
+      summary: Optical drive and disc ripping engine status
+      description: Returns real-time optical drive hardware status, disc media detection, ripping progress, and encryption key state.
+      operationId: getOpticalStatus
+      responses:
+        '200':
+          description: Optical drive and ripping engine status details.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OpticalStatusResponse'
+        '500':
+          description: Internal supervisor error retrieving optical status.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/v1/optical/eject:
+    post:
+      summary: Eject optical drive tray
+      description: Manually triggers the optical drive tray ejection and resets ripping status to idle.
+      operationId: ejectOpticalDrive
+      responses:
+        '200':
+          description: Drive tray ejected successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OpticalEjectResponse'
+        '500':
+          description: Failed to eject optical drive.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/v1/optical/keys:
+    post:
+      summary: Upload AACS KEYDB.cfg decryption keys
+      description: Atomically uploads and validates KEYDB.cfg decryption keys for commercial Blu-ray ripping.
+      operationId: uploadOpticalKeys
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+          text/plain:
+            schema:
+              type: string
+          application/octet-stream:
+            schema:
+              type: string
+              format: binary
+      responses:
+        '200':
+          description: Decryption keys uploaded and activated.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OpticalKeysUploadResponse'
+        '400':
+          description: Empty or invalid KEYDB.cfg file.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '500':
+          description: Internal error storing key file.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
 components:
   schemas:
     HealthResponse:
@@ -1529,4 +1609,82 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/DropHistoryItem'
+
+    OpticalStatusResponse:
+      type: object
+      required:
+        - state
+        - status_text
+        - drive_ready
+        - disc_present
+        - progress
+        - keys_active
+      properties:
+        state:
+          type: string
+          enum: [idle, detected, ripping, ejecting, paused, error]
+          example: idle
+        status_text:
+          type: string
+          example: "Idle · Ready for disc"
+        drive_ready:
+          type: boolean
+          example: true
+        disc_present:
+          type: boolean
+          example: false
+        disc_type:
+          type: string
+          enum: [none, cd, dvd, bluray, unknown]
+          example: none
+        disc_label:
+          type: string
+          example: "HOME_MOVIES_2024"
+        disc_id:
+          type: string
+          example: "home_movies_2024"
+        progress:
+          type: number
+          format: double
+          example: 0.0
+        error:
+          type: string
+        notice:
+          type: string
+        staging_path:
+          type: string
+        keys_active:
+          type: boolean
+          example: false
+
+    OpticalEjectResponse:
+      type: object
+      required:
+        - status
+        - message
+      properties:
+        status:
+          type: string
+          example: "ejected"
+        message:
+          type: string
+          example: "Disc ejected successfully"
+
+    OpticalKeysUploadResponse:
+      type: object
+      required:
+        - status
+        - keys_count
+        - message
+      properties:
+        status:
+          type: string
+          example: "active"
+        keys_count:
+          type: integer
+          example: 42
+        message:
+          type: string
+          example: "KEYDB.cfg uploaded successfully"
+
 

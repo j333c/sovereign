@@ -18,6 +18,7 @@ import (
 
 	"sovereign/internal/hardware"
 	"sovereign/internal/ingress"
+	"sovereign/internal/optical"
 	"sovereign/internal/storage"
 	"sovereign/internal/store"
 	"sovereign/internal/supervisor"
@@ -40,9 +41,12 @@ func setupTestServer(t *testing.T) (*Server, string) {
 		Engine:  mockEngine,
 	})
 
+	mockOpticalDriver := optical.NewMockOpticalDriver()
+
 	srv, err := NewServer(Config{
-		DataDir:    dataDir,
-		ServiceMgr: svcMgr,
+		DataDir:       dataDir,
+		ServiceMgr:    svcMgr,
+		OpticalDriver: mockOpticalDriver,
 	})
 	if err != nil {
 		t.Fatalf("failed to create test server: %v", err)
@@ -2747,5 +2751,291 @@ func TestServer_Dropzone_UploadAborted_Returns499AndCleansStaging(t *testing.T) 
 		t.Fatalf("aborted file should not exist at %s", destPath)
 	}
 }
+
+func TestServer_Optical_Status_Default(t *testing.T) {
+	srv, _ := setupTestServer(t)
+	defer srv.Close()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/optical/status", nil)
+	w := httptest.NewRecorder()
+
+	srv.Handler().ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var status optical.OpticalStatus
+	if err := json.Unmarshal(w.Body.Bytes(), &status); err != nil {
+		t.Fatalf("failed to decode optical status: %v", err)
+	}
+
+	if status.State != "idle" {
+		t.Errorf("expected state 'idle', got %q", status.State)
+	}
+	if status.StatusText != "Idle · Ready for disc" {
+		t.Errorf("expected status_text 'Idle · Ready for disc', got %q", status.StatusText)
+	}
+	if !status.DriveReady {
+		t.Errorf("expected drive_ready true")
+	}
+	if status.DiscPresent {
+		t.Errorf("expected disc_present false")
+	}
+	if status.KeysActive {
+		t.Errorf("expected keys_active false initially")
+	}
+}
+
+func TestServer_Optical_Eject(t *testing.T) {
+	srv, _ := setupTestServer(t)
+	defer srv.Close()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/optical/eject", nil)
+	w := httptest.NewRecorder()
+
+	srv.Handler().ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var res OpticalEjectResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &res); err != nil {
+		t.Fatalf("failed to decode eject response: %v", err)
+	}
+
+	if res.Status != "ejected" {
+		t.Errorf("expected status 'ejected', got %q", res.Status)
+	}
+}
+
+func TestServer_Optical_Keys_Upload_Multipart(t *testing.T) {
+	srv, _ := setupTestServer(t)
+	defer srv.Close()
+
+	keyContent := `
+; Doom9 AACS test keys
+PK 0x0123456789ABCDEF0123456789ABCDEF
+0x11223344556677889900AABBCCDDEEFF00000000 = Inception (2010) | V | 0xAABBCCDDEEFF00112233445566778899
+`
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	part, err := writer.CreateFormFile("file", "KEYDB.cfg")
+	if err != nil {
+		t.Fatalf("failed to create form file: %v", err)
+	}
+	if _, err := part.Write([]byte(keyContent)); err != nil {
+		t.Fatalf("failed to write part: %v", err)
+	}
+	writer.Close()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/optical/keys", &body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	w := httptest.NewRecorder()
+
+	srv.Handler().ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var res OpticalKeysUploadResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &res); err != nil {
+		t.Fatalf("failed to decode upload response: %v", err)
+	}
+
+	if res.Status != "active" {
+		t.Errorf("expected status 'active', got %q", res.Status)
+	}
+	if res.KeysCount != 2 {
+		t.Errorf("expected keys_count 2, got %d", res.KeysCount)
+	}
+
+	// Verify status endpoint now reflects active keys
+	statusReq := httptest.NewRequest(http.MethodGet, "/api/v1/optical/status", nil)
+	statusW := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(statusW, statusReq)
+
+	var st optical.OpticalStatus
+	if err := json.Unmarshal(statusW.Body.Bytes(), &st); err != nil {
+		t.Fatalf("failed to decode status: %v", err)
+	}
+	if !st.KeysActive {
+		t.Errorf("expected keys_active true after successful upload")
+	}
+}
+
+func TestServer_Optical_Keys_Upload_RawText(t *testing.T) {
+	srv, _ := setupTestServer(t)
+	defer srv.Close()
+
+	keyContent := `
+; Doom9 AACS test keys
+PK 0x0123456789ABCDEF0123456789ABCDEF
+`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/optical/keys", strings.NewReader(keyContent))
+	req.Header.Set("Content-Type", "text/plain")
+	w := httptest.NewRecorder()
+
+	srv.Handler().ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var res OpticalKeysUploadResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &res); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if res.KeysCount != 1 {
+		t.Errorf("expected keys_count 1, got %d", res.KeysCount)
+	}
+}
+
+func TestServer_Optical_Keys_Upload_ValidationErrors(t *testing.T) {
+	srv, _ := setupTestServer(t)
+	defer srv.Close()
+
+	// 1. Empty body
+	emptyReq := httptest.NewRequest(http.MethodPost, "/api/v1/optical/keys", strings.NewReader("   \n\t  "))
+	emptyReq.Header.Set("Content-Type", "text/plain")
+	emptyW := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(emptyW, emptyReq)
+
+	if emptyW.Code != http.StatusBadRequest {
+		t.Errorf("expected status 400 for empty key file, got %d", emptyW.Code)
+	}
+
+	// 2. Binary body
+	binReq := httptest.NewRequest(http.MethodPost, "/api/v1/optical/keys", bytes.NewReader([]byte{0x00, 0x01, 0x02}))
+	binReq.Header.Set("Content-Type", "application/octet-stream")
+	binW := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(binW, binReq)
+
+	if binW.Code != http.StatusBadRequest {
+		t.Errorf("expected status 400 for binary key file, got %d", binW.Code)
+	}
+
+	// 3. Invalid text without key entries
+	invReq := httptest.NewRequest(http.MethodPost, "/api/v1/optical/keys", strings.NewReader("Random text without any keys"))
+	invReq.Header.Set("Content-Type", "text/plain")
+	invW := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(invW, invReq)
+
+	if invW.Code != http.StatusBadRequest {
+		t.Errorf("expected status 400 for invalid text without keys, got %d", invW.Code)
+	}
+}
+
+func TestServer_Optical_SSE_TelemetryStream(t *testing.T) {
+	tempDir := t.TempDir()
+	dataDir := filepath.Join(tempDir, "data")
+	stateDir := filepath.Join(dataDir, "state")
+	_ = os.MkdirAll(stateDir, 0755)
+	_ = os.WriteFile(filepath.Join(stateDir, "boot_state.json"), []byte(`{"clean_shutdown": true}`), 0644)
+
+	mockEngine := supervisor.NewMockRuntimeEngine()
+	svcMgr := supervisor.NewServiceManager(supervisor.ServiceManagerConfig{
+		DataDir: dataDir,
+		Engine:  mockEngine,
+	})
+
+	mockOpticalDriver := optical.NewMockOpticalDriver()
+
+	srv, err := NewServer(Config{
+		DataDir:       dataDir,
+		ServiceMgr:    svcMgr,
+		OpticalDriver: mockOpticalDriver,
+	})
+	if err != nil {
+		t.Fatalf("failed to create server: %v", err)
+	}
+	defer srv.Close()
+
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, ts.URL+"/api/v1/system/events", nil)
+	if err != nil {
+		t.Fatalf("failed to create SSE request: %v", err)
+	}
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("failed to open SSE connection: %v", err)
+	}
+	defer resp.Body.Close()
+
+	reader := bufio.NewReader(resp.Body)
+
+	// Read initial telemetry.update
+	var initialOpticalStatus string
+	for {
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			t.Fatalf("error reading SSE stream: %v", err)
+		}
+		if strings.HasPrefix(line, "data: ") {
+			data := strings.TrimPrefix(line, "data: ")
+			var update TelemetryUpdate
+			if err := json.Unmarshal([]byte(data), &update); err == nil && update.OpticalStatus != "" {
+				initialOpticalStatus = update.OpticalStatus
+				break
+			}
+		}
+	}
+
+	if initialOpticalStatus != "Idle · Ready for disc" {
+		t.Errorf("expected initial optical status 'Idle · Ready for disc', got %q", initialOpticalStatus)
+	}
+
+	// Insert DVD into mock optical driver and trigger ripping
+	disc := optical.DiscInfo{
+		DiscType:  optical.DiscTypeDVD,
+		Label:     "VACATION_VIDEO",
+		ID:        "vacation_video",
+		Encrypted: false,
+	}
+	mockOpticalDriver.InsertDisc(disc)
+
+	// Trigger a poll cycle
+	srv.OpticalRipper().PollOnce(ctx)
+
+	// Stream should emit optical events (optical.disc_detected, optical.rip_progress, optical.disc_ejected)
+	var detectedEmitted bool
+	var progressEmitted bool
+	var ejectedEmitted bool
+
+	for {
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			break
+		}
+		if strings.HasPrefix(line, "event: optical.disc_detected") {
+			detectedEmitted = true
+		} else if strings.HasPrefix(line, "event: optical.rip_progress") {
+			progressEmitted = true
+		} else if strings.HasPrefix(line, "event: optical.disc_ejected") {
+			ejectedEmitted = true
+			break // All required events received!
+		}
+	}
+
+	if !detectedEmitted {
+		t.Errorf("expected optical.disc_detected event over SSE stream")
+	}
+	if !progressEmitted {
+		t.Errorf("expected optical.rip_progress event over SSE stream")
+	}
+	if !ejectedEmitted {
+		t.Errorf("expected optical.disc_ejected event over SSE stream")
+	}
+}
+
 
 
