@@ -2711,7 +2711,10 @@ func (s *Server) handleUpgradeService(w http.ResponseWriter, r *http.Request) {
 
 	var req ServiceUpgradeRequest
 	if r.Body != nil {
-		_ = json.NewDecoder(r.Body).Decode(&req)
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+			s.writeProblem(w, http.StatusBadRequest, "Invalid Request", "Malformed JSON payload", r.URL.Path)
+			return
+		}
 	}
 
 	imageTag := req.ImageTag

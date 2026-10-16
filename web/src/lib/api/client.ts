@@ -356,6 +356,7 @@ export class SovereignApiClient {
   async upgradeService(id: string, req?: ServiceUpgradeRequest): Promise<ComposeRevision> {
     return this.request<ComposeRevision>(`/api/v1/services/${encodeURIComponent(id)}/upgrade`, {
       method: "POST",
+      headers: req ? { "Content-Type": "application/json" } : undefined,
       body: req ? JSON.stringify(req) : undefined,
     });
   }

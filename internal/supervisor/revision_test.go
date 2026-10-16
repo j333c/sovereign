@@ -241,6 +241,19 @@ func TestUpgradeService(t *testing.T) {
 		t.Errorf("expected image 'jellyfin/jellyfin:12.3.0' to be pulled, got history: %v", pulled)
 	}
 
+	// Verify engine restarted the container with the updated image
+	started := engine.GetStartedHistory()
+	startedFound := false
+	for _, spec := range started {
+		if spec.Name == "jellyfin" && spec.Image == "jellyfin/jellyfin:12.3.0" {
+			startedFound = true
+			break
+		}
+	}
+	if !startedFound {
+		t.Errorf("expected container jellyfin started with 12.3.0, got: %+v", started)
+	}
+
 	// Verify in-memory status was updated
 	updatedSt, err := mgr.GetService(ctx, "jellyfin")
 	if err != nil {
@@ -257,6 +270,20 @@ func TestUpgradeService(t *testing.T) {
 	}
 	if rev2.Revision != 2 || rev2.NewImage != "jellyfin/jellyfin:12.4.0" {
 		t.Errorf("unexpected rev2: %+v", rev2)
+	}
+
+	// Upgrade failure sets revision status to 'failed'
+	engine.SetPullFailure("jellyfin/jellyfin:badtag", os.ErrNotExist)
+	_, err = mgr.UpgradeService(ctx, "jellyfin", "badtag")
+	if err == nil {
+		t.Fatalf("expected error for failed pull, got nil")
+	}
+	failedRev, err := db.GetRevision(ctx, 3)
+	if err != nil {
+		t.Fatalf("GetRevision(3) failed: %v", err)
+	}
+	if failedRev.Status != "failed" {
+		t.Fatalf("expected failed revision status to be 'failed', got %q", failedRev.Status)
 	}
 
 	// Non-existent service upgrade fails

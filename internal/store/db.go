@@ -241,7 +241,7 @@ func (d *DB) CreateSnapshot(ctx context.Context, destPath string) error {
 	if err != nil {
 		escaped := strings.ReplaceAll(destPath, "'", "''")
 		if _, errFallback := d.ExecContext(ctx, fmt.Sprintf("VACUUM INTO '%s'", escaped)); errFallback != nil {
-			return fmt.Errorf("vacuum into failed: %w", err)
+			return fmt.Errorf("vacuum into failed: %w", errFallback)
 		}
 	}
 
@@ -280,8 +280,14 @@ func (d *DB) RecordRevision(ctx context.Context, rev *ComposeRevision) error {
 		rev.Status = "active"
 	}
 
+	tx, err := d.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin revision transaction: %w", err)
+	}
+	defer tx.Rollback()
+
 	if rev.Revision > 0 {
-		_, err := d.ExecContext(ctx, `
+		_, err := tx.ExecContext(ctx, `
 			INSERT INTO compose_revisions (revision, service_id, old_image, new_image, compose_file_path, sqlite_snapshot_path, volume_backup_path, status, created_at)
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
 		`, rev.Revision, rev.ServiceID, rev.OldImage, rev.NewImage, rev.ComposeFilePath, rev.SQLiteSnapshotPath, rev.VolumeBackupPath, rev.Status)
@@ -289,7 +295,7 @@ func (d *DB) RecordRevision(ctx context.Context, rev *ComposeRevision) error {
 			return fmt.Errorf("failed to insert compose revision: %w", err)
 		}
 	} else {
-		res, err := d.ExecContext(ctx, `
+		res, err := tx.ExecContext(ctx, `
 			INSERT INTO compose_revisions (service_id, old_image, new_image, compose_file_path, sqlite_snapshot_path, volume_backup_path, status, created_at)
 			VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
 		`, rev.ServiceID, rev.OldImage, rev.NewImage, rev.ComposeFilePath, rev.SQLiteSnapshotPath, rev.VolumeBackupPath, rev.Status)
@@ -304,7 +310,7 @@ func (d *DB) RecordRevision(ctx context.Context, rev *ComposeRevision) error {
 
 	if rev.Status == "active" {
 		// Supersede previous active revisions
-		_, err := d.ExecContext(ctx, `
+		_, err := tx.ExecContext(ctx, `
 			UPDATE compose_revisions
 			SET status = 'superseded'
 			WHERE status = 'active' AND revision != ?
@@ -313,9 +319,18 @@ func (d *DB) RecordRevision(ctx context.Context, rev *ComposeRevision) error {
 			return fmt.Errorf("failed to supersede prior active revisions: %w", err)
 		}
 
-		if err := d.SetActiveRevisionNumber(ctx, rev.Revision); err != nil {
+		_, err = tx.ExecContext(ctx, `
+			INSERT INTO system_state (key, value, updated_at)
+			VALUES ('active_compose_revision', ?, CURRENT_TIMESTAMP)
+			ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP
+		`, strconv.Itoa(rev.Revision))
+		if err != nil {
 			return fmt.Errorf("failed to set active revision in system state: %w", err)
 		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit revision transaction: %w", err)
 	}
 
 	// Fetch recorded timestamp
@@ -346,7 +361,7 @@ func (d *DB) GetActiveRevision(ctx context.Context) (*ComposeRevision, error) {
 	activeRevNum, err := d.GetActiveRevisionNumber(ctx)
 	if err == nil && activeRevNum > 0 {
 		rev, err := d.GetRevision(ctx, activeRevNum)
-		if err == nil {
+		if err == nil && rev.Status == "active" {
 			return rev, nil
 		}
 	}
@@ -420,6 +435,17 @@ func (d *DB) UpdateRevisionStatus(ctx context.Context, revision int, status stri
 			WHERE status = 'active' AND revision != ?
 		`, revision)
 		_ = d.SetActiveRevisionNumber(ctx, revision)
+	} else {
+		activeRevNum, err := d.GetActiveRevisionNumber(ctx)
+		if err == nil && activeRevNum == revision {
+			var latestActive int
+			err := d.QueryRowContext(ctx, "SELECT revision FROM compose_revisions WHERE status = 'active' ORDER BY revision DESC LIMIT 1").Scan(&latestActive)
+			if err == nil && latestActive > 0 {
+				_ = d.SetActiveRevisionNumber(ctx, latestActive)
+			} else {
+				_, _ = d.ExecContext(ctx, "DELETE FROM system_state WHERE key = 'active_compose_revision'")
+			}
+		}
 	}
 	return nil
 }

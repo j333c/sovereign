@@ -6537,6 +6537,27 @@ func TestServer_ServiceUpgrade_EmptyBody(t *testing.T) {
 	}
 }
 
+func TestServer_ServiceUpgrade_MalformedJSON(t *testing.T) {
+	srv, _ := setupTestServer(t)
+	defer srv.Close()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/services/jellyfin/upgrade", bytes.NewBufferString(`{malformed json}`))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected status 400 for malformed json upgrade, got %d: %s", rr.Code, rr.Body.String())
+	}
+	var prob map[string]any
+	if err := json.Unmarshal(rr.Body.Bytes(), &prob); err != nil {
+		t.Fatalf("failed to decode problem response: %v", err)
+	}
+	if prob["title"] != "Invalid Request" {
+		t.Errorf("expected title 'Invalid Request', got %v", prob["title"])
+	}
+}
+
 
 
 

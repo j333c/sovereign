@@ -2,10 +2,10 @@
 title: 'Story 6.1: Declarative Compose Revisioning & Pre-Upgrade Snapshot Engine'
 type: 'feature'
 created: '2026-10-16'
-status: 'review'
+status: 'done'
 route: 'dispatch'
 baseline_commit: 'bad8baa2c3ba006ef7a6a83ca076b792955068a9'
-review_loop_iteration: 0
+review_loop_iteration: 1
 context:
   - '_bmad-output/planning-artifacts/architecture/architecture-sovereign-2026-10-15/ARCHITECTURE-SPINE.md'
   - '_bmad-output/planning-artifacts/epics.md'
@@ -58,3 +58,27 @@ context:
 4. **Persistent Active Revision Tracking**: The active revision number, timestamp, and status are tracked and persisted in `sovereign.db`.
 5. **API & Client Integration**: REST endpoints `GET /api/v1/system/revisions`, `GET /api/v1/system/revisions/active`, and `POST /api/v1/services/{id}/upgrade` return typed RFC 7807 problem details or valid revision metadata.
 6. **Automated Verification**: Comprehensive Go and TypeScript unit/integration tests pass with 100% success.
+
+## Review Triage Log
+
+- **Iteration 1**:
+  - **Blind Hunter findings**:
+    - Fixed error masking in `CreateSnapshot` fallback to return `errFallback` rather than parameter syntax error `err`.
+    - Wrapped `RecordRevision` operations (`INSERT`, `UPDATE superseded`, and `system_state` active revision pointer) in an atomic database transaction (`BeginTx`).
+    - Validated `rev.Status == "active"` in `GetActiveRevision` when resolving pointer from `system_state`.
+    - Updated `UpdateRevisionStatus` to clear or point to the latest active revision when a revision's status is updated away from `active`.
+  - **Edge Case Hunter findings**:
+    - Fixed registry image tag splitting using `strings.LastIndex(oldImage, ":")` instead of `strings.Split(oldImage, ":")[0]` so private registries with port numbers (`registry:5000/...`) are correctly parsed.
+    - Updated `UpgradeService` to mark revision record status as `"failed"` if image pulling or container starting encounters an error.
+    - Ensured canonical Compose specification is synthesized and persisted even when upgrading an inactive service.
+    - Preserved file mode permissions and safely handled symlinks in `CopyDir` / `copyFile`.
+    - Added volume snapshotting coverage for Paperless persistent data directory (`documents/data`) while preventing directory collision duplication.
+    - Added HTTP 400 Problem Details rejection for malformed JSON request bodies in `handleUpgradeService`.
+    - Added `Content-Type: application/json` header in TypeScript client `upgradeService`.
+  - **Verification Gap findings**:
+    - Added test assertion in `internal/supervisor/revision_test.go` verifying `engine.GetStartedHistory()` contains the updated image container spec.
+    - Added test in `internal/supervisor/revision_test.go` verifying that pull failures set revision status to `"failed"` in the database.
+    - Added test in `internal/store/db_test.go` verifying `GetActiveRevision` does not return a revision after it is marked `"rolled_back"`.
+    - Added test `TestServer_ServiceUpgrade_MalformedJSON` in `cmd/sovereign-daemon/server_test.go` asserting HTTP 400 RFC 7807 response for invalid JSON payloads.
+  - **Outcome**: All remediations implemented and verified. Full test suites pass with 100% success.
+

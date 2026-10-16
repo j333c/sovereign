@@ -290,6 +290,12 @@ func TestDB_ComposeRevisions(t *testing.T) {
 		t.Fatalf("expected status rolled_back, got %+v (err=%v)", updatedRev2, err)
 	}
 
+	// Active revision should not return rolled_back revision
+	_, err = db.GetActiveRevision(ctx)
+	if err == nil {
+		t.Fatalf("expected error querying active revision when active revision was rolled back, got nil")
+	}
+
 	// Updating nonexistent revision returns error
 	if err := db.UpdateRevisionStatus(ctx, 999, "active"); err == nil {
 		t.Fatalf("expected error updating nonexistent revision, got nil")

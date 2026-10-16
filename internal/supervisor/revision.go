@@ -143,7 +143,7 @@ func CopyDir(src, dst string) error {
 		return copyFile(src, dst)
 	}
 
-	if err := os.MkdirAll(dst, 0755); err != nil {
+	if err := os.MkdirAll(dst, srcInfo.Mode()|0700); err != nil {
 		return fmt.Errorf("failed to create target directory %s: %w", dst, err)
 	}
 
@@ -155,6 +155,14 @@ func CopyDir(src, dst string) error {
 	for _, entry := range entries {
 		srcPath := filepath.Join(src, entry.Name())
 		dstPath := filepath.Join(dst, entry.Name())
+
+		if entry.Type()&os.ModeSymlink != 0 {
+			linkTarget, err := os.Readlink(srcPath)
+			if err == nil {
+				_ = os.Symlink(linkTarget, dstPath)
+			}
+			continue
+		}
 
 		if entry.IsDir() {
 			if err := CopyDir(srcPath, dstPath); err != nil {
@@ -170,6 +178,11 @@ func CopyDir(src, dst string) error {
 }
 
 func copyFile(src, dst string) error {
+	srcInfo, err := os.Stat(src)
+	if err != nil {
+		return fmt.Errorf("failed to stat source file %s: %w", src, err)
+	}
+
 	in, err := os.Open(src)
 	if err != nil {
 		return fmt.Errorf("failed to open source file %s: %w", src, err)
@@ -180,7 +193,7 @@ func copyFile(src, dst string) error {
 		return fmt.Errorf("failed to create destination dir for file %s: %w", dst, err)
 	}
 
-	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, srcInfo.Mode())
 	if err != nil {
 		return fmt.Errorf("failed to create destination file %s: %w", dst, err)
 	}
@@ -218,12 +231,23 @@ func SnapshotConfigurationVolumes(dataDir string, revision int, serviceID string
 		}
 	}
 
-	// 3. Any volume explicitly pointing to a state directory
+	// 3. For services like paperless where configuration or metadata is under documents/data
+	if serviceID == "paperless" {
+		paperlessDataDir := filepath.Join(dataDir, "documents", "data")
+		if fi, err := os.Stat(paperlessDataDir); err == nil && fi.IsDir() {
+			_ = CopyDir(paperlessDataDir, filepath.Join(backupDir, "data"))
+		}
+	}
+
+	// 4. Any volume explicitly pointing to a state directory
 	for _, t := range volumeTemplates {
 		parts := strings.Split(t, ":")
 		hostRel := parts[0]
 		if strings.HasPrefix(hostRel, "state/") {
 			hostAbs := filepath.Join(dataDir, hostRel)
+			if hostAbs == serviceDir || hostAbs == altDir {
+				continue
+			}
 			if fi, err := os.Stat(hostAbs); err == nil {
 				subDst := filepath.Join(backupDir, filepath.Base(hostAbs))
 				if fi.IsDir() {
@@ -328,9 +352,15 @@ func (m *ServiceManager) CreatePreUpgradeRevision(ctx context.Context, serviceID
 		if strings.Contains(newImageTag, "/") {
 			newImage = newImageTag
 		} else {
-			repo := strings.Split(oldImage, ":")[0]
-			tag := strings.TrimPrefix(newImageTag, ":")
-			newImage = fmt.Sprintf("%s:%s", repo, tag)
+			lastColon := strings.LastIndex(oldImage, ":")
+			if lastColon != -1 {
+				repo := oldImage[:lastColon]
+				tag := strings.TrimPrefix(newImageTag, ":")
+				newImage = fmt.Sprintf("%s:%s", repo, tag)
+			} else {
+				tag := strings.TrimPrefix(newImageTag, ":")
+				newImage = fmt.Sprintf("%s:%s", oldImage, tag)
+			}
 		}
 	}
 
@@ -435,23 +465,29 @@ func (m *ServiceManager) UpgradeService(ctx context.Context, serviceID string, n
 			}
 			if err := m.engine.PullImage(ctx, rev.NewImage, progressCb); err != nil {
 				m.logger.Error("failed to pull image for upgrade", "service", id, "error", err)
+				if m.revisionStore != nil {
+					_ = m.revisionStore.UpdateRevisionStatus(ctx, rev.Revision, "failed")
+				}
 				return nil, fmt.Errorf("%w: %v", ErrPullFailed, err)
 			}
 		}
 	}
 
-	// 3. Update container runtime if service is running
+	// 3. Update canonical compose file and runtime container
+	containerSpec, err := m.buildContainerSpec(ctx, id, rev.NewImage)
+	if err == nil {
+		_, _ = SynthesizeComposeSpec(m.dataDir, containerSpec)
+	}
+
 	isRunning := stExists && (st.Status == StatusRunning || st.Status == StatusStarting)
-	if isRunning && m.engine != nil {
-		containerSpec, err := m.buildContainerSpec(ctx, id, rev.NewImage)
-		if err == nil {
-			// Also update canonical compose file
-			_, _ = SynthesizeComposeSpec(m.dataDir, containerSpec)
-			_ = m.engine.StopContainer(ctx, id)
-			if err := m.engine.StartContainer(ctx, containerSpec); err != nil {
-				m.logger.Error("failed to start upgraded container", "service", id, "error", err)
-				return nil, fmt.Errorf("failed to start upgraded container: %w", err)
+	if isRunning && m.engine != nil && err == nil {
+		_ = m.engine.StopContainer(ctx, id)
+		if err := m.engine.StartContainer(ctx, containerSpec); err != nil {
+			m.logger.Error("failed to start upgraded container", "service", id, "error", err)
+			if m.revisionStore != nil {
+				_ = m.revisionStore.UpdateRevisionStatus(ctx, rev.Revision, "failed")
 			}
+			return nil, fmt.Errorf("failed to start upgraded container: %w", err)
 		}
 	}
 
