@@ -1174,17 +1174,14 @@ func (s *Server) handleListAIPersonas(w http.ResponseWriter, r *http.Request) {
 	}
 
 	lang := r.URL.Query().Get("lang")
-	personas := store.ListPersonas(lang)
-	activeID, activeLang := store.GetActive()
-
-	targetLang := ai.NormalizeLanguage(lang)
 	if strings.TrimSpace(lang) == "" {
-		targetLang = activeLang
+		lang = "en"
 	}
+	personas := store.ListPersonas(lang)
+	activeID, _ := store.GetActive()
+	targetLang := ai.NormalizeLanguage(lang)
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(ai.PersonaListResponse{
+	s.writeJSON(w, http.StatusOK, ai.PersonaListResponse{
 		Personas: personas,
 		ActiveID: activeID,
 		Language: targetLang,
@@ -1204,24 +1201,17 @@ func (s *Server) handleGetAIPersona(w http.ResponseWriter, r *http.Request) {
 
 	id := r.PathValue("id")
 	lang := r.URL.Query().Get("lang")
+	if strings.TrimSpace(lang) == "" {
+		lang = "en"
+	}
 
 	persona, err := store.GetPersona(id, lang)
 	if err != nil {
-		w.Header().Set("Content-Type", "application/problem+json")
-		w.WriteHeader(http.StatusNotFound)
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"type":     "https://sovereign.local/problems/persona-not-found",
-			"title":    "Persona Not Found",
-			"status":   http.StatusNotFound,
-			"detail":   fmt.Sprintf("Persona %q not found", id),
-			"instance": r.URL.Path,
-		})
+		s.writeProblem(w, http.StatusNotFound, "Persona Not Found", fmt.Sprintf("Persona %q not found", id), r.URL.Path)
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(persona)
+	s.writeJSON(w, http.StatusOK, persona)
 }
 
 // handleSetActiveAIPersona updates the active persona and language preference, seeding Open WebUI.
@@ -1237,48 +1227,26 @@ func (s *Server) handleSetActiveAIPersona(w http.ResponseWriter, r *http.Request
 
 	var req ai.SetActivePersonaRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		w.Header().Set("Content-Type", "application/problem+json")
-		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"type":     "https://sovereign.local/problems/invalid-payload",
-			"title":    "Invalid Request Body",
-			"status":   http.StatusBadRequest,
-			"detail":   fmt.Sprintf("Failed to parse request JSON: %v", err),
-			"instance": r.URL.Path,
-		})
+		s.writeProblem(w, http.StatusBadRequest, "Invalid Request Body", fmt.Sprintf("Failed to parse request JSON: %v", err), r.URL.Path)
 		return
 	}
 
 	if strings.TrimSpace(req.ID) == "" {
-		w.Header().Set("Content-Type", "application/problem+json")
-		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"type":     "https://sovereign.local/problems/invalid-persona",
-			"title":    "Invalid Persona ID",
-			"status":   http.StatusBadRequest,
-			"detail":   "Persona ID is required",
-			"instance": r.URL.Path,
-		})
+		s.writeProblem(w, http.StatusBadRequest, "Invalid Persona ID", "Persona ID is required", r.URL.Path)
 		return
 	}
 
 	persona, err := store.SetActive(req.ID, req.Language)
 	if err != nil {
-		w.Header().Set("Content-Type", "application/problem+json")
-		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"type":     "https://sovereign.local/problems/invalid-persona",
-			"title":    "Invalid Persona ID",
-			"status":   http.StatusBadRequest,
-			"detail":   fmt.Sprintf("Unknown persona ID: %s", req.ID),
-			"instance": r.URL.Path,
-		})
+		if strings.Contains(err.Error(), "invalid persona id") {
+			s.writeProblem(w, http.StatusBadRequest, "Invalid Persona ID", fmt.Sprintf("Unknown persona ID: %s", req.ID), r.URL.Path)
+			return
+		}
+		s.writeProblem(w, http.StatusInternalServerError, "Internal Server Error", fmt.Sprintf("Failed to activate persona: %v", err), r.URL.Path)
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(persona)
+	s.writeJSON(w, http.StatusOK, persona)
 }
 
 // handleListAIPrompts returns system prompt templates across languages and personas.

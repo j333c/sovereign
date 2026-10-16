@@ -47,8 +47,11 @@
 		}
 	}
 
-	# Route Open WebUI chat interface with prefix stripping (/chat and /chat/*)
-	@chat path /chat /chat/*
+	# Redirect /chat to /chat/ for correct relative asset resolution
+	redir /chat /chat/ permanent
+
+	# Route Open WebUI chat interface with prefix stripping (/chat/*)
+	@chat path /chat/*
 	handle @chat {
 		uri strip_prefix /chat
 		reverse_proxy sovereign-openwebui:3001 {

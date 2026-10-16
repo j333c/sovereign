@@ -335,6 +335,7 @@ func NewPersonaStore(stateDir string, logger *slog.Logger) *PersonaStore {
 	}
 
 	_ = store.load()
+	_ = store.SeedOpenWebUI()
 	return store
 }
 
@@ -347,6 +348,9 @@ func (s *PersonaStore) StateDir() string {
 
 // load reads persona_state.json from stateDir if it exists.
 func (s *PersonaStore) load() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	filePath := filepath.Join(s.stateDir, "persona_state.json")
 	data, err := os.ReadFile(filePath)
 	if err != nil {
@@ -372,14 +376,17 @@ func (s *PersonaStore) load() error {
 
 // persist writes active persona state to persona_state.json atomically using a temp file.
 func (s *PersonaStore) persist() error {
-	if err := os.MkdirAll(s.stateDir, 0755); err != nil {
-		return fmt.Errorf("failed to create openwebui state directory: %w", err)
-	}
-
+	s.mu.RLock()
+	stateDir := s.stateDir
 	state := PersonaState{
 		ActiveID:  s.activeID,
 		Language:  s.language,
 		UpdatedAt: time.Now().UTC().Format(time.RFC3339),
+	}
+	s.mu.RUnlock()
+
+	if err := os.MkdirAll(stateDir, 0755); err != nil {
+		return fmt.Errorf("failed to create openwebui state directory: %w", err)
 	}
 
 	data, err := json.MarshalIndent(state, "", "  ")
@@ -388,14 +395,14 @@ func (s *PersonaStore) persist() error {
 	}
 
 	// Atomic write: write to temp file, sync, then rename
-	tmpFile := filepath.Join(s.stateDir, fmt.Sprintf(".persona_state-%d.tmp", time.Now().UnixNano()))
+	tmpFile := filepath.Join(stateDir, fmt.Sprintf(".persona_state-%d.tmp", time.Now().UnixNano()))
+	defer os.Remove(tmpFile)
 	if err := os.WriteFile(tmpFile, data, 0644); err != nil {
 		return fmt.Errorf("failed to write temp persona state file: %w", err)
 	}
 
-	destFile := filepath.Join(s.stateDir, "persona_state.json")
+	destFile := filepath.Join(stateDir, "persona_state.json")
 	if err := os.Rename(tmpFile, destFile); err != nil {
-		_ = os.Remove(tmpFile)
 		return fmt.Errorf("failed to atomically rename persona state file: %w", err)
 	}
 
@@ -424,23 +431,28 @@ func (s *PersonaStore) SeedOpenWebUI() error {
 	// 1. Seed system_prompt.txt
 	promptFile := filepath.Join(stateDir, "system_prompt.txt")
 	tmpPrompt := filepath.Join(stateDir, fmt.Sprintf(".system_prompt-%d.tmp", time.Now().UnixNano()))
+	defer os.Remove(tmpPrompt)
 	if err := os.WriteFile(tmpPrompt, []byte(persona.SystemPrompt), 0644); err != nil {
 		return fmt.Errorf("failed to write temp system_prompt file: %w", err)
 	}
 	if err := os.Rename(tmpPrompt, promptFile); err != nil {
-		_ = os.Remove(tmpPrompt)
 		return fmt.Errorf("failed to atomically rename system_prompt file: %w", err)
 	}
 
 	// 2. Seed prompts_seed.json containing all available prompts
-	prompts := s.ListPrompts(lang)
+	prompts := s.ListPrompts("")
 	promptsData, err := json.MarshalIndent(prompts, "", "  ")
-	if err == nil {
-		seedFile := filepath.Join(stateDir, "prompts_seed.json")
-		tmpSeed := filepath.Join(stateDir, fmt.Sprintf(".prompts_seed-%d.tmp", time.Now().UnixNano()))
-		if err := os.WriteFile(tmpSeed, promptsData, 0644); err == nil {
-			_ = os.Rename(tmpSeed, seedFile)
-		}
+	if err != nil {
+		return fmt.Errorf("failed to marshal prompts seed: %w", err)
+	}
+	seedFile := filepath.Join(stateDir, "prompts_seed.json")
+	tmpSeed := filepath.Join(stateDir, fmt.Sprintf(".prompts_seed-%d.tmp", time.Now().UnixNano()))
+	defer os.Remove(tmpSeed)
+	if err := os.WriteFile(tmpSeed, promptsData, 0644); err != nil {
+		return fmt.Errorf("failed to write temp prompts_seed file: %w", err)
+	}
+	if err := os.Rename(tmpSeed, seedFile); err != nil {
+		return fmt.Errorf("failed to atomically rename prompts_seed file: %w", err)
 	}
 
 	return nil
@@ -472,10 +484,12 @@ func (s *PersonaStore) SetActive(id string, lang string) (*Persona, error) {
 
 	if err := s.persist(); err != nil {
 		s.logger.Warn("failed to persist persona state", "error", err)
+		return nil, fmt.Errorf("failed to persist persona state: %w", err)
 	}
 
 	if err := s.SeedOpenWebUI(); err != nil {
 		s.logger.Warn("failed to seed Open WebUI configuration", "error", err)
+		return nil, fmt.Errorf("failed to seed Open WebUI configuration: %w", err)
 	}
 
 	persona := BuildPersona(def, currentLang, true)
@@ -530,7 +544,7 @@ func (s *PersonaStore) ListPersonas(lang string) []Persona {
 
 // ListPrompts returns all prompt templates across all personas, optionally filtered by language.
 func (s *PersonaStore) ListPrompts(lang string) []PromptTemplate {
-	var templates []PromptTemplate
+	templates := make([]PromptTemplate, 0)
 	languages := []string{LangEN, LangDE, LangES, LangFR}
 
 	if strings.TrimSpace(lang) != "" {

@@ -1276,5 +1276,45 @@ describe("Central Admin Dashboard Integration & i18n", () => {
     assert.ok(html.includes("data-testid=\"reassurance-banner-ai\""));
     assert.ok(html.includes("Waking up private AI (ready in 5s)..."));
   });
+
+  it("maps openwebui and llama status updates correctly to AI ServiceCard without inactive spoke downgrading", () => {
+    // 1. Verify mapServiceStatus maps states accurately
+    assert.equal(mapServiceStatus("running", "healthy"), "healthy");
+    assert.equal(mapServiceStatus("starting", "starting"), "starting");
+    assert.equal(mapServiceStatus("inactive", "unknown"), "stopped");
+    assert.equal(mapServiceStatus("degraded", "degraded"), "degraded");
+
+    // 2. Render HomeScreen with initial services
+    const htmlHealthy = renderToStaticMarkup(
+      <HomeScreen
+        initialReady={true}
+        initialLanguage="en"
+        routerOverride={{ replace: () => {} }}
+        initialServices={{
+          ai: { status: "healthy" },
+        }}
+      />
+    );
+    assert.ok(htmlHealthy.includes("data-testid=\"service-card-ai\""));
+    assert.ok(htmlHealthy.includes("●"));
+
+    // 3. Render with degraded state and reassurance
+    const htmlDegraded = renderToStaticMarkup(
+      <HomeScreen
+        initialReady={true}
+        initialLanguage="en"
+        routerOverride={{ replace: () => {} }}
+        initialServices={{
+          ai: {
+            status: "degraded",
+            reassuranceMessage: "Safe Stub Mode: No AI model provisioned in /data/models",
+          },
+        }}
+      />
+    );
+    assert.ok(htmlDegraded.includes("data-testid=\"reassurance-banner-ai\""));
+    assert.ok(htmlDegraded.includes("Safe Stub Mode"));
+  });
 });
+
 

@@ -191,16 +191,22 @@ function HomeScreenContent({
           ? evt.detail
           : undefined;
 
-      setServiceStates((prev) => ({
-        ...prev,
-        [cardId]: {
-          ...prev[cardId],
-          status: mappedStatus,
-          isRestarting:
-            mappedStatus === "starting" ? prev[cardId]?.isRestarting : false,
-          reassuranceMessage: reassuranceMsg,
-        },
-      }));
+      setServiceStates((prev) => {
+        const prevStatus = prev[cardId]?.status;
+        if (prevStatus === "healthy" && mappedStatus === "stopped") {
+          return prev;
+        }
+        return {
+          ...prev,
+          [cardId]: {
+            ...prev[cardId],
+            status: mappedStatus,
+            isRestarting:
+              mappedStatus === "starting" ? prev[cardId]?.isRestarting : false,
+            reassuranceMessage: reassuranceMsg,
+          },
+        };
+      });
     },
     []
   );
@@ -288,12 +294,22 @@ function HomeScreenContent({
       .getServices()
       .then((res) => {
         if (!isMounted || !res?.services) return;
+        const rank: Record<StatusLevel, number> = {
+          error: 5,
+          degraded: 4,
+          starting: 3,
+          healthy: 2,
+          stopped: 1,
+        };
         const updates: Record<string, ServiceStateOverride> = {};
         for (const s of res.services) {
           const cardId = serviceIdMap[s.id];
           if (!cardId) continue;
           const status = mapServiceStatus(s.status, s.health);
-          updates[cardId] = { status };
+          const existing = updates[cardId]?.status;
+          if (!existing || (rank[status] || 0) > (rank[existing] || 0)) {
+            updates[cardId] = { status };
+          }
         }
         setServiceStates((prev) => ({ ...prev, ...updates }));
       })

@@ -126,8 +126,18 @@ func (p *OpenWebUIProvisioner) SynthesizeContainerSpec() (ContainerSpec, error) 
 		"DO_NOT_TRACK":             "True",
 		"ANONYMIZED_TELEMETRY":     "False",
 		"ENABLE_COMMUNITY_SHARING": "False",
+		"ENABLE_VERSION_CHECK":     "False",
+		"ENABLE_OLLAMA_API":        "False",
+		"ENABLE_SEARCH_QUERY":      "False",
+		"WEBUI_BUILD_HASH":         "",
 		"WEBUI_NAME":               DefaultOpenWebUIName,
 		"DATA_DIR":                 DefaultOpenWebUIDataPath,
+	}
+
+	// Read seeded system_prompt.txt if present
+	promptFile := filepath.Join(stateDir, "system_prompt.txt")
+	if promptBytes, err := os.ReadFile(promptFile); err == nil && len(promptBytes) > 0 {
+		env["DEFAULT_SYSTEM_PROMPT"] = string(promptBytes)
 	}
 
 	// Persistent volume for chat history and settings

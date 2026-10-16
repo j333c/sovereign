@@ -2,10 +2,10 @@
 title: 'Story 5.4: Open WebUI Chat Interface & Localized Customization Prompts'
 type: 'feature'
 created: '2026-10-16'
-status: 'review'
+status: 'done'
 route: 'dispatch'
 baseline_commit: '01dfcae2aad7a38b9e2ab094b6889adf2290e031'
-review_loop_iteration: 0
+review_loop_iteration: 1
 context:
   - '_bmad-output/planning-artifacts/architecture/architecture-sovereign-2026-10-15/ARCHITECTURE-SPINE.md'
   - '_bmad-output/planning-artifacts/ux-designs/ux-sovereign-2026-10-15/DESIGN.md'
@@ -107,3 +107,33 @@ context:
    - Verify web test suite passes (`npm --prefix web test`).
 5. **Automated Verification**:
    - Run `go test ./...` and `npm --prefix web test`.
+
+## Review Triage Log
+
+- **Review Cycle**: Iteration 1
+- **Reviewers**:
+  - Blind Hunter Reviewer (`2bbffe84-681b-4304-af96-4eea04b3b323`)
+  - Edge Case Hunter Reviewer (`9c67e6df-4f68-43db-ae30-946f6d3e1f34`)
+  - Verification Gap Reviewer (`7395e5eb-c640-4c4a-ba54-00d550ca4b88`)
+
+### Findings Triaged & Remediations Applied
+
+1. **PersonaStore Thread Safety & Disk Persistence (`internal/ai/personas.go`)**:
+   - *Finding*: `persist()` and `load()` accessed `s.activeID`, `s.language`, and `s.stateDir` without synchronization across locks. `SetActive()` returned `nil` on persistence failure.
+   - *Fix*: Protected `load()` with write mutex, protected `persist()` reads with read mutex, propagated errors from `persist()` and `SeedOpenWebUI()`, and added `defer os.Remove(...)` to clean up temporary files reliably on write or rename failures.
+2. **Open WebUI Air-Gap Hardening & System Prompt Injection (`internal/supervisor/openwebui.go`)**:
+   - *Finding*: Default Open WebUI startup emitted background version checks, Ollama connectivity probes, and web search checks. System prompts were not automatically surfaced to new chat sessions.
+   - *Fix*: Injected `ENABLE_VERSION_CHECK=False`, `ENABLE_OLLAMA_API=False`, `ENABLE_SEARCH_QUERY=False`, and `WEBUI_BUILD_HASH=""`. Added `DEFAULT_SYSTEM_PROMPT` injection from `system_prompt.txt` into container environment so chat sessions immediately start with the localized persona prompt.
+3. **Caddy `/chat` Ingress Redirect (`caddy/Caddyfile`)**:
+   - *Finding*: Requesting `http://sovereign.local/chat` without trailing slash stripped the prefix to an empty URI, breaking relative assets and upstream routes.
+   - *Fix*: Added `redir /chat /chat/ permanent` in Caddyfile and scoped `@chat path /chat/*`.
+4. **Lifecycle Coordination for AI Bundle (`internal/supervisor/supervisor.go`)**:
+   - *Finding*: Activating Open WebUI independently could leave Llama stopped, producing immediate 503 errors on chat inference.
+   - *Fix*: Added AI bundle coordination in `ActivateService`, `DeactivateService`, and `RestartService`: activating `"ai"` coordinates both `llama` and `openwebui`, and activating `openwebui` ensures `llama` is started.
+5. **REST API Problem Details Standardization (`cmd/sovereign-daemon/server.go`)**:
+   - *Finding*: Persona handlers wrote ad-hoc JSON errors rather than using the daemon's standardized `writeProblem` helper, and failed to default missing `lang` to `"en"`.
+   - *Fix*: Refactored `handleListAIPersonas`, `handleGetAIPersona`, and `handleSetActiveAIPersona` to use `s.writeProblem` and `s.writeJSON`, defaulting empty `lang` to `"en"`.
+6. **Dashboard Multi-Spoke Status Priority Aggregation (`web/src/app/page.tsx`, `page.test.tsx`)**:
+   - *Finding*: Inactive `openwebui` spoke unconditionally overwrote running `llama` backend status on dashboard load.
+   - *Fix*: Implemented priority status ranking (`error > degraded > starting > healthy > stopped`) in `getServices()` and guarded `handleServiceHealthChanged` against inactive auxiliary spoke downgrades. Added test in `web/src/app/page.test.tsx`.
+

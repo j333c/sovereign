@@ -566,6 +566,24 @@ func (m *ServiceManager) ActivateService(ctx context.Context, id string) (*Servi
 		return navSvc, nil
 	}
 
+	if id == "ai" {
+		llamaSvc, err := m.ActivateService(ctx, ServiceLlama)
+		if err != nil {
+			return nil, fmt.Errorf("ai bundle failed to activate %s: %w", ServiceLlama, err)
+		}
+		if _, err := m.ActivateService(ctx, ServiceOpenWebUI); err != nil {
+			m.logger.Warn("ai bundle failed to activate openwebui", "error", err)
+		}
+		return llamaSvc, nil
+	}
+
+	if id == ServiceOpenWebUI {
+		// Ensure backend Llama is also active so Open WebUI does not fail inference requests
+		if _, err := m.ActivateService(ctx, ServiceLlama); err != nil {
+			m.logger.Warn("openwebui activation: backend llama activation encountered error", "error", err)
+		}
+	}
+
 	id = m.resolveID(id)
 	m.mu.Lock()
 	if m.activating[id] {
@@ -847,6 +865,11 @@ func (m *ServiceManager) DeactivateService(ctx context.Context, id string) (*Ser
 		return lastSt, nil
 	}
 
+	if id == "ai" {
+		_, _ = m.DeactivateService(ctx, ServiceOpenWebUI)
+		return m.DeactivateService(ctx, ServiceLlama)
+	}
+
 	id = m.resolveID(id)
 	m.mu.Lock()
 	_, exists := m.definitions[id]
@@ -901,6 +924,15 @@ func (m *ServiceManager) RestartService(ctx context.Context, id string) (*Servic
 			return nil, errAbs
 		}
 		return navSt, nil
+	}
+
+	if id == "ai" {
+		llamaSt, errLlama := m.RestartService(ctx, ServiceLlama)
+		if errLlama != nil {
+			return nil, errLlama
+		}
+		_, _ = m.RestartService(ctx, ServiceOpenWebUI)
+		return llamaSt, nil
 	}
 
 	id = m.resolveID(id)
