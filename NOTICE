@@ -1,0 +1,46 @@
+Sovereign
+Copyright 2026 Sovereign Contributors
+
+This product includes software developed by the Sovereign Open-Source Project
+(http://git.crins:3000/jens/sovereign).
+
+This product was designed, specified, and implemented utilizing the BMad Method
+(https://github.com/bmad-method) with AI-assisted software development.
+
+This product bundles, orchestrates, or interfaces with third-party open-source
+software across containerized network boundaries:
+
+1. Jellyfin (GNU General Public License v3.0)
+   Copyright 2018-2026 Jellyfin Contributors
+   https://github.com/jellyfin/jellyfin
+
+2. Navidrome (GNU General Public License v3.0)
+   Copyright 2018-2026 Deluan Quintao and Navidrome Contributors
+   https://github.com/navidrome/navidrome
+
+3. Audiobookshelf (GNU General Public License v3.0)
+   Copyright 2021-2026 advplyr and Audiobookshelf Contributors
+   https://github.com/advplyr/audiobookshelf
+
+4. Paperless-ngx (GNU General Public License v3.0)
+   Copyright 2021-2026 Paperless-ngx Contributors
+   https://github.com/paperless-ngx/paperless-ngx
+
+5. Open WebUI (MIT License)
+   Copyright 2023-2026 Open WebUI Community
+   https://github.com/open-webui/open-webui
+
+6. llama.cpp (MIT License)
+   Copyright 2023-2026 Georgi Gerganov and llama.cpp Contributors
+   https://github.com/ggerganov/llama.cpp
+
+7. Caddy (Apache License 2.0)
+   Copyright 2015-2026 Matthew Holt and Caddy Contributors
+   https://github.com/caddyserver/caddy
+
+8. Automatic Ripping Machine (MIT License / GNU GPLv2)
+   Copyright 2016-2026 1337-server, automatic-ripping-machine Contributors
+   https://github.com/automatic-ripping-machine/automatic-ripping-machine
+
+For complete third-party license texts, copyright statements, and container isolation
+boundaries, see LICENSES.md in the root directory.
