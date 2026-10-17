@@ -137,6 +137,24 @@ export default function HardwarePage({
       />
 
       <main className="flex-1 w-full max-w-6xl mx-auto px-4 py-8 sm:py-12 flex flex-col gap-10">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <Link
+            href="/"
+            className="inline-flex min-h-[44px] items-center gap-2 rounded-lg border border-[#E5E7EB] bg-white px-3 py-2 text-xs sm:text-sm font-medium text-[#0F172A] shadow-xs hover:bg-[#F1F5F9] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 transition-colors"
+          >
+            <span aria-hidden="true">←</span>
+            <span>{t.backToDashboard}</span>
+          </Link>
+          <Link
+            href="/landing"
+            className="inline-flex min-h-[44px] items-center gap-1.5 rounded-lg border border-[#E5E7EB] bg-white px-3 py-2 text-xs sm:text-sm font-medium text-blue-600 shadow-xs hover:bg-[#F1F5F9] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 transition-colors"
+            data-testid="hardware-showcase-link"
+          >
+            <span aria-hidden="true">✨</span>
+            <span>{t.landingNavLanding}</span>
+          </Link>
+        </div>
+
         {/* Header Title & Subtitle */}
         <div className="flex flex-col items-center text-center gap-3">
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[#EFF6FF] text-[#1D4ED8] text-xs font-semibold border border-[#BFDBFE]">

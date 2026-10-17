@@ -159,6 +159,20 @@ export function AppHeader({
           <span className="hidden lg:inline">{t.hardwareTitle}</span>
         </Link>
 
+        {/* Landing Showcase link */}
+        <Link
+          href="/landing"
+          className="flex h-11 items-center justify-center rounded-lg px-3 sm:px-4 text-xs sm:text-sm font-medium text-[#0F172A] bg-[#F8F9FA] hover:bg-[#F1F5F9] border border-[#E5E7EB] transition-colors focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:outline-none"
+          aria-label={t.landingNavLanding}
+          title={t.landingNavLanding}
+          data-testid="landing-nav-link"
+        >
+          <span className="xl:mr-1.5" aria-hidden="true">
+            ✨
+          </span>
+          <span className="hidden xl:inline">{t.landingNavLanding}</span>
+        </Link>
+
         {/* Settings button */}
         {onSettingsClick ? (
           <button

@@ -686,7 +686,7 @@ export default function GuidesPage({ initialLanguage, initialTopic = "quickstart
       <div className="mx-auto flex w-full max-w-[1200px] flex-1 flex-col gap-6 px-4 py-8 sm:px-6 sm:py-10 md:grid md:grid-cols-[280px_1fr] md:gap-8">
         {/* Sidebar Topics Navigation */}
         <aside>
-          <div className="mb-4">
+          <div className="mb-4 flex flex-wrap gap-2">
             <Link
               href="/"
               className="inline-flex min-h-[44px] items-center gap-2 rounded-lg border border-[#E5E7EB] bg-white px-3 py-2 text-xs sm:text-sm font-medium text-[#0F172A] shadow-xs hover:bg-[#F1F5F9] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 transition-colors"
@@ -694,6 +694,15 @@ export default function GuidesPage({ initialLanguage, initialTopic = "quickstart
             >
               <span aria-hidden="true">←</span>
               <span>{t.backToDashboard}</span>
+            </Link>
+            <Link
+              href="/landing"
+              className="inline-flex min-h-[44px] items-center gap-1.5 rounded-lg border border-[#E5E7EB] bg-white px-3 py-2 text-xs sm:text-sm font-medium text-blue-600 shadow-xs hover:bg-[#F1F5F9] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 transition-colors"
+              aria-label={t.landingNavLanding}
+              data-testid="guides-showcase-link"
+            >
+              <span aria-hidden="true">✨</span>
+              <span>{t.landingNavLanding}</span>
             </Link>
           </div>
 

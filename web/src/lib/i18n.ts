@@ -297,6 +297,56 @@ export interface DashboardTranslations {
   turnkeyModalTitle: string;
   turnkeyEmailLabel: string;
   turnkeySubmitBtn: string;
+
+  // Landing Marketing & Showcase (Story 7.2)
+  landingTitle: string;
+  landingHeroHeadline: string;
+  landingHeroSubheadline: string;
+  landingCtaDashboard: string;
+  landingCtaGitHub: string;
+  landingCtaHardware: string;
+  landingFeatureShowcaseTitle: string;
+  landingFeatureShowcaseSubtitle: string;
+  landingFeatureVideoTitle: string;
+  landingFeatureVideoDesc: string;
+  landingFeatureAudioTitle: string;
+  landingFeatureAudioDesc: string;
+  landingFeatureDMSTitle: string;
+  landingFeatureDMSDesc: string;
+  landingFeatureAITitle: string;
+  landingFeatureAIDesc: string;
+  landingFeatureDiscTitle: string;
+  landingFeatureDiscDesc: string;
+  landingPrivacyTitle: string;
+  landingPrivacySubtitle: string;
+  landingPrivacyPill1Title: string;
+  landingPrivacyPill1Desc: string;
+  landingPrivacyPill2Title: string;
+  landingPrivacyPill2Desc: string;
+  landingPrivacyPill3Title: string;
+  landingPrivacyPill3Desc: string;
+  landingPrivacyPill4Title: string;
+  landingPrivacyPill4Desc: string;
+  landingOpenSourceTitle: string;
+  landingOpenSourceSubtitle: string;
+  landingNavLanding: string;
+  landingHeroBadge: string;
+  landingStatPings: string;
+  landingStatStorage: string;
+  landingStatSpokes: string;
+  landingStatPower: string;
+  landingBadgeVideo: string;
+  landingBadgeAudio: string;
+  landingBadgeDms: string;
+  landingBadgeAi: string;
+  landingBadgeDisc: string;
+  landingReadGuideMedia: string;
+  landingReadGuideAudio: string;
+  landingReadGuideDms: string;
+  landingReadGuideAi: string;
+  landingReadGuideDisc: string;
+  landingFullHardwareGuides: string;
+  landingFooterBrandDesc: string;
 }
 
 export const translations: Record<Language, DashboardTranslations> = {
@@ -585,6 +635,54 @@ export const translations: Record<Language, DashboardTranslations> = {
     turnkeyModalTitle: "Priority Hardware Reservation",
     turnkeyEmailLabel: "Email for notification",
     turnkeySubmitBtn: "Confirm Priority Reservation",
+    landingTitle: "Sovereign — Private Home Server",
+    landingHeroHeadline: "Your Personal Digital Sanctuary",
+    landingHeroSubheadline: "100% private, zero-telemetry home server appliance. Stream 4K media, archive documents with OCR, run local AI, and ingest optical discs on hardware you own.",
+    landingCtaDashboard: "Open Appliance Dashboard",
+    landingCtaGitHub: "View on GitHub",
+    landingCtaHardware: "Hardware Calculator",
+    landingFeatureShowcaseTitle: "Integrated Private Household Services",
+    landingFeatureShowcaseSubtitle: "Five pre-configured spoke appliances unified under a single private dashboard, running completely within your home network.",
+    landingFeatureVideoTitle: "4K Video Streaming & Transcoding",
+    landingFeatureVideoDesc: "Hardware-accelerated video streaming powered by Jellyfin. Intel QuickSync tone mapping enables smooth, stutter-free playback on all family devices.",
+    landingFeatureAudioTitle: "Lossless Music & Audiobooks",
+    landingFeatureAudioDesc: "Navidrome provides pristine FLAC and MP3 streaming, while Audiobookshelf syncs listening progress, chapters, and bookmarks across user accounts.",
+    landingFeatureDMSTitle: "Intelligent Document Archiving",
+    landingFeatureDMSDesc: "Paperless-ngx delivers automated OCR text indexing, multi-channel email ingestion, and intelligent deadline detection for household contracts and bills.",
+    landingFeatureAITitle: "Local Private AI & Instant RAG",
+    landingFeatureAIDesc: "Local llama.cpp 7B/8B GGUF inference running on an air-gapped network. Query your personal document archive with zero cloud telemetry exposure.",
+    landingFeatureDiscTitle: "Automated Optical Disc Ingestion",
+    landingFeatureDiscDesc: "Automatic Ripping Machine (ARM) detects audio CDs, DVDs, and Blu-rays on insertion, losslessly rips media, queries poster artwork, and ejects.",
+    landingPrivacyTitle: "Zero-Telemetry Architectural Invariants",
+    landingPrivacySubtitle: "Engineered from the ground up to guarantee absolute family privacy and high operational resilience.",
+    landingPrivacyPill1Title: "Air-Gapped AI Network",
+    landingPrivacyPill1Desc: "AI backend runs on an isolated internal Docker bridge without internet routing. Prompts and documents never leave your physical appliance.",
+    landingPrivacyPill2Title: "Zero Docker Socket Exposure",
+    landingPrivacyPill2Desc: "Spoke application containers have zero access to the host Docker daemon socket, eliminating container breakout vulnerabilities.",
+    landingPrivacyPill3Title: "CGO-Free WAL Durability",
+    landingPrivacyPill3Desc: "Pure Go SQLite with Write-Ahead Logging ensures database integrity and instant crash recovery during sudden power outages.",
+    landingPrivacyPill4Title: "Atomic 180s Rollback Safety",
+    landingPrivacyPill4Desc: "Scheduled container updates probe service health for 180 seconds and revert atomically to prior snapshots if errors occur.",
+    landingOpenSourceTitle: "100% Open-Source & Community-Driven",
+    landingOpenSourceSubtitle: "Built on battle-tested open-source software using the BMad Method. Inspect code, audit security, and assemble your own hardware freely.",
+    landingNavLanding: "Showcase",
+    landingHeroBadge: "100% Private · Zero Cloud Telemetry · Appliance Grade",
+    landingStatPings: "Cloud Pings",
+    landingStatStorage: "Local Storage",
+    landingStatSpokes: "Unified Spokes",
+    landingStatPower: "Idle Capable",
+    landingBadgeVideo: "⚡ QuickSync Hardware Accelerated",
+    landingBadgeAudio: "🎧 Lossless FLAC & Multi-User Audiobooks",
+    landingBadgeDms: "📑 Automated OCR & Deadline Extraction",
+    landingBadgeAi: "🤖 Local 7B/8B LLM & Document RAG",
+    landingBadgeDisc: "💿 Insert & Walk Away Ingestion",
+    landingReadGuideMedia: "Read Media Setup Guide",
+    landingReadGuideAudio: "Read Audio Setup Guide",
+    landingReadGuideDms: "Read Document Archival Guide",
+    landingReadGuideAi: "Read Local AI Guide",
+    landingReadGuideDisc: "Read Optical Ripping Guide",
+    landingFullHardwareGuides: "Full Hardware Specification Guides & Hardware Tier Roadmap",
+    landingFooterBrandDesc: "100% Private Self-Hosted Home Server",
   },
   de: {
     crestTitle: "Sovereign",
@@ -871,6 +969,54 @@ export const translations: Record<Language, DashboardTranslations> = {
     turnkeyModalTitle: "Prioritäre Hardware-Reservierung",
     turnkeyEmailLabel: "E-Mail für Benachrichtigung",
     turnkeySubmitBtn: "Prioritäts-Reservierung bestätigen",
+    landingTitle: "Sovereign — Privater Heimserver",
+    landingHeroHeadline: "Ihr persönlicher digitaler Zufluchtsort",
+    landingHeroSubheadline: "100 % private, telemetriefreie Heimserver-Appliance. Streamen Sie 4K-Medien, archivieren Sie Dokumente mit OCR, nutzen Sie lokale KI und lesen Sie optische Discs ein – auf Hardware, die Ihnen gehört.",
+    landingCtaDashboard: "Appliance-Dashboard öffnen",
+    landingCtaGitHub: "Auf GitHub ansehen",
+    landingCtaHardware: "Hardware-Rechner",
+    landingFeatureShowcaseTitle: "Integrierte private Haushaltsdienste",
+    landingFeatureShowcaseSubtitle: "Fünf vorkonfigurierte Dienste unter einem einzigen privaten Dashboard, die vollständig in Ihrem Heimnetzwerk betrieben werden.",
+    landingFeatureVideoTitle: "4K-Video-Streaming & Transkodierung",
+    landingFeatureVideoDesc: "Hardwarebeschleunigtes Streaming mit Jellyfin. Intel QuickSync Tone-Mapping ermöglicht flüssige Wiedergabe auf allen Familiengeräten.",
+    landingFeatureAudioTitle: "Verlustfreie Musik & Hörbücher",
+    landingFeatureAudioDesc: "Navidrome liefert hochauflösendes FLAC- und MP3-Streaming, während Audiobookshelf Hörfortschritte und Lesezeichen synchronisiert.",
+    landingFeatureDMSTitle: "Intelligente Dokumentenarchivierung",
+    landingFeatureDMSDesc: "Paperless-ngx bietet automatische OCR-Texterkennung, Mehrkanal-E-Mail-Polling und automatische Fristenerkennung für Verträge und Rechnungen.",
+    landingFeatureAITitle: "Lokale private KI & Dokumenten-RAG",
+    landingFeatureAIDesc: "Lokale llama.cpp 7B/8B GGUF-Inferenz im abgeschotteten Netzwerk. Befragen Sie Ihr persönliches Dokumentenarchiv ohne Cloud-Telemetrie.",
+    landingFeatureDiscTitle: "Automatisches Einlesen von Discs",
+    landingFeatureDiscDesc: "Die Automatic Ripping Machine (ARM) erkennt Musik-CDs, DVDs und Blu-rays beim Einlegen, rippt verlustfrei, lädt Cover und wirft die Disc aus.",
+    landingPrivacyTitle: "Telemetriefreie Architektur-Garantien",
+    landingPrivacySubtitle: "Von Grund auf entwickelt, um absolute Privatsphäre und maximale Ausfallsicherheit zu gewährleisten.",
+    landingPrivacyPill1Title: "Abgeschottetes KI-Netzwerk",
+    landingPrivacyPill1Desc: "Das KI-Backend läuft auf einer isolierten internen Docker-Bridge ohne Internet-Routing. Prompts und Daten verlassen niemals Ihr Haus.",
+    landingPrivacyPill2Title: "Keine Docker-Socket-Freigabe",
+    landingPrivacyPill2Desc: "Anwendungs-Container haben keinerlei Zugriff auf den Docker-Socket des Host-Systems, was Sicherheitsausbrüche verhindert.",
+    landingPrivacyPill3Title: "CGO-freie WAL-Datenbank",
+    landingPrivacyPill3Desc: "Reines Go-SQLite mit Write-Ahead Logging garantiert Datenbankintegrität und sofortige Wiederherstellung nach Stromausfällen.",
+    landingPrivacyPill4Title: "Atomare 180s-Rollback-Sicherheit",
+    landingPrivacyPill4Desc: "Nächtliche Container-Updates prüfen die Dienstgesundheit 180 Sekunden lang und rollen bei Fehlern atomar auf Backups zurück.",
+    landingOpenSourceTitle: "100 % Open Source & Community-geführt",
+    landingOpenSourceSubtitle: "Aufgebaut auf bewährten Open-Source-Grundlagen nach der BMad-Methode. Prüfen Sie den Code und bauen Sie eigene Hardware.",
+    landingNavLanding: "Showcase",
+    landingHeroBadge: "100 % privat · Keine Cloud-Telemetrie · Appliance-Standard",
+    landingStatPings: "Cloud-Pings",
+    landingStatStorage: "Lokaler Speicher",
+    landingStatSpokes: "Integrierte Dienste",
+    landingStatPower: "Leerlaufleistung",
+    landingBadgeVideo: "⚡ Hardware-beschleunigtes QuickSync",
+    landingBadgeAudio: "🎧 Verlustfreies FLAC & Hörbücher für mehrere Benutzer",
+    landingBadgeDms: "📑 Automatische OCR & Fristenerkennung",
+    landingBadgeAi: "🤖 Lokales 7B/8B LLM & Dokumenten-RAG",
+    landingBadgeDisc: "💿 Automatisches Einlesen von Discs",
+    landingReadGuideMedia: "Medien-Leitfaden lesen",
+    landingReadGuideAudio: "Audio-Leitfaden lesen",
+    landingReadGuideDms: "Dokumentenarchivierungs-Leitfaden lesen",
+    landingReadGuideAi: "Lokalen KI-Leitfaden lesen",
+    landingReadGuideDisc: "Disc-Ripping-Leitfaden lesen",
+    landingFullHardwareGuides: "Vollständige Hardware-Leitfäden & Stufen-Roadmap",
+    landingFooterBrandDesc: "100 % privater selbstgehosteter Heimserver",
   },
   es: {
     crestTitle: "Sovereign",
@@ -1157,6 +1303,54 @@ export const translations: Record<Language, DashboardTranslations> = {
     turnkeyModalTitle: "Reserva prioritaria de hardware",
     turnkeyEmailLabel: "Correo para notificación",
     turnkeySubmitBtn: "Confirmar reserva prioritaria",
+    landingTitle: "Sovereign — Servidor doméstico privado",
+    landingHeroHeadline: "Su santuario digital personal",
+    landingHeroSubheadline: "Dispositivo de servidor doméstico 100% privado y sin telemetría. Transmita medios en 4K, archive documentos con OCR, ejecute IA local y extraiga discos ópticos en hardware de su propiedad.",
+    landingCtaDashboard: "Abrir panel de control",
+    landingCtaGitHub: "Ver en GitHub",
+    landingCtaHardware: "Calculadora de hardware",
+    landingFeatureShowcaseTitle: "Servicios domésticos privados integrados",
+    landingFeatureShowcaseSubtitle: "Cinco servicios preconfigurados unificados bajo un único panel de control privado, ejecutados en su red doméstica.",
+    landingFeatureVideoTitle: "Streaming y transcodificación de vídeo 4K",
+    landingFeatureVideoDesc: "Streaming con aceleración de hardware con Jellyfin. El mapeo de tonos Intel QuickSync permite una reproducción fluida en todos los dispositivos.",
+    landingFeatureAudioTitle: "Música sin pérdidas y audiolibros",
+    landingFeatureAudioDesc: "Navidrome ofrece streaming FLAC y MP3 de alta fidelidad, mientras Audiobookshelf sincroniza capítulos y marcas de lectura.",
+    landingFeatureDMSTitle: "Gestión documental inteligente",
+    landingFeatureDMSDesc: "Paperless-ngx proporciona indexación de texto OCR, ingesta automática por correo y detección de plazos de pago y cancelación.",
+    landingFeatureAITitle: "IA privada local y RAG instantáneo",
+    landingFeatureAIDesc: "Inferencia GGUF 7B/8B local con llama.cpp en red aislada. Consulte su archivo de documentos personales sin enviar datos a la nube.",
+    landingFeatureDiscTitle: "Extracción automática de discos ópticos",
+    landingFeatureDiscDesc: "Automatic Ripping Machine (ARM) detecta CD, DVD y Blu-ray al insertarlos, extrae el contenido sin pérdidas y expulsa el disco.",
+    landingPrivacyTitle: "Garantías arquitectónicas sin telemetría",
+    landingPrivacySubtitle: "Diseñado desde el principio para garantizar la privacidad familiar y la resiliencia operativa.",
+    landingPrivacyPill1Title: "Red de IA aislada (Air-Gapped)",
+    landingPrivacyPill1Desc: "El backend de IA se ejecuta en un puente Docker interno sin enrutamiento a internet. Nada sale de su dispositivo físico.",
+    landingPrivacyPill2Title: "Cero montajes del socket Docker",
+    landingPrivacyPill2Desc: "Los contenedores de aplicaciones no tienen acceso al socket de Docker del host, previniendo vulnerabilidades de escalada.",
+    landingPrivacyPill3Title: "Durabilidad WAL en SQLite puro",
+    landingPrivacyPill3Desc: "SQLite en Go puro con Write-Ahead Logging asegura integridad de datos y recuperación instantánea tras cortes de energía.",
+    landingPrivacyPill4Title: "Seguridad de reversión atómica de 180s",
+    landingPrivacyPill4Desc: "Las actualizaciones programadas verifican el estado durante 180 segundos y revierten automáticamente ante cualquier fallo.",
+    landingOpenSourceTitle: "100% Código Abierto e Impulsado por la Comunidad",
+    landingOpenSourceSubtitle: "Construido sobre pilares de código abierto mediante el Método BMad. Audite el código y configure su propio hardware libremente.",
+    landingNavLanding: "Presentación",
+    landingHeroBadge: "100% privado · Cero telemetría en la nube · Nivel electrodoméstico",
+    landingStatPings: "Pings a la nube",
+    landingStatStorage: "Almacenamiento local",
+    landingStatSpokes: "Servicios integrados",
+    landingStatPower: "Consumo en reposo",
+    landingBadgeVideo: "⚡ QuickSync acelerado por hardware",
+    landingBadgeAudio: "🎧 FLAC sin pérdidas y audiolibros multiusuario",
+    landingBadgeDms: "📑 OCR automático y detección de plazos",
+    landingBadgeAi: "🤖 LLM local 7B/8B y RAG de documentos",
+    landingBadgeDisc: "💿 Extracción automática de discos ópticos",
+    landingReadGuideMedia: "Leer guía de configuración de medios",
+    landingReadGuideAudio: "Leer guía de audio",
+    landingReadGuideDms: "Leer guía de archivo de documentos",
+    landingReadGuideAi: "Leer guía de IA local",
+    landingReadGuideDisc: "Leer guía de digitalización de discos",
+    landingFullHardwareGuides: "Guías completas de especificaciones de hardware y mapa de niveles",
+    landingFooterBrandDesc: "Servidor doméstico 100% privado y autónomo",
   },
   fr: {
     crestTitle: "Sovereign",
@@ -1443,6 +1637,54 @@ export const translations: Record<Language, DashboardTranslations> = {
     turnkeyModalTitle: "Réservation matérielle prioritaire",
     turnkeyEmailLabel: "E-mail pour notification",
     turnkeySubmitBtn: "Confirmer la réservation prioritaire",
+    landingTitle: "Sovereign — Serveur domestique privé",
+    landingHeroHeadline: "Votre sanctuaire numérique personnel",
+    landingHeroSubheadline: "Appareil serveur domestique 100 % privé et sans télémétrie. Diffusez des médias 4K, archivez des documents avec OCR, utilisez une IA locale et extrayez des disques optiques sur votre propre matériel.",
+    landingCtaDashboard: "Ouvrir le tableau de bord",
+    landingCtaGitHub: "Voir sur GitHub",
+    landingCtaHardware: "Calculateur matériel",
+    landingFeatureShowcaseTitle: "Services domestiques privés intégrés",
+    landingFeatureShowcaseSubtitle: "Cinq applications préconfigurées unifiées sous un tableau de bord privé unique, fonctionnant entièrement sur votre réseau local.",
+    landingFeatureVideoTitle: "Streaming vidéo 4K et transcodage",
+    landingFeatureVideoDesc: "Streaming avec accélération matérielle propulsé par Jellyfin. Le mappage de tons Intel QuickSync garantit une lecture fluide.",
+    landingFeatureAudioTitle: "Musique sans perte et livres audio",
+    landingFeatureAudioDesc: "Navidrome offre un streaming FLAC et MP3 haute fidélité, tandis qu'Audiobookshelf synchronise la progression et les signets.",
+    landingFeatureDMSTitle: "Archivage intelligent de documents",
+    landingFeatureDMSDesc: "Paperless-ngx assure l'indexation OCR, la collecte automatique par e-mail et la détection intelligente des dates d'échéance.",
+    landingFeatureAITitle: "IA privée locale et RAG instantané",
+    landingFeatureAIDesc: "Inférence locale llama.cpp 7B/8B GGUF sur réseau isolé. Interrogez vos documents personnels sans aucune télémétrie cloud.",
+    landingFeatureDiscTitle: "Extraction automatique de disques optiques",
+    landingFeatureDiscDesc: "Automatic Ripping Machine (ARM) détecte CD, DVD et Blu-ray à l'insertion, extrait sans perte et éjecte automatiquement.",
+    landingPrivacyTitle: "Garanties architecturales sans télémétrie",
+    landingPrivacySubtitle: "Conçu pour garantir la confidentialité absolue du foyer et une haute résilience opérationnelle.",
+    landingPrivacyPill1Title: "Réseau d'IA hermétique (Air-Gapped)",
+    landingPrivacyPill1Desc: "Le moteur d'IA fonctionne sur un pont Docker interne isolé sans routage internet. Vos données ne quittent jamais l'appareil.",
+    landingPrivacyPill2Title: "Zéro exposition du socket Docker",
+    landingPrivacyPill2Desc: "Les conteneurs applicatifs n'ont aucun accès au socket Docker de l'hôte, éliminant les risques d'élévation de privilèges.",
+    landingPrivacyPill3Title: "Durabilité WAL SQLite en Go pur",
+    landingPrivacyPill3Desc: "SQLite en Go pur sans CGO avec Write-Ahead Logging garantit l'intégrité des bases même en cas de coupure de courant.",
+    landingPrivacyPill4Title: "Sécurité de retour arrière atomique 180s",
+    landingPrivacyPill4Desc: "Les mises à jour nocturnes surveillent la santé pendant 180 secondes et restaurent automatiquement l'état antérieur en cas d'anomalie.",
+    landingOpenSourceTitle: "100 % Open Source & Porté par la Communauté",
+    landingOpenSourceSubtitle: "Bâti sur des fondations open source éprouvées selon la méthode BMad. Inspectez le code et assemblez votre matériel en toute liberté.",
+    landingNavLanding: "Présentation",
+    landingHeroBadge: "100 % privé · Zéro télémétrie cloud · Qualité électroménager",
+    landingStatPings: "Pings cloud",
+    landingStatStorage: "Stockage local",
+    landingStatSpokes: "Services intégrés",
+    landingStatPower: "Consommation au repos",
+    landingBadgeVideo: "⚡ Accélération matérielle QuickSync",
+    landingBadgeAudio: "🎧 FLAC sans perte et livres audio multi-utilisateurs",
+    landingBadgeDms: "📑 OCR automatique et extraction d'échéances",
+    landingBadgeAi: "🤖 LLM local 7B/8B et RAG de documents",
+    landingBadgeDisc: "💿 Numérisation autonome de disques optiques",
+    landingReadGuideMedia: "Lire le guide multimédia",
+    landingReadGuideAudio: "Lire le guide audio",
+    landingReadGuideDms: "Lire le guide d'archivage documentaire",
+    landingReadGuideAi: "Lire le guide IA locale",
+    landingReadGuideDisc: "Lire le guide de numérisation de disques",
+    landingFullHardwareGuides: "Guides matériels complets et feuille de route des profils",
+    landingFooterBrandDesc: "Serveur domestique 100 % privé auto-hébergé",
   },
 };
 
