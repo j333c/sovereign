@@ -222,6 +222,44 @@ export interface DashboardTranslations {
   deactivateConfirmButton: string;
   deactivatingState: string;
   typeResetToConfirm: string;
+
+  // Bundled Guides & Help
+  guidesTitle: string;
+  guidesSubtitle: string;
+  guideQuickstart: string;
+  guideStorage: string;
+  guideMedia: string;
+  guideAI: string;
+  guideResilience: string;
+
+  // Boot screen
+  bootSafetyChecked: string;
+  bootSafetyVerifying: string;
+  bootSafetySuccess: string;
+  bootSafetySuccessDesc: string;
+  bootSafetyError: string;
+  bootSafetyErrorDesc: string;
+  bootStorageDegraded: string;
+  bootBadgeChecking: string;
+  bootBadgeSuccess: string;
+  bootBadgeAttention: string;
+
+  // Dropzone & Settings additional
+  storageIngestionReady: string;
+  destinationLibrary: string;
+  mediaCategoryTabs: string;
+  daytimeSchedule: string;
+  nighttimeSchedule: string;
+  interactiveAILabel: string;
+  batchTranscodeLabel: string;
+  balanceHardwareSharing: string;
+  systemMaintenanceDesc: string;
+  dailyUpdateWindow: string;
+  rollbackProtectionLabel: string;
+  rollbackProtectionActive: string;
+  applianceHostname: string;
+  destructiveControlsTitle: string;
+  destructiveControlsDesc: string;
 }
 
 export const translations: Record<Language, DashboardTranslations> = {
@@ -443,6 +481,38 @@ export const translations: Record<Language, DashboardTranslations> = {
     deactivateConfirmButton: "Deactivate Service",
     deactivatingState: "Deactivating...",
     typeResetToConfirm: "Type RESET to confirm",
+    guidesTitle: "Appliance Guides & Help",
+    guidesSubtitle: "Step-by-step documentation for setting up, managing, and maintaining your Sovereign home server.",
+    guideQuickstart: "Quickstart & Setup",
+    guideStorage: "Storage & Network NAS",
+    guideMedia: "Media & Dropzone",
+    guideAI: "Private Local AI",
+    guideResilience: "Power & Rollback Safety",
+    bootSafetyChecked: "Checking system safety after power restoration... your files are secure.",
+    bootSafetyVerifying: "Verifying system integrity and storage safety before launching services.",
+    bootSafetySuccess: "System safety verified. Redirecting to dashboard...",
+    bootSafetySuccessDesc: "All storage volumes and database integrity checks completed successfully.",
+    bootSafetyError: "System verification detected an issue. Your files are protected in safety mode. Automated restore recommended.",
+    bootSafetyErrorDesc: "Your data remains safe and intact on local storage. No action is required while the system stabilizes.",
+    bootStorageDegraded: "Hardware attention needed: A hard drive is reporting errors. Your existing files are locked in read-only safety mode.",
+    bootBadgeChecking: "Verifying Storage",
+    bootBadgeSuccess: "System Operational",
+    bootBadgeAttention: "Attention Required",
+    storageIngestionReady: "Storage Ingestion Ready",
+    destinationLibrary: "Destination Library",
+    mediaCategoryTabs: "Media Category Tabs",
+    daytimeSchedule: "☀️ Daytime (AI Priority): 07:00 – 01:00",
+    nighttimeSchedule: "🌙 Nighttime (Batch Transcode): 01:00 – 07:00",
+    interactiveAILabel: "Interactive AI (18h)",
+    batchTranscodeLabel: "Batch (6h)",
+    balanceHardwareSharing: "Balance real-time AI responsiveness against heavy batch video transcoding.",
+    systemMaintenanceDesc: "System maintenance, updates, and storage diagnostic health.",
+    dailyUpdateWindow: "Daily Update Window",
+    rollbackProtectionLabel: "Rollback Protection",
+    rollbackProtectionActive: "Active (180s probe window)",
+    applianceHostname: "Appliance Hostname",
+    destructiveControlsTitle: "Destructive Appliance Controls",
+    destructiveControlsDesc: "Administrative operations requiring explicit confirmation. Safeguards prevent accidental execution.",
   },
   de: {
     crestTitle: "Sovereign",
@@ -662,6 +732,38 @@ export const translations: Record<Language, DashboardTranslations> = {
     deactivateConfirmButton: "Dienst deaktivieren",
     deactivatingState: "Wird deaktiviert...",
     typeResetToConfirm: "Tippen Sie RESET zur Bestätigung ein",
+    guidesTitle: "Anleitungen & Hilfe",
+    guidesSubtitle: "Schritt-für-Schritt-Anleitungen zur Einrichtung, Verwaltung und Wartung Ihres Sovereign-Heimservers.",
+    guideQuickstart: "Schnellstart & Einrichtung",
+    guideStorage: "Speicher & Netzwerk-NAS",
+    guideMedia: "Medien & Dropzone",
+    guideAI: "Private lokale KI",
+    guideResilience: "Ausfallsicherheit & Rollback",
+    bootSafetyChecked: "Systemsicherheit wird nach Stromwiederherstellung überprüft... Ihre Dateien sind sicher.",
+    bootSafetyVerifying: "Systemintegrität und Speichersicherheit werden vor dem Starten der Dienste überprüft.",
+    bootSafetySuccess: "Systemsicherheit bestätigt. Weiterleitung zur Übersicht...",
+    bootSafetySuccessDesc: "Alle Speicherbereiche und Datenbank-Integritätsprüfungen erfolgreich abgeschlossen.",
+    bootSafetyError: "Systemprüfung hat ein Problem festgestellt. Ihre Dateien sind im Sicherheitsmodus geschützt. Automatische Wiederherstellung empfohlen.",
+    bootSafetyErrorDesc: "Ihre Daten bleiben sicher und intakt auf dem lokalen Speicher. Keine Aktion erforderlich, während sich das System stabilisiert.",
+    bootStorageDegraded: "Hardware-Aufmerksamkeit erforderlich: Eine Festplatte meldet Fehler. Ihre bestehenden Dateien sind im schreibgeschützten Sicherheitsmodus gesperrt.",
+    bootBadgeChecking: "Speicher wird geprüft",
+    bootBadgeSuccess: "System betriebsbereit",
+    bootBadgeAttention: "Aufmerksamkeit erforderlich",
+    storageIngestionReady: "Speicheraufnahme bereit",
+    destinationLibrary: "Zielbibliothek",
+    mediaCategoryTabs: "Medienkategorie-Reiter",
+    daytimeSchedule: "☀️ Tagsüber (KI-Priorität): 07:00 – 01:00",
+    nighttimeSchedule: "🌙 Nachts (Stapel-Transkodierung): 01:00 – 07:00",
+    interactiveAILabel: "Interaktive KI (18h)",
+    batchTranscodeLabel: "Stapelverarbeitung (6h)",
+    balanceHardwareSharing: "Echtzeit-KI-Reaktionsfähigkeit mit Video-Stapeltranskodierung ausbalancieren.",
+    systemMaintenanceDesc: "Systemwartung, Aktualisierungen und Speicherdiagnose.",
+    dailyUpdateWindow: "Tägliches Update-Fenster",
+    rollbackProtectionLabel: "Rollback-Schutz",
+    rollbackProtectionActive: "Aktiv (180s Prüffenster)",
+    applianceHostname: "Geräte-Hostname",
+    destructiveControlsTitle: "Destruktive Gerätesteuerung",
+    destructiveControlsDesc: "Verwaltungsvorgänge mit expliziter Bestätigung. Sicherheitsmechanismen verhindern versehentliche Ausführung.",
   },
   es: {
     crestTitle: "Sovereign",
@@ -881,6 +983,38 @@ export const translations: Record<Language, DashboardTranslations> = {
     deactivateConfirmButton: "Desactivar servicio",
     deactivatingState: "Desactivando...",
     typeResetToConfirm: "Escriba RESET para confirmar",
+    guidesTitle: "Guías de ayuda del electrodoméstico",
+    guidesSubtitle: "Documentación paso a paso para configurar, gestionar y mantener su servidor doméstico Sovereign.",
+    guideQuickstart: "Inicio rápido y configuración",
+    guideStorage: "Almacenamiento y NAS en red",
+    guideMedia: "Medios y zona de entrega",
+    guideAI: "IA local y privada",
+    guideResilience: "Resiliencia eléctrica y restauración",
+    bootSafetyChecked: "Comprobando la seguridad del sistema tras la restauración eléctrica... sus archivos están seguros.",
+    bootSafetyVerifying: "Verificando la integridad del sistema y la seguridad del almacenamiento antes de iniciar servicios.",
+    bootSafetySuccess: "Seguridad del sistema verificada. Redirigiendo al panel...",
+    bootSafetySuccessDesc: "Todas las comprobaciones de integridad de almacenamiento y base de datos se completaron con éxito.",
+    bootSafetyError: "La verificación del sistema detectó un problema. Sus archivos están protegidos en modo seguro. Se recomienda restauración automática.",
+    bootSafetyErrorDesc: "Sus datos permanecen seguros e intactos en el almacenamiento local. No se requiere ninguna acción mientras el sistema se estabiliza.",
+    bootStorageDegraded: "Atención de hardware necesaria: Un disco duro está reportando errores. Sus archivos están bloqueados en modo seguro de solo lectura.",
+    bootBadgeChecking: "Verificando almacenamiento",
+    bootBadgeSuccess: "Sistema operativo",
+    bootBadgeAttention: "Atención requerida",
+    storageIngestionReady: "Ingesta de almacenamiento lista",
+    destinationLibrary: "Biblioteca de destino",
+    mediaCategoryTabs: "Pestañas de categoría multimedia",
+    daytimeSchedule: "☀️ Día (Prioridad IA): 07:00 – 01:00",
+    nighttimeSchedule: "🌙 Noche (Transcodificación por lotes): 01:00 – 07:00",
+    interactiveAILabel: "IA interactiva (18h)",
+    batchTranscodeLabel: "Lotes (6h)",
+    balanceHardwareSharing: "Equilibrar la capacidad de respuesta de la IA en tiempo real frente a la transcodificación de vídeo por lotes.",
+    systemMaintenanceDesc: "Mantenimiento del sistema, actualizaciones y salud diagnóstica del almacenamiento.",
+    dailyUpdateWindow: "Ventana de actualización diaria",
+    rollbackProtectionLabel: "Protección de reversión",
+    rollbackProtectionActive: "Activa (ventana de sondeo de 180s)",
+    applianceHostname: "Nombre de host del dispositivo",
+    destructiveControlsTitle: "Controles destructivos del dispositivo",
+    destructiveControlsDesc: "Operaciones administrativas que requieren confirmación explícita. Las protecciones evitan la ejecución accidental.",
   },
   fr: {
     crestTitle: "Sovereign",
@@ -1100,5 +1234,153 @@ export const translations: Record<Language, DashboardTranslations> = {
     deactivateConfirmButton: "Désactiver le service",
     deactivatingState: "Désactivation...",
     typeResetToConfirm: "Tapez RESET pour confirmer",
+    guidesTitle: "Guides et aide de l'appareil",
+    guidesSubtitle: "Documentation pas à pas pour configurer, gérer et maintenir votre serveur domestique Sovereign.",
+    guideQuickstart: "Démarrage rapide & Configuration",
+    guideStorage: "Stockage & NAS réseau",
+    guideMedia: "Médias & Zone de dépôt",
+    guideAI: "IA locale et privée",
+    guideResilience: "Résilience électrique & Restauration",
+    bootSafetyChecked: "Vérification de la sécurité du système après rétablissement du courant... vos fichiers sont en sécurité.",
+    bootSafetyVerifying: "Vérification de l'intégrité du système et de la sécurité du stockage avant le lancement des services.",
+    bootSafetySuccess: "Sécurité du système vérifiée. Redirection vers le tableau de bord...",
+    bootSafetySuccessDesc: "Tous les volumes de stockage et contrôles d'intégrité de la base de données ont réussi.",
+    bootSafetyError: "La vérification du système a détecté un problème. Vos fichiers sont protégés en mode sans échec. Restauration automatique recommandée.",
+    bootSafetyErrorDesc: "Vos données restent en sécurité et intactes sur le stockage local. Aucune action requise pendant la stabilisation du système.",
+    bootStorageDegraded: "Attention matérielle requise : Un disque dur signale des erreurs. Vos fichiers sont verrouillés en mode lecture seule sécurisé.",
+    bootBadgeChecking: "Vérification du stockage",
+    bootBadgeSuccess: "Système opérationnel",
+    bootBadgeAttention: "Attention requise",
+    storageIngestionReady: "Ingestion de stockage prête",
+    destinationLibrary: "Bibliothèque de destination",
+    mediaCategoryTabs: "Onglets des catégories multimédias",
+    daytimeSchedule: "☀️ Journée (Priorité IA) : 07:00 – 01:00",
+    nighttimeSchedule: "🌙 Nuit (Transcodage par lots) : 01:00 – 07:00",
+    interactiveAILabel: "IA interactive (18h)",
+    batchTranscodeLabel: "Lots (6h)",
+    balanceHardwareSharing: "Équilibrer la réactivité de l'IA en temps réel avec le transcodage vidéo par lots.",
+    systemMaintenanceDesc: "Maintenance du système, mises à jour et intégrité diagnostique du stockage.",
+    dailyUpdateWindow: "Fenêtre de mise à jour quotidienne",
+    rollbackProtectionLabel: "Protection contre le retour en arrière",
+    rollbackProtectionActive: "Active (fenêtre de test de 180s)",
+    applianceHostname: "Nom d'hôte de l'appareil",
+    destructiveControlsTitle: "Contrôles destructifs de l'appareil",
+    destructiveControlsDesc: "Opérations administratives nécessitant une confirmation explicite. Des sécurités empêchent l'exécution accidentelle.",
   },
 };
+
+/**
+ * Automatically detects the preferred language based on browser navigator settings,
+ * Accept-Language header strings, or provided language tags, prioritizing German (DE),
+ * Spanish (ES), French (FR), and defaulting to English (EN).
+ */
+export function detectBrowserLanguage(preferredLanguages?: readonly string[] | string): Language {
+  const candidates: string[] = [];
+
+  if (typeof preferredLanguages === "string") {
+    // Parse Accept-Language header (e.g. "de-DE,de;q=0.9,en-US;q=0.8,en;q=0.7")
+    const parts = preferredLanguages.split(",").map((p) => {
+      const [lang, qPart] = p.trim().split(";");
+      const q = qPart && qPart.startsWith("q=") ? parseFloat(qPart.slice(2)) : 1.0;
+      return { lang: lang.trim(), q: isNaN(q) ? 1.0 : q };
+    });
+    parts.sort((a, b) => b.q - a.q);
+    candidates.push(...parts.map((p) => p.lang));
+  } else if (Array.isArray(preferredLanguages)) {
+    candidates.push(...preferredLanguages);
+  } else if (typeof window !== "undefined" && typeof navigator !== "undefined") {
+    if (navigator.languages && navigator.languages.length > 0) {
+      candidates.push(...navigator.languages);
+    } else if (navigator.language) {
+      candidates.push(navigator.language);
+    }
+  }
+
+  for (const cand of candidates) {
+    if (!cand || typeof cand !== "string") continue;
+    const clean = cand.toLowerCase().trim();
+    const primary = clean.split(/[-_]/)[0];
+    if (primary === "de") return "de";
+    if (primary === "es") return "es";
+    if (primary === "fr") return "fr";
+    if (primary === "en") return "en";
+  }
+
+  return "en";
+}
+
+/**
+ * Persists the selected language preference to localStorage, cookies, and document element.
+ */
+export function persistLanguage(lang: Language): void {
+  if (typeof window !== "undefined") {
+    try {
+      localStorage.setItem("sovereign_lang", lang);
+    } catch {
+      // ignore
+    }
+    try {
+      document.cookie = `sovereign_lang=${lang}; path=/; max-age=31536000; SameSite=Lax`;
+    } catch {
+      // ignore
+    }
+    try {
+      if (typeof document !== "undefined" && document.documentElement) {
+        document.documentElement.lang = lang;
+      }
+    } catch {
+      // ignore
+    }
+  }
+}
+
+/**
+ * Helper to normalize and match a raw language code into a supported Language.
+ */
+export function normalizeLanguageTag(val?: string | null): Language | null {
+  if (!val || typeof val !== "string") return null;
+  const primary = val.toLowerCase().trim().split(/[-_]/)[0];
+  if (primary === "en" || primary === "de" || primary === "es" || primary === "fr") {
+    return primary as Language;
+  }
+  return null;
+}
+
+/**
+ * Retrieves the active language preference:
+ * 1. Explicit argument / override (normalized)
+ * 2. Persisted value in localStorage
+ * 3. Persisted value in cookies
+ * 4. Browser autodetection via navigator.languages / navigator.language (in browser context)
+ * 5. Default fallback to "en"
+ */
+export function getInitialLanguage(savedLanguage?: string | null): Language {
+  const explicit = normalizeLanguageTag(savedLanguage);
+  if (explicit) {
+    return explicit;
+  }
+  if (typeof window !== "undefined") {
+    try {
+      const stored = localStorage.getItem("sovereign_lang");
+      const matched = normalizeLanguageTag(stored);
+      if (matched) return matched;
+    } catch {
+      // ignore
+    }
+    try {
+      if (typeof document !== "undefined" && document.cookie) {
+        const match = document.cookie.match(/(?:^|;\s*)sovereign_lang=([^;]+)/);
+        if (match && match[1]) {
+          const matched = normalizeLanguageTag(match[1]);
+          if (matched) return matched;
+        }
+      }
+    } catch {
+      // ignore
+    }
+    return detectBrowserLanguage();
+  }
+  return "en";
+}
+
+

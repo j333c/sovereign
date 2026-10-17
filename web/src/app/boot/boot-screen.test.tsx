@@ -175,4 +175,24 @@ describe("BootScreen Component", () => {
     assert.ok(!html.includes("errno"));
     assert.ok(!html.includes("Exception"));
   });
+
+  it("renders localized reassurance microcopy for German, Spanish, and French", () => {
+    const deHtml = renderToStaticMarkup(
+      <BootScreen routerOverride={mockRouterOverride} initialLanguage="de" />
+    );
+    assert.ok(deHtml.includes("Systemsicherheit wird nach Stromwiederherstellung"), "renders German boot reassurance");
+    assert.ok(deHtml.includes("Speicher wird geprüft"), "renders German verifying storage badge");
+
+    const frHtml = renderToStaticMarkup(
+      <BootScreen routerOverride={mockRouterOverride} initialLanguage="fr" />
+    );
+    assert.ok(frHtml.includes("Vérification de la sécurité du système"), "renders French boot reassurance");
+    assert.ok(frHtml.includes("Vérification du stockage"), "renders French verifying storage badge");
+
+    const esHtml = renderToStaticMarkup(
+      <BootScreen routerOverride={mockRouterOverride} initialLanguage="es" />
+    );
+    assert.ok(esHtml.includes("Comprobando la seguridad del sistema"), "renders Spanish boot reassurance");
+    assert.ok(esHtml.includes("Verificando almacenamiento"), "renders Spanish verifying storage badge");
+  });
 });

@@ -76,12 +76,12 @@ development_status:
   5-6-ai-backend-model-administration-interface-in-settings: done
   epic-5-retrospective: optional
 
-  epic-6: in-progress
+  epic-6: done
   6-1-declarative-compose-revisioning-pre-upgrade-snapshot-engine: done
   6-2-automated-180-second-health-verification-atomic-rollback-exe: done
   6-3-one-click-manual-rollback-rollback-confirmation-modal: done
   6-4-modular-central-settings-hub-destructive-protection-dialogs: done
-  6-5-full-four-language-internationalization-i18n: backlog
+  6-5-full-four-language-internationalization-i18n: done
   epic-6-retrospective: optional
 
   epic-7: backlog

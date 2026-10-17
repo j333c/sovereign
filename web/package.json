@@ -8,7 +8,7 @@
     "build": "next build",
     "start": "next start",
     "check": "tsc --noEmit",
-    "test": "tsc --noEmit && tsx --test src/lib/api/client.test.ts src/lib/useTelemetry.test.ts src/app/boot/boot-screen.test.tsx src/app/page.test.tsx src/app/setup/setup-wizard.test.tsx src/app/drop/page.test.tsx src/app/settings/ai-settings.test.tsx src/components/RollbackModal.test.tsx src/components/DestructiveModal.test.tsx",
+    "test": "tsc --noEmit && tsx --test src/lib/api/client.test.ts src/lib/i18n.test.ts src/lib/useTelemetry.test.ts src/app/boot/boot-screen.test.tsx src/app/page.test.tsx src/app/setup/setup-wizard.test.tsx src/app/drop/page.test.tsx src/app/settings/ai-settings.test.tsx src/app/guides/page.test.tsx src/components/RollbackModal.test.tsx src/components/DestructiveModal.test.tsx",
     "codegen": "openapi-typescript ../api/openapi.yaml -o ./src/lib/api/schema.d.ts"
   },
   "dependencies": {

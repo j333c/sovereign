@@ -3,11 +3,13 @@
 import React, { useEffect, useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { apiClient as defaultApiClient, SovereignApiClient, type BootStatusResponse, ProblemDetailsError } from "@/lib/api";
+import { Language, translations, getInitialLanguage } from "@/lib/i18n";
 
 export interface BootScreenProps {
   initialStatus?: BootStatusResponse | null;
   initialError?: string | null;
   initialStorageDegraded?: boolean;
+  initialLanguage?: Language;
   apiClientOverride?: SovereignApiClient;
   routerOverride?: { replace: (url: string) => void; push?: (url: string) => void };
   onRedirect?: () => void;
@@ -31,6 +33,7 @@ function BootScreenContent({
   initialStatus = null,
   initialError = null,
   initialStorageDegraded = false,
+  initialLanguage,
   apiClientOverride,
   router,
   onRedirect,
@@ -38,6 +41,8 @@ function BootScreenContent({
   pollingIntervalMs = 1000,
 }: BootScreenProps & { router?: { replace: (url: string) => void; push?: (url: string) => void } }) {
   const client = apiClientOverride ?? defaultApiClient;
+  const [lang] = useState<Language>(() => getInitialLanguage(initialLanguage));
+  const t = translations[lang];
 
   const [status, setStatus] = useState<BootStatusResponse | null>(initialStatus);
   const [isRedirecting, setIsRedirecting] = useState(false);
@@ -76,7 +81,7 @@ function BootScreenContent({
         }
 
         if (res.mode === "failed" || res.mode === "recovery") {
-          setErrorMessage("System verification detected an issue. Your files are protected in safety mode. Automated restore recommended.");
+          setErrorMessage(t.bootSafetyError);
           return;
         }
 
@@ -87,7 +92,7 @@ function BootScreenContent({
 
         if (err instanceof ProblemDetailsError && err.status === 503) {
           setIsStorageDegraded(true);
-          setErrorMessage("Hardware attention needed: A hard drive is reporting errors. Your existing files are locked in read-only safety mode.");
+          setErrorMessage(t.bootStorageDegraded);
         } else {
           // Re-try after interval without showing intimidating stack traces
           pollTimer = setTimeout(checkBootStatus, pollingIntervalMs);
@@ -160,18 +165,18 @@ function BootScreenContent({
             {errorMessage ? (
               errorMessage
             ) : isRedirecting ? (
-              "System safety verified. Redirecting to dashboard..."
+              t.bootSafetySuccess
             ) : (
-              "Checking system safety after power restoration... your files are secure."
+              t.bootSafetyChecked
             )}
           </h1>
 
           <p className="text-sm text-[var(--text-muted)] leading-relaxed">
             {errorMessage
-              ? "Your data remains safe and intact on local storage. No action is required while the system stabilizes."
+              ? t.bootSafetyErrorDesc
               : isRedirecting
-              ? "All storage volumes and database integrity checks completed successfully."
-              : "Verifying system integrity and storage safety before launching services."}
+              ? t.bootSafetySuccessDesc
+              : t.bootSafetyVerifying}
           </p>
         </div>
 
@@ -196,10 +201,10 @@ function BootScreenContent({
               }`}
             />
             {errorMessage
-              ? "Attention Required"
+              ? t.bootBadgeAttention
               : isRedirecting
-              ? "System Operational"
-              : "Verifying Storage"}
+              ? t.bootBadgeSuccess
+              : t.bootBadgeChecking}
           </span>
         </div>
       </div>

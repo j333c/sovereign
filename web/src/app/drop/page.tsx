@@ -4,7 +4,7 @@ import React, { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import { AppHeader } from "@/components/AppHeader";
 import { StatusBadge } from "@/components/StatusBadge";
-import { Language, translations } from "@/lib/i18n";
+import { Language, translations, getInitialLanguage, persistLanguage } from "@/lib/i18n";
 import { apiClient, DropHistoryItem, ProblemDetailsError } from "@/lib/api/client";
 
 export type MediaCategory = "movies" | "tv" | "music" | "audiobooks";
@@ -27,9 +27,20 @@ export function formatBytes(bytes: number): string {
   return `${parseFloat((bytes / Math.pow(k, i)).toFixed(1))} ${sizes[i]}`;
 }
 
-export default function DropzonePage() {
-  const [lang, setLang] = useState<Language>("en");
+export interface DropzonePageProps {
+  initialLanguage?: Language;
+}
+
+export default function DropzonePage({ initialLanguage }: DropzonePageProps = {}) {
+  const [lang, setLang] = useState<Language>(() => {
+    return getInitialLanguage(initialLanguage);
+  });
   const t = translations[lang];
+
+  const handleLanguageChange = (newLang: Language) => {
+    setLang(newLang);
+    persistLanguage(newLang);
+  };
 
   const [category, setCategory] = useState<MediaCategory>("movies");
   const [isDragging, setIsDragging] = useState(false);
@@ -150,7 +161,7 @@ export default function DropzonePage() {
     <div className="min-h-screen bg-[#F8F9FA] text-[#0F172A] flex flex-col font-sans">
       <AppHeader
         currentLanguage={lang}
-        onLanguageChange={setLang}
+        onLanguageChange={handleLanguageChange}
         aggregateStatus="healthy"
       />
 
@@ -159,7 +170,7 @@ export default function DropzonePage() {
         <div className="flex flex-col items-center text-center gap-2">
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[#ECFDF5] text-[#065F46] text-xs font-medium border border-[#A7F3D0]">
             <span aria-hidden="true">●</span>
-            <span>{t.crestTitle} Storage Ingestion Ready</span>
+            <span>{t.crestTitle} · {t.storageIngestionReady}</span>
           </div>
           <h1 className="text-2xl sm:text-3xl font-semibold tracking-tight text-[#0F172A]">
             {t.dropzoneTitle}
@@ -189,7 +200,7 @@ export default function DropzonePage() {
               type="button"
               onClick={() => setAlert(null)}
               className="min-h-[44px] min-w-[44px] flex items-center justify-center -mr-2 -my-2 text-current opacity-70 hover:opacity-100 rounded-md focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:outline-none"
-              aria-label="Dismiss alert"
+              aria-label={t.close}
             >
               ✕
             </button>
@@ -201,11 +212,11 @@ export default function DropzonePage() {
           {/* Category Selector Tabs */}
           <div className="flex flex-col gap-2">
             <span className="text-xs font-semibold uppercase tracking-wider text-[#64748B]">
-              Destination Library
+              {t.destinationLibrary}
             </span>
             <div
               role="tablist"
-              aria-label="Media Category Tabs"
+              aria-label={t.mediaCategoryTabs}
               className="grid grid-cols-2 sm:grid-cols-4 gap-1 p-1 bg-[#F8F9FA] rounded-xl border border-[#E5E7EB]"
             >
               {(["movies", "tv", "music", "audiobooks"] as MediaCategory[]).map((cat) => {

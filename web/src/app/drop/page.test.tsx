@@ -66,4 +66,16 @@ describe("DropzonePage Component", () => {
     assert.ok(html.includes('role="tablist"'), "has tablist role");
     assert.ok(html.includes('role="tab"'), "has tab role");
   });
+
+  it("renders localized copy when initialLanguage is passed", () => {
+    const deHtml = renderToStaticMarkup(<DropzonePage initialLanguage="de" />);
+    assert.ok(deHtml.includes(translations.de.storageIngestionReady), "renders German storage ingestion ready badge");
+    assert.ok(deHtml.includes(translations.de.categoryMovies), "renders German category label Filme");
+    assert.ok(deHtml.includes(translations.de.destinationLibrary), "renders German destination library header");
+
+    const frHtml = renderToStaticMarkup(<DropzonePage initialLanguage="fr" />);
+    assert.ok(frHtml.includes(translations.fr.storageIngestionReady), "renders French storage ingestion ready badge");
+    assert.ok(frHtml.includes(translations.fr.categoryMovies), "renders French category label Films");
+    assert.ok(frHtml.includes(translations.fr.destinationLibrary), "renders French destination library header");
+  });
 });

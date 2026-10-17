@@ -8,6 +8,7 @@ import {
   DiskInfo,
   ProblemDetailsError,
 } from "@/lib/api";
+import { getInitialLanguage, persistLanguage } from "@/lib/i18n";
 
 export type SupportedLanguage = "en" | "de" | "es" | "fr";
 
@@ -324,16 +325,14 @@ export function SetupScreen(props: SetupPageProps) {
 
   const [step, setStep] = useState<number>(props.initialStep ?? 1);
   const [language, setLanguage] = useState<SupportedLanguage>(() => {
-    if (props.initialLanguage) return props.initialLanguage;
-    if (typeof navigator !== "undefined" && navigator.language) {
-      const code = navigator.language.slice(0, 2).toLowerCase();
-      if (code === "de" || code === "es" || code === "fr") {
-        return code as SupportedLanguage;
-      }
-    }
-    return "en";
+    return getInitialLanguage(props.initialLanguage);
   });
   const t = translations[language] || translations.en;
+
+  const handleLanguageChange = (newLang: SupportedLanguage) => {
+    setLanguage(newLang);
+    persistLanguage(newLang);
+  };
 
   // If already configured, redirect to operational dashboard
   useEffect(() => {
@@ -602,7 +601,7 @@ export function SetupScreen(props: SetupPageProps) {
                 <button
                   key={item.code}
                   type="button"
-                  onClick={() => setLanguage(item.code)}
+                  onClick={() => handleLanguageChange(item.code)}
                   className={`w-full flex items-center justify-between p-4 rounded-lg border text-left transition-all ${
                     language === item.code
                       ? "border-[var(--accent-blue)] bg-blue-50/30 text-[var(--text-primary)] font-medium ring-1 ring-[var(--accent-blue)]"

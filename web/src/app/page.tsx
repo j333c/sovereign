@@ -12,7 +12,7 @@ import {
   DMSMailboxStatusEvent,
   AIStatusResponse,
 } from "@/lib/api";
-import { Language, translations } from "@/lib/i18n";
+import { Language, translations, getInitialLanguage, persistLanguage } from "@/lib/i18n";
 import { useTelemetry } from "@/lib/useTelemetry";
 import { AppHeader } from "@/components/AppHeader";
 import { TelemetryBar } from "@/components/TelemetryBar";
@@ -140,7 +140,7 @@ function HomeScreenContent({
   router,
   initialTelemetry = null,
   eventSourceFactory,
-  initialLanguage = "en",
+  initialLanguage,
   initialAuthenticated = false,
   initialReady = false,
   initialServices = {},
@@ -153,13 +153,7 @@ function HomeScreenContent({
   const client = apiClientOverride ?? defaultApiClient;
   const [isReady, setIsReady] = useState(initialReady);
   const [language, setLanguage] = useState<Language>(() => {
-    if (typeof window !== "undefined") {
-      const saved = localStorage.getItem("sovereign_lang") as Language;
-      if (saved && ["en", "de", "es", "fr"].includes(saved)) {
-        return saved;
-      }
-    }
-    return initialLanguage;
+    return getInitialLanguage(initialLanguage);
   });
   const t = translations[language];
   const [isAuthenticated, setIsAuthenticated] = useState(initialAuthenticated);
@@ -193,9 +187,7 @@ function HomeScreenContent({
 
   const handleLanguageChange = useCallback((lang: Language) => {
     setLanguage(lang);
-    if (typeof window !== "undefined") {
-      localStorage.setItem("sovereign_lang", lang);
-    }
+    persistLanguage(lang);
   }, []);
 
   // SSE event handlers for service lifecycle and health changes

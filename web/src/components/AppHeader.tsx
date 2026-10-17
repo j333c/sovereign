@@ -131,6 +131,20 @@ export function AppHeader({
           <span>{t.dropMedia}</span>
         </Link>
 
+        {/* Guides link */}
+        <Link
+          href="/guides"
+          className="flex h-11 items-center justify-center rounded-lg px-3 sm:px-4 text-xs sm:text-sm font-medium text-[#0F172A] bg-[#F8F9FA] hover:bg-[#F1F5F9] border border-[#E5E7EB] transition-colors focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:outline-none"
+          aria-label={t.guidesTitle}
+          title={t.guidesTitle}
+          data-testid="guides-nav-link"
+        >
+          <span className="mr-1.5" aria-hidden="true">
+            📖
+          </span>
+          <span className="hidden md:inline">{t.guidesTitle}</span>
+        </Link>
+
         {/* Settings button */}
         {onSettingsClick ? (
           <button
@@ -169,10 +183,10 @@ export function AppHeader({
             className="h-11 appearance-none rounded-lg border border-[#E5E7EB] bg-[#F8F9FA] px-3 pr-7 text-xs font-medium text-[#0F172A] hover:bg-[#F1F5F9] focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:outline-none cursor-pointer"
             aria-label={t.languageLabel}
           >
-            <option value="en">EN</option>
-            <option value="de">DE</option>
-            <option value="es">ES</option>
-            <option value="fr">FR</option>
+            <option value="en">English (EN)</option>
+            <option value="de">Deutsch (DE)</option>
+            <option value="es">Español (ES)</option>
+            <option value="fr">Français (FR)</option>
           </select>
           <span
             aria-hidden="true"

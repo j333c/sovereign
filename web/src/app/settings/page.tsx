@@ -6,7 +6,7 @@ import { AppHeader } from "@/components/AppHeader";
 import { RollbackModal } from "@/components/RollbackModal";
 import { AdminLoginModal } from "@/components/AdminLoginModal";
 import { DestructiveModal, DestructiveActionType } from "@/components/DestructiveModal";
-import { Language, translations } from "@/lib/i18n";
+import { Language, translations, getInitialLanguage, persistLanguage } from "@/lib/i18n";
 import {
   apiClient as defaultApiClient,
   SovereignApiClient,
@@ -59,7 +59,7 @@ export function formatDuration(seconds: number): string {
 
 export default function SettingsPage({
   apiClientOverride,
-  initialLanguage = "en",
+  initialLanguage,
   initialTab,
   initialAuthenticated,
   initialAISettings = null,
@@ -72,8 +72,15 @@ export default function SettingsPage({
   initialStorageStatus = null,
 }: SettingsPageProps) {
   const client = apiClientOverride || defaultApiClient;
-  const [lang, setLang] = useState<Language>(initialLanguage);
+  const [lang, setLang] = useState<Language>(() => {
+    return getInitialLanguage(initialLanguage);
+  });
   const t = translations[lang];
+
+  const handleLanguageChange = (newLang: Language) => {
+    setLang(newLang);
+    persistLanguage(newLang);
+  };
 
   // Authentication state
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(initialAuthenticated ?? true);
@@ -639,7 +646,7 @@ export default function SettingsPage({
       {/* 64px Header */}
       <AppHeader
         currentLanguage={lang}
-        onLanguageChange={setLang}
+        onLanguageChange={handleLanguageChange}
         aggregateStatus="operational"
       />
 
@@ -1744,21 +1751,21 @@ export default function SettingsPage({
                 {t.gpuSharing}
               </h1>
               <p className="mt-1 text-xs text-[#64748B]">
-                Balance real-time AI responsiveness against heavy batch video transcoding.
+                {t.balanceHardwareSharing}
               </p>
 
               <div className="mt-6 rounded-lg border border-[#E5E7EB] bg-[#F8F9FA] p-4">
                 <div className="flex justify-between text-xs font-semibold text-[#0F172A]">
-                  <span>☀️ Daytime (AI Priority): 07:00 – 01:00</span>
-                  <span>🌙 Nighttime (Batch Transcode): 01:00 – 07:00</span>
+                  <span>{t.daytimeSchedule}</span>
+                  <span>{t.nighttimeSchedule}</span>
                 </div>
 
                 <div className="mt-3 flex h-8 overflow-hidden rounded-md text-xs font-bold text-white">
                   <div className="flex items-center justify-center bg-blue-600 w-3/4">
-                    Interactive AI (18h)
+                    {t.interactiveAILabel}
                   </div>
                   <div className="flex items-center justify-center bg-[#0F172A] w-1/4">
-                    Batch (6h)
+                    {t.batchTranscodeLabel}
                   </div>
                 </div>
 
@@ -1780,20 +1787,20 @@ export default function SettingsPage({
                 {t.tabSystem}
               </h1>
               <p className="mt-1 text-xs text-[#64748B]">
-                System maintenance, updates, and storage diagnostic health.
+                {t.systemMaintenanceDesc}
               </p>
 
               <div className="mt-6 divide-y divide-[#F1F5F9] text-xs">
                 <div className="py-3 flex justify-between">
-                  <span className="text-[#64748B]">Daily Update Window</span>
+                  <span className="text-[#64748B]">{t.dailyUpdateWindow}</span>
                   <span className="font-semibold text-[#0F172A]">03:00 AM</span>
                 </div>
                 <div className="py-3 flex justify-between">
-                  <span className="text-[#64748B]">Rollback Protection</span>
-                  <span className="font-semibold text-emerald-600">Active (180s probe window)</span>
+                  <span className="text-[#64748B]">{t.rollbackProtectionLabel}</span>
+                  <span className="font-semibold text-emerald-600">{t.rollbackProtectionActive}</span>
                 </div>
                 <div className="py-3 flex justify-between">
-                  <span className="text-[#64748B]">Appliance Hostname</span>
+                  <span className="text-[#64748B]">{t.applianceHostname}</span>
                   <span className="font-mono font-semibold text-[#0F172A]">sovereign.local</span>
                 </div>
               </div>
@@ -1802,10 +1809,10 @@ export default function SettingsPage({
               <div className="mt-8 pt-6 border-t border-[#F1F5F9]">
                 <h2 className="text-sm font-bold text-rose-700 flex items-center gap-1.5">
                   <span aria-hidden="true">⚠️</span>
-                  <span>Destructive Appliance Controls</span>
+                  <span>{t.destructiveControlsTitle}</span>
                 </h2>
                 <p className="mt-1 text-xs text-[#64748B]">
-                  Administrative operations requiring explicit confirmation. Safeguards prevent accidental execution.
+                  {t.destructiveControlsDesc}
                 </p>
 
                 <div className="mt-4 flex flex-wrap gap-4">
