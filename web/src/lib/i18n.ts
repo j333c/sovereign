@@ -260,6 +260,43 @@ export interface DashboardTranslations {
   applianceHostname: string;
   destructiveControlsTitle: string;
   destructiveControlsDesc: string;
+
+  // Hardware Tiers & Calculator (Story 7.1)
+  hardwareTitle: string;
+  hardwareSubtitle: string;
+  tierLightTitle: string;
+  tierLightDesc: string;
+  tierLightCpu: string;
+  tierLightRam: string;
+  tierLightStorage: string;
+  tierLightPower: string;
+  tierMediaTitle: string;
+  tierMediaDesc: string;
+  tierMediaCpu: string;
+  tierMediaRam: string;
+  tierMediaStorage: string;
+  tierMediaPower: string;
+  tierAITitle: string;
+  tierAIDesc: string;
+  tierAICpu: string;
+  tierAIRam: string;
+  tierAIStorage: string;
+  tierAIPower: string;
+  calcTitle: string;
+  calcSubtitle: string;
+  featureDMSLabel: string;
+  featureAudioLabel: string;
+  featureVideoLabel: string;
+  featureDiscLabel: string;
+  featureAILabel: string;
+  recommendedTierLabel: string;
+  turnkeyTitle: string;
+  turnkeySubtitle: string;
+  turnkeyPreorderBtn: string;
+  turnkeyReservedNotice: string;
+  turnkeyModalTitle: string;
+  turnkeyEmailLabel: string;
+  turnkeySubmitBtn: string;
 }
 
 export const translations: Record<Language, DashboardTranslations> = {
@@ -513,6 +550,41 @@ export const translations: Record<Language, DashboardTranslations> = {
     applianceHostname: "Appliance Hostname",
     destructiveControlsTitle: "Destructive Appliance Controls",
     destructiveControlsDesc: "Administrative operations requiring explicit confirmation. Safeguards prevent accidental execution.",
+    hardwareTitle: "Hardware Guide & Tiers",
+    hardwareSubtitle: "Choose or assemble the ideal hardware profile for your household workloads, or explore turnkey pre-assembled appliances.",
+    tierLightTitle: "Light Tier",
+    tierLightDesc: "Document archiving, OCR text search, and lossless music streaming. Ultra-low power, silent, and fanless.",
+    tierLightCpu: "Dual-core x86 or 64-bit ARM (Intel N100, Celeron, RPi 5)",
+    tierLightRam: "4 GB DDR4 / DDR5",
+    tierLightStorage: "64 GB SSD (OS) + 250 GB–1 TB storage",
+    tierLightPower: "5W – 10W idle",
+    tierMediaTitle: "Media Tier",
+    tierMediaDesc: "4K video streaming with Intel QuickSync tone mapping, multi-room audio, and automatic optical disc ingestion.",
+    tierMediaCpu: "Quad-core x86 with Intel QuickSync iGPU (N100, Core i3/i5)",
+    tierMediaRam: "8 GB DDR4 / DDR5",
+    tierMediaStorage: "2 TB – 8 TB SATA / NVMe pool",
+    tierMediaPower: "10W – 25W idle",
+    tierAITitle: "AI & Power Tier",
+    tierAIDesc: "Private household large language model inference (llama.cpp 7B/8B), zero-vector FTS5 RAG search, and full media streaming.",
+    tierAICpu: "6+ core modern x86 CPU (Intel Core i5/i7, AMD Ryzen 7)",
+    tierAIRam: "16 GB – 32 GB RAM + 8–16 GB VRAM GPU",
+    tierAIStorage: "4 TB – 16 TB high-speed NVMe / SATA pool",
+    tierAIPower: "25W – 45W idle",
+    calcTitle: "Interactive Hardware Tier Calculator",
+    calcSubtitle: "Select the features you plan to run to calculate your optimal hardware tier and resource targets.",
+    featureDMSLabel: "Document Archiving & OCR (Paperless-ngx)",
+    featureAudioLabel: "Music & Audiobooks (Navidrome & Audiobookshelf)",
+    featureVideoLabel: "4K Video Streaming & Transcoding (Jellyfin)",
+    featureDiscLabel: "Automatic Optical Disc Ripping (ARM)",
+    featureAILabel: "Local Private AI Chat & Document RAG (llama.cpp)",
+    recommendedTierLabel: "Recommended Profile",
+    turnkeyTitle: "Turnkey Pre-Assembled Sovereign Appliances",
+    turnkeySubtitle: "Prefer an elegant, silent plug-and-play appliance? Reserve priority manufacturing slots for official factory-built editions.",
+    turnkeyPreorderBtn: "Reserve Turnkey Appliance",
+    turnkeyReservedNotice: "Reservation confirmed! Your manufacturing token has been recorded.",
+    turnkeyModalTitle: "Priority Hardware Reservation",
+    turnkeyEmailLabel: "Email for notification",
+    turnkeySubmitBtn: "Confirm Priority Reservation",
   },
   de: {
     crestTitle: "Sovereign",
@@ -764,6 +836,41 @@ export const translations: Record<Language, DashboardTranslations> = {
     applianceHostname: "Geräte-Hostname",
     destructiveControlsTitle: "Destruktive Gerätesteuerung",
     destructiveControlsDesc: "Verwaltungsvorgänge mit expliziter Bestätigung. Sicherheitsmechanismen verhindern versehentliche Ausführung.",
+    hardwareTitle: "Hardware-Leitfaden & Stufen",
+    hardwareSubtitle: "Wählen oder montieren Sie das ideale Hardware-Profil für Ihre Haushaltsanforderungen oder entdecken Sie vorkonfigurierte Komplettsysteme.",
+    tierLightTitle: "Light-Stufe",
+    tierLightDesc: "Dokumentenarchivierung, OCR-Textsuche und verlustfreies Musik-Streaming. Extrem sparsam, leise und lüfterlos.",
+    tierLightCpu: "Dual-Core x86 oder 64-Bit ARM (Intel N100, Celeron, RPi 5)",
+    tierLightRam: "4 GB DDR4 / DDR5",
+    tierLightStorage: "64 GB SSD (Betriebssystem) + 250 GB–1 TB Speicher",
+    tierLightPower: "5W – 10W Leerlauf",
+    tierMediaTitle: "Medien-Stufe",
+    tierMediaDesc: "4K-Video-Streaming mit Intel QuickSync, Multiroom-Audio und automatischem Einlesen optischer Datenträger.",
+    tierMediaCpu: "Quad-Core x86 mit Intel QuickSync iGPU (N100, Core i3/i5)",
+    tierMediaRam: "8 GB DDR4 / DDR5",
+    tierMediaStorage: "2 TB – 8 TB SATA / NVMe Speicherpool",
+    tierMediaPower: "10W – 25W Leerlauf",
+    tierAITitle: "KI & Power-Stufe",
+    tierAIDesc: "Lokale Haushalts-KI mit 7B/8B LLM-Inferenz (llama.cpp), FTS5-RAG-Suche und vollem Medien-Streaming.",
+    tierAICpu: "6+ Kerne moderner x86 CPU (Intel Core i5/i7, AMD Ryzen 7)",
+    tierAIRam: "16 GB – 32 GB RAM + 8–16 GB VRAM GPU",
+    tierAIStorage: "4 TB – 16 TB High-Speed NVMe / SATA Speicherpool",
+    tierAIPower: "25W – 45W Leerlauf",
+    calcTitle: "Interaktiver Hardware-Stufenrechner",
+    calcSubtitle: "Wählen Sie die gewünschten Funktionen aus, um Ihre optimale Hardware-Stufe und Zielkonfiguration zu ermitteln.",
+    featureDMSLabel: "Dokumentenarchivierung & OCR (Paperless-ngx)",
+    featureAudioLabel: "Musik & Hörbücher (Navidrome & Audiobookshelf)",
+    featureVideoLabel: "4K-Video-Streaming & Transkodierung (Jellyfin)",
+    featureDiscLabel: "Automatisches Einlesen von CDs/DVDs/Blu-rays (ARM)",
+    featureAILabel: "Lokaler privater KI-Chat & Dokumenten-RAG (llama.cpp)",
+    recommendedTierLabel: "Empfohlenes Profil",
+    turnkeyTitle: "Vorkonfigurierte Sovereign-Komplettgeräte",
+    turnkeySubtitle: "Bevorzugen Sie ein elegantes, geräuschloses Plug-and-Play-Gerät? Reservieren Sie Prioritäts-Fertigungsplätze für offizielle Editionen.",
+    turnkeyPreorderBtn: "Komplettgerät reservieren",
+    turnkeyReservedNotice: "Reservierung bestätigt! Ihr Fertigungstoken wurde gespeichert.",
+    turnkeyModalTitle: "Prioritäre Hardware-Reservierung",
+    turnkeyEmailLabel: "E-Mail für Benachrichtigung",
+    turnkeySubmitBtn: "Prioritäts-Reservierung bestätigen",
   },
   es: {
     crestTitle: "Sovereign",
@@ -1015,6 +1122,41 @@ export const translations: Record<Language, DashboardTranslations> = {
     applianceHostname: "Nombre de host del dispositivo",
     destructiveControlsTitle: "Controles destructivos del dispositivo",
     destructiveControlsDesc: "Operaciones administrativas que requieren confirmación explícita. Las protecciones evitan la ejecución accidental.",
+    hardwareTitle: "Guía y niveles de hardware",
+    hardwareSubtitle: "Elija o monte el perfil de hardware ideal para las cargas de trabajo de su hogar, o explore dispositivos preensamblados listos para usar.",
+    tierLightTitle: "Nivel Ligero",
+    tierLightDesc: "Archivo de documentos, búsqueda de texto OCR y streaming de música sin pérdidas. Consumo ultrabajo, silencioso y sin ventilador.",
+    tierLightCpu: "Doble núcleo x86 o ARM de 64 bits (Intel N100, Celeron, RPi 5)",
+    tierLightRam: "4 GB DDR4 / DDR5",
+    tierLightStorage: "64 GB SSD (SO) + 250 GB–1 TB almacenamiento",
+    tierLightPower: "5W – 10W en reposo",
+    tierMediaTitle: "Nivel Multimedia",
+    tierMediaDesc: "Streaming de vídeo 4K con Intel QuickSync, audio multiroom e ingesta automática de discos ópticos.",
+    tierMediaCpu: "Cuatro núcleos x86 con iGPU Intel QuickSync (N100, Core i3/i5)",
+    tierMediaRam: "8 GB DDR4 / DDR5",
+    tierMediaStorage: "2 TB – 8 TB grupo SATA / NVMe",
+    tierMediaPower: "10W – 25W en reposo",
+    tierAITitle: "Nivel IA y Potencia",
+    tierAIDesc: "Inferencia de modelos de lenguaje locales (llama.cpp 7B/8B), búsqueda RAG FTS5 y streaming completo de medios.",
+    tierAICpu: "CPU moderna x86 de 6+ núcleos (Intel Core i5/i7, AMD Ryzen 7)",
+    tierAIRam: "16 GB – 32 GB RAM + GPU con 8–16 GB VRAM",
+    tierAIStorage: "4 TB – 16 TB grupo de alta velocidad NVMe / SATA",
+    tierAIPower: "25W – 45W en reposo",
+    calcTitle: "Calculadora interactiva de niveles de hardware",
+    calcSubtitle: "Seleccione las funciones que planea ejecutar para calcular su nivel de hardware óptimo y los recursos necesarios.",
+    featureDMSLabel: "Archivo de documentos y OCR (Paperless-ngx)",
+    featureAudioLabel: "Música y audiolibros (Navidrome y Audiobookshelf)",
+    featureVideoLabel: "Streaming y transcodificación de vídeo 4K (Jellyfin)",
+    featureDiscLabel: "Extracción automática de discos ópticos (ARM)",
+    featureAILabel: "Chat de IA privada local y RAG de documentos (llama.cpp)",
+    recommendedTierLabel: "Perfil recomendado",
+    turnkeyTitle: "Dispositivos Sovereign preensamblados listos para usar",
+    turnkeySubtitle: "¿Prefiere un dispositivo elegante y silencioso listo para conectar? Reserve puestos prioritarios de fabricación para las ediciones oficiales.",
+    turnkeyPreorderBtn: "Reservar dispositivo listo para usar",
+    turnkeyReservedNotice: "¡Reserva confirmada! Su token de fabricación ha sido registrado.",
+    turnkeyModalTitle: "Reserva prioritaria de hardware",
+    turnkeyEmailLabel: "Correo para notificación",
+    turnkeySubmitBtn: "Confirmar reserva prioritaria",
   },
   fr: {
     crestTitle: "Sovereign",
@@ -1266,6 +1408,41 @@ export const translations: Record<Language, DashboardTranslations> = {
     applianceHostname: "Nom d'hôte de l'appareil",
     destructiveControlsTitle: "Contrôles destructifs de l'appareil",
     destructiveControlsDesc: "Opérations administratives nécessitant une confirmation explicite. Des sécurités empêchent l'exécution accidentelle.",
+    hardwareTitle: "Guide et profils matériels",
+    hardwareSubtitle: "Choisissez ou assemblez le profil matériel idéal pour les besoins de votre foyer, ou découvrez les appareils clés en main préassemblés.",
+    tierLightTitle: "Profil Léger",
+    tierLightDesc: "Archivage de documents, recherche textuelle OCR et streaming musical sans perte. Très faible consommation, silencieux et sans ventilateur.",
+    tierLightCpu: "Double cœur x86 ou ARM 64 bits (Intel N100, Celeron, RPi 5)",
+    tierLightRam: "4 Go DDR4 / DDR5",
+    tierLightStorage: "64 Go SSD (OS) + 250 Go–1 To stockage",
+    tierLightPower: "5W – 10W au repos",
+    tierMediaTitle: "Profil Médias",
+    tierMediaDesc: "Streaming vidéo 4K avec Intel QuickSync, audio multi-pièces et ingestion automatique de disques optiques.",
+    tierMediaCpu: "Quatre cœurs x86 avec iGPU Intel QuickSync (N100, Core i3/i5)",
+    tierMediaRam: "8 Go DDR4 / DDR5",
+    tierMediaStorage: "2 To – 8 To pool SATA / NVMe",
+    tierMediaPower: "10W – 25W au repos",
+    tierAITitle: "Profil IA et Puissance",
+    tierAIDesc: "Inférence de modèles de langage locaux (llama.cpp 7B/8B), recherche RAG FTS5 et streaming multimédia complet.",
+    tierAICpu: "CPU x86 moderne 6+ cœurs (Intel Core i5/i7, AMD Ryzen 7)",
+    tierAIRam: "16 Go – 32 Go RAM + GPU avec 8–16 Go VRAM",
+    tierAIStorage: "4 To – 16 To pool haute vitesse NVMe / SATA",
+    tierAIPower: "25W – 45W au repos",
+    calcTitle: "Calculateur interactif de profils matériels",
+    calcSubtitle: "Sélectionnez les fonctionnalités souhaitées pour déterminer votre profil matériel optimal et les ressources nécessaires.",
+    featureDMSLabel: "Archivage de documents et OCR (Paperless-ngx)",
+    featureAudioLabel: "Musique et livres audio (Navidrome & Audiobookshelf)",
+    featureVideoLabel: "Streaming et transcodage vidéo 4K (Jellyfin)",
+    featureDiscLabel: "Numérisation automatique de disques optiques (ARM)",
+    featureAILabel: "Chat IA privée locale et RAG de documents (llama.cpp)",
+    recommendedTierLabel: "Profil recommandé",
+    turnkeyTitle: "Appareils Sovereign préassemblés prêts à l'emploi",
+    turnkeySubtitle: "Vous préférez un appareil élégant et silencieux prêt à brancher ? Réservez des créneaux prioritaires pour les éditions d'usine officielles.",
+    turnkeyPreorderBtn: "Réserver un appareil prêt à l'emploi",
+    turnkeyReservedNotice: "Réservation confirmée ! Votre jeton de fabrication a été enregistré.",
+    turnkeyModalTitle: "Réservation matérielle prioritaire",
+    turnkeyEmailLabel: "E-mail pour notification",
+    turnkeySubmitBtn: "Confirmer la réservation prioritaire",
   },
 };
 

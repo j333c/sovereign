@@ -1803,6 +1803,21 @@ export default function SettingsPage({
                   <span className="text-[#64748B]">{t.applianceHostname}</span>
                   <span className="font-mono font-semibold text-[#0F172A]">sovereign.local</span>
                 </div>
+                <div className="py-3 flex justify-between items-center">
+                  <div>
+                    <span className="text-sm font-medium text-[#0F172A]">{t.hardwareTitle}</span>
+                    <p className="text-xs text-[#64748B]">{t.hardwareSubtitle}</p>
+                  </div>
+                  <Link
+                    href="/hardware"
+                    className="flex min-h-[44px] items-center gap-1.5 rounded-lg border border-[#CBD5E1] bg-white px-3.5 py-2 text-xs font-semibold text-blue-600 hover:text-blue-800 hover:bg-[#F8FAFC] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 cursor-pointer shadow-xs"
+                    data-testid="hardware-settings-link"
+                  >
+                    <span>💻</span>
+                    <span>{t.hardwareTitle}</span>
+                    <span aria-hidden="true">→</span>
+                  </Link>
+                </div>
               </div>
 
               {/* Destructive Controls */}

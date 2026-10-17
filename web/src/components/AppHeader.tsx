@@ -145,6 +145,20 @@ export function AppHeader({
           <span className="hidden md:inline">{t.guidesTitle}</span>
         </Link>
 
+        {/* Hardware Tiers link */}
+        <Link
+          href="/hardware"
+          className="flex h-11 items-center justify-center rounded-lg px-3 sm:px-4 text-xs sm:text-sm font-medium text-[#0F172A] bg-[#F8F9FA] hover:bg-[#F1F5F9] border border-[#E5E7EB] transition-colors focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:outline-none"
+          aria-label={t.hardwareTitle}
+          title={t.hardwareTitle}
+          data-testid="hardware-nav-link"
+        >
+          <span className="lg:mr-1.5" aria-hidden="true">
+            💻
+          </span>
+          <span className="hidden lg:inline">{t.hardwareTitle}</span>
+        </Link>
+
         {/* Settings button */}
         {onSettingsClick ? (
           <button

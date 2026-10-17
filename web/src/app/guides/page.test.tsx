@@ -55,6 +55,8 @@ describe("GuidesPage Component & Multilingual Bundled Documentation (Story 6.5)"
     assert.ok(html.includes('data-testid="guide-tab-media"'));
     assert.ok(html.includes('data-testid="guide-tab-ai"'));
     assert.ok(html.includes('data-testid="guide-tab-resilience"'));
+    assert.ok(html.includes('data-testid="hardware-guide-link"'));
+    assert.ok(html.includes("/hardware"));
   });
 
   it("renders storage, media, ai, and resilience topic guides correctly", () => {

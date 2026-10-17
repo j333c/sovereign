@@ -734,6 +734,18 @@ export default function GuidesPage({ initialLanguage, initialTopic = "quickstart
               );
             })}
           </nav>
+
+          <div className="mt-6 border-t border-[#E5E7EB] pt-4 px-1">
+            <Link
+              href="/hardware"
+              className="flex min-h-[44px] items-center gap-2.5 rounded-lg border border-[#E5E7EB] bg-white px-3 py-2 text-xs sm:text-sm font-medium text-blue-600 hover:text-blue-800 hover:bg-[#F1F5F9] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 shadow-xs"
+              data-testid="hardware-guide-link"
+            >
+              <span aria-hidden="true">💻</span>
+              <span>{t.hardwareTitle}</span>
+              <span className="ml-auto text-xs text-[#64748B]">→</span>
+            </Link>
+          </div>
         </aside>
 
         {/* Content Viewer Pane */}

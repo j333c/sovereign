@@ -84,8 +84,8 @@ development_status:
   6-5-full-four-language-internationalization-i18n: done
   epic-6-retrospective: optional
 
-  epic-7: backlog
-  7-1-minimum-hardware-specification-guides-hardware-tier-roadmap: backlog
+  epic-7: in-progress
+  7-1-minimum-hardware-specification-guides-hardware-tier-roadmap: done
   7-2-public-marketing-landing-website-feature-showcase: backlog
   7-3-open-source-governance-bmad-attribution-license-compliance-s: backlog
   epic-7-retrospective: optional

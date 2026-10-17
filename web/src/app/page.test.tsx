@@ -242,6 +242,8 @@ describe("AppHeader Component", () => {
     assert.ok(html.includes("/drop"), "Drop link must point to /drop");
     assert.ok(html.includes("/guides"), "Guides link must point to /guides");
     assert.ok(html.includes('data-testid="guides-nav-link"'), "Must have data-testid='guides-nav-link'");
+    assert.ok(html.includes("/hardware"), "Hardware link must point to /hardware");
+    assert.ok(html.includes('data-testid="hardware-nav-link"'), "Must have data-testid='hardware-nav-link'");
     assert.ok(html.includes("/settings") || html.includes("Settings"), "Must have Settings button");
     assert.ok(html.includes("language-select"), "Must have language selector");
   });
