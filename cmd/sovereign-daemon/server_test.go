@@ -6634,6 +6634,132 @@ func TestServer_ServiceRollback_NoPriorRevision(t *testing.T) {
 	}
 }
 
+func loginTestAdmin(t *testing.T, srv *Server) *http.Cookie {
+	t.Helper()
+	setupPayload := `{
+		"username": "admin",
+		"password": "HouseholdMasterKey2026!",
+		"email": "alex@family.net",
+		"language": "de",
+		"features": ["video", "audio", "dms", "ai"]
+	}`
+	reqSetup := httptest.NewRequest(http.MethodPost, "/api/v1/auth/setup", bytes.NewBufferString(setupPayload))
+	wSetup := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(wSetup, reqSetup)
+	if wSetup.Code != http.StatusOK {
+		t.Fatalf("failed to complete setup: %d", wSetup.Code)
+	}
+
+	for _, c := range wSetup.Result().Cookies() {
+		if c.Name == "sovereign_session" {
+			return c
+		}
+	}
+	t.Fatalf("session cookie not found in setup response")
+	return nil
+}
+
+func TestServer_SystemReboot(t *testing.T) {
+	srv, _ := setupTestServer(t)
+	defer srv.Close()
+
+	cookie := loginTestAdmin(t, srv)
+
+	// Unauthenticated request should fail with 401
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/system/reboot", nil)
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 Unauthorized, got %d", rr.Code)
+	}
+
+	// Authenticated request should succeed with 200
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/system/reboot", nil)
+	req.AddCookie(cookie)
+	rr = httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	var resp map[string]any
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to decode JSON response: %v", err)
+	}
+	if resp["status"] != "rebooting" {
+		t.Errorf("expected status 'rebooting', got %v", resp["status"])
+	}
+}
+
+func TestServer_FactoryReset(t *testing.T) {
+	srv, _ := setupTestServer(t)
+	defer srv.Close()
+
+	cookie := loginTestAdmin(t, srv)
+
+	// Unauthenticated request should fail with 401
+	body := strings.NewReader(`{"confirmation":"RESET"}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/system/factory-reset", body)
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 Unauthorized, got %d", rr.Code)
+	}
+
+	// Authenticated with invalid confirmation should fail with 400
+	body = strings.NewReader(`{"confirmation":"WRONG"}`)
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/system/factory-reset", body)
+	req.AddCookie(cookie)
+	rr = httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 Bad Request on invalid confirmation, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	// Authenticated with valid confirmation "RESET" should succeed with 200
+	body = strings.NewReader(`{"confirmation":"RESET"}`)
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/system/factory-reset", body)
+	req.AddCookie(cookie)
+	rr = httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	var resp map[string]any
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to decode JSON response: %v", err)
+	}
+	if resp["status"] != "resetting" {
+		t.Errorf("expected status 'resetting', got %v", resp["status"])
+	}
+
+	// Verify database persistence of setup_completed flag
+	val, err := srv.db.GetSetting(context.Background(), "setup_completed")
+	if err != nil {
+		t.Fatalf("failed to read setup_completed setting after reset: %v", err)
+	}
+	if val != "false" {
+		t.Errorf("expected setup_completed to be 'false', got %q", val)
+	}
+
+	// Verify GET /api/v1/auth/setup-status reports is_configured: false
+	reqStatus := httptest.NewRequest(http.MethodGet, "/api/v1/auth/setup-status", nil)
+	rrStatus := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rrStatus, reqStatus)
+	if rrStatus.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK from setup-status, got %d", rrStatus.Code)
+	}
+	var statusMap map[string]any
+	if err := json.Unmarshal(rrStatus.Body.Bytes(), &statusMap); err != nil {
+		t.Fatalf("failed to decode setup-status JSON: %v", err)
+	}
+	if isConfigured, ok := statusMap["is_configured"].(bool); !ok || isConfigured {
+		t.Errorf("expected is_configured to be false after factory reset, got %v", statusMap["is_configured"])
+	}
+}
+
+
 
 
 

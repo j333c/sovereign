@@ -179,6 +179,49 @@ export interface DashboardTranslations {
   logStatus: string;
   logError: string;
   closeLogs: string;
+
+  // Storage & NAS
+  tabStorage: string;
+  storagePoolStatus: string;
+  detectedDisksTitle: string;
+  diskDeviceCol: string;
+  diskModelCol: string;
+  diskCapacityCol: string;
+  diskTypeCol: string;
+  nasConfigTitle: string;
+  nasConfigDesc: string;
+  nasHostLabel: string;
+  nasShareLabel: string;
+  nasUsernameLabel: string;
+  nasPasswordLabel: string;
+  nasTestConnection: string;
+  nasTesting: string;
+  nasMountButton: string;
+  nasMounting: string;
+  nasTestSuccess: string;
+  nasMountSuccess: string;
+  storageHealthy: string;
+  storageDegraded: string;
+  totalCapacity: string;
+  usedSpace: string;
+  freeSpace: string;
+  noDisksDetected: string;
+
+  // Destructive actions
+  rebootTitle: string;
+  rebootDesc: string;
+  rebootConfirmButton: string;
+  rebootingState: string;
+  factoryResetTitle: string;
+  factoryResetDesc: string;
+  factoryResetPrompt: string;
+  factoryResetConfirmButton: string;
+  factoryResettingState: string;
+  deactivateTitle: string;
+  deactivateDesc: string;
+  deactivateConfirmButton: string;
+  deactivatingState: string;
+  typeResetToConfirm: string;
 }
 
 export const translations: Record<Language, DashboardTranslations> = {
@@ -361,6 +404,45 @@ export const translations: Record<Language, DashboardTranslations> = {
     logStatus: "Status",
     logError: "Error",
     closeLogs: "Close",
+    tabStorage: "Storage & Pools",
+    storagePoolStatus: "Storage Pool Status",
+    detectedDisksTitle: "Detected Physical Disks",
+    diskDeviceCol: "Device",
+    diskModelCol: "Model",
+    diskCapacityCol: "Capacity",
+    diskTypeCol: "Type",
+    nasConfigTitle: "External NAS Storage",
+    nasConfigDesc: "Mount network attached storage via SMB/CIFS for expanded media libraries.",
+    nasHostLabel: "Server Host / IP",
+    nasShareLabel: "Share Name",
+    nasUsernameLabel: "Username",
+    nasPasswordLabel: "Password",
+    nasTestConnection: "Test NAS Connection",
+    nasTesting: "Testing Connection...",
+    nasMountButton: "Mount NAS Share",
+    nasMounting: "Mounting Share...",
+    nasTestSuccess: "NAS connection verified successfully.",
+    nasMountSuccess: "NAS share mounted successfully.",
+    storageHealthy: "Storage Healthy",
+    storageDegraded: "Storage Degraded",
+    totalCapacity: "Total Capacity",
+    usedSpace: "Used Space",
+    freeSpace: "Free Space",
+    noDisksDetected: "No physical disks detected.",
+    rebootTitle: "Reboot Appliance",
+    rebootDesc: "Your server will restart and be unavailable for approximately 60 seconds. Active media streaming will resume automatically after reboot.",
+    rebootConfirmButton: "Reboot Appliance",
+    rebootingState: "Rebooting...",
+    factoryResetTitle: "Factory Data Reset",
+    factoryResetDesc: "This will erase all appliance settings and return the system to first-run setup. Please type RESET below to confirm.",
+    factoryResetPrompt: "Type RESET to confirm",
+    factoryResetConfirmButton: "Perform Factory Reset",
+    factoryResettingState: "Resetting...",
+    deactivateTitle: "Deactivate Service",
+    deactivateDesc: "Deactivating this service will stop its background processes. Your files, media, and data in /data/ are completely safe and preserved.",
+    deactivateConfirmButton: "Deactivate Service",
+    deactivatingState: "Deactivating...",
+    typeResetToConfirm: "Type RESET to confirm",
   },
   de: {
     crestTitle: "Sovereign",
@@ -541,6 +623,45 @@ export const translations: Record<Language, DashboardTranslations> = {
     logStatus: "Status",
     logError: "Fehler",
     closeLogs: "Schließen",
+    tabStorage: "Speicher & Pools",
+    storagePoolStatus: "Speicherpool-Status",
+    detectedDisksTitle: "Erkannte Festplatten",
+    diskDeviceCol: "Gerät",
+    diskModelCol: "Modell",
+    diskCapacityCol: "Kapazität",
+    diskTypeCol: "Typ",
+    nasConfigTitle: "Externer NAS-Speicher",
+    nasConfigDesc: "Binden Sie Netzwerkspeicher (SMB/CIFS) für erweiterte Medienbibliotheken ein.",
+    nasHostLabel: "Server-Host / IP",
+    nasShareLabel: "Freigabename",
+    nasUsernameLabel: "Benutzername",
+    nasPasswordLabel: "Passwort",
+    nasTestConnection: "NAS-Verbindung testen",
+    nasTesting: "Verbindung wird geprüft...",
+    nasMountButton: "NAS-Freigabe einbinden",
+    nasMounting: "Wird eingebunden...",
+    nasTestSuccess: "NAS-Verbindung erfolgreich überprüft.",
+    nasMountSuccess: "NAS-Freigabe erfolgreich eingebunden.",
+    storageHealthy: "Speicher fehlerfrei",
+    storageDegraded: "Speicher beeinträchtigt",
+    totalCapacity: "Gesamtkapazität",
+    usedSpace: "Belegter Speicher",
+    freeSpace: "Freier Speicher",
+    noDisksDetected: "Keine physischen Laufwerke erkannt.",
+    rebootTitle: "Server neu starten",
+    rebootDesc: "Ihr Server wird neu gestartet und ist für etwa 60 Sekunden nicht erreichbar. Aktive Medienwiedergaben werden danach automatisch fortgesetzt.",
+    rebootConfirmButton: "Server neu starten",
+    rebootingState: "Wird neu gestartet...",
+    factoryResetTitle: "Auf Werkseinstellungen zurücksetzen",
+    factoryResetDesc: "Dadurch werden alle Geräteeinstellungen gelöscht und das System in den Einrichtungszustand zurückversetzt. Bitte tippen Sie zur Bestätigung RESET ein.",
+    factoryResetPrompt: "Tippen Sie RESET zur Bestätigung ein",
+    factoryResetConfirmButton: "Auf Werkseinstellungen zurücksetzen",
+    factoryResettingState: "Wird zurückgesetzt...",
+    deactivateTitle: "Dienst deaktivieren",
+    deactivateDesc: "Durch das Deaktivieren werden Hintergrundprozesse gestoppt. Ihre Dateien, Medien und Dokumente unter /data/ bleiben vollständig und sicher erhalten.",
+    deactivateConfirmButton: "Dienst deaktivieren",
+    deactivatingState: "Wird deaktiviert...",
+    typeResetToConfirm: "Tippen Sie RESET zur Bestätigung ein",
   },
   es: {
     crestTitle: "Sovereign",
@@ -721,6 +842,45 @@ export const translations: Record<Language, DashboardTranslations> = {
     logStatus: "Estado",
     logError: "Error",
     closeLogs: "Cerrar",
+    tabStorage: "Almacenamiento y Pools",
+    storagePoolStatus: "Estado del pool de almacenamiento",
+    detectedDisksTitle: "Discos físicos detectados",
+    diskDeviceCol: "Dispositivo",
+    diskModelCol: "Modelo",
+    diskCapacityCol: "Capacidad",
+    diskTypeCol: "Tipo",
+    nasConfigTitle: "Almacenamiento NAS externo",
+    nasConfigDesc: "Monte almacenamiento en red mediante SMB/CIFS para ampliar las bibliotecas de medios.",
+    nasHostLabel: "Host / IP del servidor",
+    nasShareLabel: "Nombre del recurso",
+    nasUsernameLabel: "Usuario",
+    nasPasswordLabel: "Contraseña",
+    nasTestConnection: "Probar conexión NAS",
+    nasTesting: "Probando conexión...",
+    nasMountButton: "Montar recurso NAS",
+    nasMounting: "Montando...",
+    nasTestSuccess: "Conexión NAS verificada con éxito.",
+    nasMountSuccess: "Recurso NAS montado con éxito.",
+    storageHealthy: "Almacenamiento en buen estado",
+    storageDegraded: "Almacenamiento degradado",
+    totalCapacity: "Capacidad total",
+    usedSpace: "Espacio utilizado",
+    freeSpace: "Espacio libre",
+    noDisksDetected: "No se detectaron discos físicos.",
+    rebootTitle: "Reiniciar electrodoméstico",
+    rebootDesc: "Su servidor se reiniciará y no estará disponible durante unos 60 segundos. La reproducción multimedia activa se reanudará automáticamente tras el reinicio.",
+    rebootConfirmButton: "Reiniciar electrodoméstico",
+    rebootingState: "Reiniciando...",
+    factoryResetTitle: "Restablecimiento de fábrica",
+    factoryResetDesc: "Esto borrará todas las configuraciones del electrodoméstico y devolverá el sistema a la configuración inicial. Escriba RESET a continuación para confirmar.",
+    factoryResetPrompt: "Escriba RESET para confirmar",
+    factoryResetConfirmButton: "Restablecer a valores de fábrica",
+    factoryResettingState: "Restableciendo...",
+    deactivateTitle: "Desactivar servicio",
+    deactivateDesc: "Desactivar este servicio detendrá sus procesos en segundo plano. Sus archivos, medios y datos en /data/ están completamente seguros y conservados.",
+    deactivateConfirmButton: "Desactivar servicio",
+    deactivatingState: "Desactivando...",
+    typeResetToConfirm: "Escriba RESET para confirmar",
   },
   fr: {
     crestTitle: "Sovereign",
@@ -901,5 +1061,44 @@ export const translations: Record<Language, DashboardTranslations> = {
     logStatus: "État",
     logError: "Erreur",
     closeLogs: "Fermer",
+    tabStorage: "Stockage & Pools",
+    storagePoolStatus: "État du pool de stockage",
+    detectedDisksTitle: "Disques physiques détectés",
+    diskDeviceCol: "Périphérique",
+    diskModelCol: "Modèle",
+    diskCapacityCol: "Capacité",
+    diskTypeCol: "Type",
+    nasConfigTitle: "Stockage NAS externe",
+    nasConfigDesc: "Montez un stockage réseau via SMB/CIFS pour étendre vos bibliothèques multimédias.",
+    nasHostLabel: "Hôte / IP du serveur",
+    nasShareLabel: "Nom du partage",
+    nasUsernameLabel: "Nom d'utilisateur",
+    nasPasswordLabel: "Mot de passe",
+    nasTestConnection: "Tester la connexion NAS",
+    nasTesting: "Test de connexion...",
+    nasMountButton: "Monter le partage NAS",
+    nasMounting: "Montage en cours...",
+    nasTestSuccess: "Connexion NAS vérifiée avec succès.",
+    nasMountSuccess: "Partage NAS monté avec succès.",
+    storageHealthy: "Stockage sain",
+    storageDegraded: "Stockage dégradé",
+    totalCapacity: "Capacité totale",
+    usedSpace: "Espace utilisé",
+    freeSpace: "Espace libre",
+    noDisksDetected: "Aucun disque physique détecté.",
+    rebootTitle: "Redémarrer l'appareil",
+    rebootDesc: "Votre serveur va redémarrer et sera indisponible pendant environ 60 secondes. La lecture multimédia active reprendra automatiquement après le redémarrage.",
+    rebootConfirmButton: "Redémarrer l'appareil",
+    rebootingState: "Redémarrage en cours...",
+    factoryResetTitle: "Restauration d'usine",
+    factoryResetDesc: "Cette action effacera tous les paramètres de l'appareil et réinitialisera le système à la configuration initiale. Veuillez taper RESET ci-dessous pour confirmer.",
+    factoryResetPrompt: "Tapez RESET pour confirmer",
+    factoryResetConfirmButton: "Effectuer la restauration d'usine",
+    factoryResettingState: "Réinitialisation...",
+    deactivateTitle: "Désactiver le service",
+    deactivateDesc: "La désactivation de ce service arrêtera ses processus d'arrière-plan. Vos fichiers, médias et données dans /data/ sont totalement sécurisés et préservés.",
+    deactivateConfirmButton: "Désactiver le service",
+    deactivatingState: "Désactivation...",
+    typeResetToConfirm: "Tapez RESET pour confirmer",
   },
 };

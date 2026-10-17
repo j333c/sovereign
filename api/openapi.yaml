@@ -123,6 +123,72 @@ paths:
               schema:
                 $ref: '#/components/schemas/ProblemDetails'
 
+  /api/v1/system/reboot:
+    post:
+      summary: Dispatches appliance reboot sequence
+      description: Initiates a clean shutdown of running containers and restarts the appliance.
+      operationId: rebootSystem
+      tags:
+        - System
+      responses:
+        '200':
+          description: Appliance is rebooting.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SystemActionResponse'
+        '401':
+          description: Unauthorized admin authentication required.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '500':
+          description: Internal server error.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
+  /api/v1/system/factory-reset:
+    post:
+      summary: Resets appliance configuration to factory defaults
+      description: Validates RESET confirmation string, resets database state, and invalidates sessions.
+      operationId: factoryReset
+      tags:
+        - System
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FactoryResetRequest'
+      responses:
+        '200':
+          description: Appliance reset to factory defaults.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SystemActionResponse'
+        '400':
+          description: Invalid confirmation string.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '401':
+          description: Unauthorized admin authentication required.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '500':
+          description: Database error resetting appliance.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
   /api/v1/system/events:
     get:
       summary: Real-time SSE telemetry event stream
@@ -2230,6 +2296,28 @@ paths:
 
 components:
   schemas:
+    SystemActionResponse:
+      type: object
+      required:
+        - status
+        - message
+      properties:
+        status:
+          type: string
+          example: rebooting
+        message:
+          type: string
+          example: Appliance is rebooting.
+
+    FactoryResetRequest:
+      type: object
+      required:
+        - confirmation
+      properties:
+        confirmation:
+          type: string
+          example: RESET
+
     HealthResponse:
       type: object
       required:

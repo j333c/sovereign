@@ -1924,6 +1924,55 @@ describe("SovereignApiClient", () => {
     assert.equal(result.status, "degraded");
     assert.equal(result.reassurance_message, "Update couldn't start properly. We've safely restored your previous working version.");
   });
+
+  it("successfully calls rebootSystem and factoryReset", async () => {
+    let capturedUrl = "";
+    let capturedMethod = "";
+    let capturedBody: any = null;
+
+    const mockFetch: typeof fetch = async (input, init) => {
+      capturedUrl = String(input);
+      capturedMethod = init?.method ?? "GET";
+      if (init?.body) {
+        capturedBody = JSON.parse(String(init.body));
+      }
+      if (capturedUrl.includes("/system/reboot")) {
+        return new Response(
+          JSON.stringify({
+            status: "rebooting",
+            message: "Appliance is rebooting. It will be back online in approximately 60 seconds.",
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      if (capturedUrl.includes("/system/factory-reset")) {
+        return new Response(
+          JSON.stringify({
+            status: "resetting",
+            message: "Appliance has been reset to factory defaults. Redirecting to setup...",
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      return new Response("Not Found", { status: 404 });
+    };
+
+    const client = new SovereignApiClient({
+      baseUrl: "http://localhost:8080",
+      fetchFn: mockFetch,
+    });
+
+    const rebootRes = await client.rebootSystem();
+    assert.equal(capturedUrl, "http://localhost:8080/api/v1/system/reboot");
+    assert.equal(capturedMethod, "POST");
+    assert.equal(rebootRes.status, "rebooting");
+
+    const resetRes = await client.factoryReset("RESET");
+    assert.equal(capturedUrl, "http://localhost:8080/api/v1/system/factory-reset");
+    assert.equal(capturedMethod, "POST");
+    assert.deepEqual(capturedBody, { confirmation: "RESET" });
+    assert.equal(resetRes.status, "resetting");
+  });
 });
 
 

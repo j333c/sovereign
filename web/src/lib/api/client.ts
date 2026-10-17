@@ -76,6 +76,8 @@ export type AIInferenceLogsResponse = components["schemas"]["AIInferenceLogsResp
 export type ComposeRevision = components["schemas"]["ComposeRevision"];
 export type ComposeRevisionsResponse = components["schemas"]["ComposeRevisionsResponse"];
 export type ServiceUpgradeRequest = components["schemas"]["ServiceUpgradeRequest"];
+export type SystemActionResponse = components["schemas"]["SystemActionResponse"];
+export type FactoryResetRequest = components["schemas"]["FactoryResetRequest"];
 
 
 /**
@@ -784,13 +786,32 @@ export class SovereignApiClient {
   }
 
   /**
+   * Dispatches system reboot sequence.
+   */
+  async rebootSystem(): Promise<SystemActionResponse> {
+    return this.request<SystemActionResponse>("/api/v1/system/reboot", {
+      method: "POST",
+    });
+  }
+
+  /**
+   * Validates confirmation token and resets application state database.
+   */
+  async factoryReset(confirmation: string): Promise<SystemActionResponse> {
+    return this.request<SystemActionResponse>("/api/v1/system/factory-reset", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ confirmation }),
+    });
+  }
+
+  /**
    * Returns the endpoint URL for real-time SSE telemetry streaming.
    */
   getEventsUrl(): string {
     return this.baseUrl ? `${this.baseUrl}/api/v1/system/events` : "/api/v1/system/events";
   }
 }
-
 
 // Export singleton instance initialized with environment defaults
 export const apiClient = new SovereignApiClient();

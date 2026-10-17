@@ -4,6 +4,8 @@ import React, { useState, useEffect, useRef, useCallback } from "react";
 import Link from "next/link";
 import { AppHeader } from "@/components/AppHeader";
 import { RollbackModal } from "@/components/RollbackModal";
+import { AdminLoginModal } from "@/components/AdminLoginModal";
+import { DestructiveModal, DestructiveActionType } from "@/components/DestructiveModal";
 import { Language, translations } from "@/lib/i18n";
 import {
   apiClient as defaultApiClient,
@@ -13,6 +15,8 @@ import {
   AISettingsResponse,
   AIInferenceLogEntry,
   ProblemDetailsError,
+  DiskInfo,
+  StorageStatusResponse,
 } from "@/lib/api";
 
 export interface SettingsPageProps {
@@ -26,6 +30,8 @@ export interface SettingsPageProps {
   initialRollbackServiceTarget?: { id: string; name: string; icon: string } | null;
   initialActionError?: { title: string; detail?: string } | null;
   initialRevisionsMap?: Record<string, { currentVersion?: string; previousVersion?: string; snapshotTimestamp?: string }>;
+  initialDisks?: DiskInfo[];
+  initialStorageStatus?: StorageStatusResponse | null;
 }
 
 export function formatBytes(bytes: number): string {
@@ -55,19 +61,154 @@ export default function SettingsPage({
   apiClientOverride,
   initialLanguage = "en",
   initialTab,
+  initialAuthenticated,
   initialAISettings = null,
   initialModels = [],
   initialDownloads = [],
   initialRollbackServiceTarget = null,
   initialActionError = null,
   initialRevisionsMap = {},
+  initialDisks = [],
+  initialStorageStatus = null,
 }: SettingsPageProps) {
   const client = apiClientOverride || defaultApiClient;
   const [lang, setLang] = useState<Language>(initialLanguage);
   const t = translations[lang];
 
+  // Authentication state
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(initialAuthenticated ?? true);
+  const [isLoginModalOpen, setIsLoginModalOpen] = useState<boolean>(initialAuthenticated === false);
+
+  useEffect(() => {
+    if (initialAuthenticated === undefined) {
+      client
+        .getSession()
+        .then(() => {
+          setIsAuthenticated(true);
+        })
+        .catch(() => {
+          setIsAuthenticated(false);
+          setIsLoginModalOpen(true);
+        });
+    }
+  }, [client, initialAuthenticated]);
+
   // Tab navigation state
   const [activeTab, setActiveTab] = useState<string>(initialTab || "ai");
+
+  // Storage & NAS State
+  const [disks, setDisks] = useState<DiskInfo[]>(initialDisks);
+  const [storageStatus, setStorageStatus] = useState<StorageStatusResponse | null>(initialStorageStatus);
+  const [nasHost, setNasHost] = useState("");
+  const [nasShare, setNasShare] = useState("");
+  const [nasUsername, setNasUsername] = useState("");
+  const [nasPassword, setNasPassword] = useState("");
+  const [nasTestStatus, setNasTestStatus] = useState<"idle" | "testing" | "success" | "error">("idle");
+  const [nasTestMessage, setNasTestMessage] = useState<string | null>(null);
+  const [nasMountStatus, setNasMountStatus] = useState<"idle" | "mounting" | "success" | "error">("idle");
+  const [nasMountMessage, setNasMountMessage] = useState<string | null>(null);
+
+  const loadStorageState = useCallback(async () => {
+    try {
+      const [disksResp, statusResp] = await Promise.all([
+        client.getDisks().catch(() => ({ disks: [] })),
+        client.getStorageStatus().catch(() => null),
+      ]);
+      setDisks(disksResp.disks || []);
+      setStorageStatus(statusResp);
+    } catch {
+      // Ignore
+    }
+  }, [client]);
+
+  useEffect(() => {
+    if (activeTab === "storage") {
+      void loadStorageState();
+    }
+  }, [activeTab, loadStorageState]);
+
+  const handleTestNAS = async () => {
+    if (!nasHost || !nasShare) return;
+    setNasTestStatus("testing");
+    setNasTestMessage(null);
+    try {
+      const res = await client.testNAS({
+        type: "smb",
+        host: nasHost,
+        share: nasShare,
+        username: nasUsername,
+        password: nasPassword,
+      });
+      if (res.success) {
+        setNasTestStatus("success");
+        setNasTestMessage(t.nasTestSuccess);
+      } else {
+        setNasTestStatus("error");
+        setNasTestMessage(res.message || "Failed to verify NAS connection");
+      }
+    } catch (err: any) {
+      setNasTestStatus("error");
+      setNasTestMessage(err.detail || err.message || "Failed to test NAS connection");
+    }
+  };
+
+  const handleMountNAS = async () => {
+    if (!nasHost || !nasShare) return;
+    setNasMountStatus("mounting");
+    setNasMountMessage(null);
+    try {
+      await client.mountNAS({
+        type: "smb",
+        host: nasHost,
+        share: nasShare,
+        username: nasUsername,
+        password: nasPassword,
+      });
+      setNasMountStatus("success");
+      setNasMountMessage(t.nasMountSuccess);
+      void loadStorageState();
+    } catch (err: any) {
+      setNasMountStatus("error");
+      setNasMountMessage(err.detail || err.message || "Failed to mount NAS share");
+    }
+  };
+
+  // Destructive Actions State
+  const [destructiveModalState, setDestructiveModalState] = useState<{
+    isOpen: boolean;
+    actionType: DestructiveActionType;
+    serviceId?: string;
+    serviceName?: string;
+  }>({
+    isOpen: false,
+    actionType: "reboot",
+  });
+  const [isDestructiveProcessing, setIsDestructiveProcessing] = useState(false);
+  const [destructiveError, setDestructiveError] = useState<string | null>(null);
+
+  const handleConfirmDestructive = async () => {
+    if (destructiveModalState.actionType === "deactivate" && !destructiveModalState.serviceId) {
+      return;
+    }
+    setIsDestructiveProcessing(true);
+    setDestructiveError(null);
+    try {
+      if (destructiveModalState.actionType === "reboot") {
+        await client.rebootSystem();
+        setDestructiveModalState({ isOpen: false, actionType: "reboot" });
+      } else if (destructiveModalState.actionType === "factory-reset") {
+        await client.factoryReset("RESET");
+        setDestructiveModalState({ isOpen: false, actionType: "factory-reset" });
+      } else if (destructiveModalState.actionType === "deactivate" && destructiveModalState.serviceId) {
+        await client.deactivateService(destructiveModalState.serviceId);
+        setDestructiveModalState({ isOpen: false, actionType: "deactivate" });
+      }
+    } catch (err: any) {
+      setDestructiveError(err.detail || err.message || "Operation failed");
+    } finally {
+      setIsDestructiveProcessing(false);
+    }
+  };
 
   // AI Administration state
   const [aiSettings, setAiSettings] = useState<AISettingsResponse | null>(
@@ -129,6 +270,8 @@ export default function SettingsPage({
           setActiveTab("ai");
         } else if (hash === "services") {
           setActiveTab("services");
+        } else if (hash === "storage") {
+          setActiveTab("storage");
         } else if (hash === "system") {
           setActiveTab("system");
         } else if (hash === "gpu") {
@@ -154,7 +297,7 @@ export default function SettingsPage({
 
   // Keyboard navigation for sidebar tabs (ArrowUp / ArrowDown)
   const handleNavKeyDown = (e: React.KeyboardEvent<HTMLElement>) => {
-    const tabs = ["services", "ai", "gpu", "system"];
+    const tabs = ["services", "storage", "ai", "gpu", "system"];
     const currentIndex = tabs.indexOf(activeTab);
     if (e.key === "ArrowDown") {
       e.preventDefault();
@@ -537,6 +680,21 @@ export default function SettingsPage({
 
             <button
               type="button"
+              onClick={() => selectTab("storage")}
+              className={`flex min-h-[44px] items-center gap-2.5 rounded-lg px-3.5 py-2.5 text-sm font-medium text-left transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 ${
+                activeTab === "storage"
+                  ? "bg-white text-[#0F172A] font-semibold border border-[#E5E7EB] shadow-xs"
+                  : "text-[#475569] hover:bg-[#F1F5F9] hover:text-[#0F172A]"
+              }`}
+              aria-current={activeTab === "storage" ? "page" : undefined}
+              data-testid="tab-storage-btn"
+            >
+              <span aria-hidden="true">💾</span>
+              <span>{t.tabStorage}</span>
+            </button>
+
+            <button
+              type="button"
               onClick={() => selectTab("ai")}
               className={`flex min-h-[44px] items-center gap-2.5 rounded-lg px-3.5 py-2.5 text-sm font-medium text-left transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 ${
                 activeTab === "ai"
@@ -581,6 +739,24 @@ export default function SettingsPage({
 
         {/* Content Pane */}
         <main className="flex flex-col gap-6">
+          {!isAuthenticated ? (
+            <section className="rounded-xl border border-amber-200 bg-amber-50/50 p-8 text-center shadow-xs" data-testid="settings-auth-lock">
+              <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-amber-100 text-3xl">
+                🔒
+              </div>
+              <h2 className="mt-4 text-base font-bold text-[#0F172A]">{t.adminAuthTitle}</h2>
+              <p className="mt-1 text-xs text-[#64748B] max-w-md mx-auto">{t.adminAuthDesc}</p>
+              <button
+                type="button"
+                onClick={() => setIsLoginModalOpen(true)}
+                className="mt-5 inline-flex min-h-[44px] items-center justify-center rounded-xl bg-blue-600 px-6 py-2.5 text-sm font-semibold text-white shadow-xs hover:bg-blue-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 cursor-pointer"
+                data-testid="unlock-settings-btn"
+              >
+                {t.unlock}
+              </button>
+            </section>
+          ) : (
+            <>
           {/* TAB: AI Backend & Models */}
           {activeTab === "ai" && (
             <div className="flex flex-col gap-6" data-testid="ai-settings-panel">
@@ -1263,6 +1439,20 @@ export default function SettingsPage({
                       <span aria-hidden="true">⏪</span>
                       <span>{t.rollbackVersion}</span>
                     </button>
+                    <button
+                      type="button"
+                      onClick={() => setDestructiveModalState({
+                        isOpen: true,
+                        actionType: "deactivate",
+                        serviceId: "video",
+                        serviceName: t.videoTitle,
+                      })}
+                      className="h-11 min-h-[44px] px-3.5 text-xs font-medium rounded-lg border border-rose-200 bg-white text-rose-700 hover:bg-rose-50 transition-colors cursor-pointer flex items-center gap-1.5 focus-visible:ring-2 focus-visible:ring-rose-500 focus-visible:outline-none"
+                      data-testid="deactivate-btn-video"
+                    >
+                      <span aria-hidden="true">⏸️</span>
+                      <span>{t.deactivateTitle}</span>
+                    </button>
                   </div>
                 </div>
 
@@ -1281,6 +1471,20 @@ export default function SettingsPage({
                     >
                       <span aria-hidden="true">⏪</span>
                       <span>{t.rollbackVersion}</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setDestructiveModalState({
+                        isOpen: true,
+                        actionType: "deactivate",
+                        serviceId: "audio",
+                        serviceName: t.audioTitle,
+                      })}
+                      className="h-11 min-h-[44px] px-3.5 text-xs font-medium rounded-lg border border-rose-200 bg-white text-rose-700 hover:bg-rose-50 transition-colors cursor-pointer flex items-center gap-1.5 focus-visible:ring-2 focus-visible:ring-rose-500 focus-visible:outline-none"
+                      data-testid="deactivate-btn-audio"
+                    >
+                      <span aria-hidden="true">⏸️</span>
+                      <span>{t.deactivateTitle}</span>
                     </button>
                   </div>
                 </div>
@@ -1301,6 +1505,20 @@ export default function SettingsPage({
                       <span aria-hidden="true">⏪</span>
                       <span>{t.rollbackVersion}</span>
                     </button>
+                    <button
+                      type="button"
+                      onClick={() => setDestructiveModalState({
+                        isOpen: true,
+                        actionType: "deactivate",
+                        serviceId: "dms",
+                        serviceName: t.dmsTitle,
+                      })}
+                      className="h-11 min-h-[44px] px-3.5 text-xs font-medium rounded-lg border border-rose-200 bg-white text-rose-700 hover:bg-rose-50 transition-colors cursor-pointer flex items-center gap-1.5 focus-visible:ring-2 focus-visible:ring-rose-500 focus-visible:outline-none"
+                      data-testid="deactivate-btn-dms"
+                    >
+                      <span aria-hidden="true">⏸️</span>
+                      <span>{t.deactivateTitle}</span>
+                    </button>
                   </div>
                 </div>
 
@@ -1320,10 +1538,203 @@ export default function SettingsPage({
                       <span aria-hidden="true">⏪</span>
                       <span>{t.rollbackVersion}</span>
                     </button>
+                    <button
+                      type="button"
+                      onClick={() => setDestructiveModalState({
+                        isOpen: true,
+                        actionType: "deactivate",
+                        serviceId: "ai",
+                        serviceName: t.aiTitle,
+                      })}
+                      className="h-11 min-h-[44px] px-3.5 text-xs font-medium rounded-lg border border-rose-200 bg-white text-rose-700 hover:bg-rose-50 transition-colors cursor-pointer flex items-center gap-1.5 focus-visible:ring-2 focus-visible:ring-rose-500 focus-visible:outline-none"
+                      data-testid="deactivate-btn-ai"
+                    >
+                      <span aria-hidden="true">⏸️</span>
+                      <span>{t.deactivateTitle}</span>
+                    </button>
                   </div>
                 </div>
               </div>
             </section>
+          )}
+
+          {/* TAB: Storage & Pools */}
+          {activeTab === "storage" && (
+            <div className="flex flex-col gap-6" data-testid="storage-settings-panel">
+              {/* Storage Pool Status Card */}
+              <section className="rounded-xl border border-[#E5E7EB] bg-white p-6 shadow-xs" data-testid="storage-pool-card">
+                <div className="flex flex-wrap items-center justify-between gap-4 pb-4 border-b border-[#F1F5F9]">
+                  <div>
+                    <h1 className="text-lg font-semibold text-[#0F172A]">{t.storagePoolStatus}</h1>
+                    <p className="mt-1 text-xs text-[#64748B]">
+                      {storageStatus?.mount_point ? `Local Pool: ${storageStatus.mount_point}` : "Local Pool: /data"}
+                    </p>
+                  </div>
+                  <span className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold ${
+                    storageStatus?.status === "degraded"
+                      ? "bg-amber-100 text-amber-800 border border-amber-300"
+                      : "bg-emerald-100 text-emerald-800 border border-emerald-300"
+                  }`}>
+                    <span aria-hidden="true">{storageStatus?.status === "degraded" ? "◆" : "●"}</span>
+                    <span>{storageStatus?.status === "degraded" ? t.storageDegraded : t.storageHealthy}</span>
+                  </span>
+                </div>
+
+                <div className="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-4 text-xs">
+                  <div className="rounded-lg bg-[#F8FAFC] border border-[#E2E8F0] p-3.5">
+                    <span className="text-[#64748B] block font-medium">{t.totalCapacity}</span>
+                    <span className="text-base font-bold text-[#0F172A] mt-1 block">
+                      {storageStatus?.total_bytes != null ? formatBytes(storageStatus.total_bytes) : "—"}
+                    </span>
+                  </div>
+                  <div className="rounded-lg bg-[#F8FAFC] border border-[#E2E8F0] p-3.5">
+                    <span className="text-[#64748B] block font-medium">{t.usedSpace}</span>
+                    <span className="text-base font-bold text-[#0F172A] mt-1 block">
+                      {storageStatus?.used_bytes != null ? formatBytes(storageStatus.used_bytes) : "—"}
+                    </span>
+                  </div>
+                  <div className="rounded-lg bg-[#F8FAFC] border border-[#E2E8F0] p-3.5">
+                    <span className="text-[#64748B] block font-medium">{t.freeSpace}</span>
+                    <span className="text-base font-bold text-[#0F172A] mt-1 block">
+                      {storageStatus?.available_bytes != null ? formatBytes(storageStatus.available_bytes) : "—"}
+                    </span>
+                  </div>
+                </div>
+              </section>
+
+              {/* Detected Physical Disks Table */}
+              <section className="rounded-xl border border-[#E5E7EB] bg-white p-6 shadow-xs" data-testid="detected-disks-card">
+                <h2 className="text-base font-semibold text-[#0F172A]">{t.detectedDisksTitle}</h2>
+                <div className="overflow-x-auto mt-4">
+                  <table className="w-full text-left text-xs" data-testid="detected-disks-table">
+                    <thead>
+                      <tr className="border-b border-[#E5E7EB] text-[#64748B] font-semibold">
+                        <th className="pb-2.5 pr-4">{t.diskDeviceCol}</th>
+                        <th className="pb-2.5 px-4">{t.diskModelCol}</th>
+                        <th className="pb-2.5 px-4">{t.diskCapacityCol}</th>
+                        <th className="pb-2.5 pl-4">{t.diskTypeCol}</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-[#F1F5F9]">
+                      {disks.length === 0 ? (
+                        <tr>
+                          <td colSpan={4} className="py-6 text-center text-[#94A3B8]">
+                            {t.noDisksDetected}
+                          </td>
+                        </tr>
+                      ) : (
+                        disks.map((d, i) => (
+                          <tr key={d.path || d.name || i} className="hover:bg-[#F8FAFC]">
+                            <td className="py-3 pr-4 font-mono font-medium text-[#0F172A]">{d.path || d.name}</td>
+                            <td className="py-3 px-4 text-[#334155]">{d.model || "Standard Storage Drive"}</td>
+                            <td className="py-3 px-4 font-medium text-[#0F172A]">{formatBytes(d.size_bytes)}</td>
+                            <td className="py-3 pl-4 text-[#64748B] uppercase">{d.type || "SSD"}</td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </section>
+
+              {/* External NAS Configuration Card */}
+              <section className="rounded-xl border border-[#E5E7EB] bg-white p-6 shadow-xs" data-testid="nas-config-card">
+                <h2 className="text-base font-semibold text-[#0F172A]">{t.nasConfigTitle}</h2>
+                <p className="mt-1 text-xs text-[#64748B]">{t.nasConfigDesc}</p>
+
+                <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
+                  <div>
+                    <label htmlFor="nas-host" className="block font-medium text-[#334155] mb-1">{t.nasHostLabel}</label>
+                    <input
+                      id="nas-host"
+                      type="text"
+                      value={nasHost}
+                      onChange={(e) => setNasHost(e.target.value)}
+                      placeholder="192.168.1.100"
+                      className="w-full min-h-[44px] rounded-lg border border-[#CBD5E1] px-3.5 py-2 text-sm text-[#0F172A] focus:outline-none focus:ring-2 focus:ring-blue-600"
+                      data-testid="nas-host-input"
+                    />
+                  </div>
+                  <div>
+                    <label htmlFor="nas-share" className="block font-medium text-[#334155] mb-1">{t.nasShareLabel}</label>
+                    <input
+                      id="nas-share"
+                      type="text"
+                      value={nasShare}
+                      onChange={(e) => setNasShare(e.target.value)}
+                      placeholder="media"
+                      className="w-full min-h-[44px] rounded-lg border border-[#CBD5E1] px-3.5 py-2 text-sm text-[#0F172A] focus:outline-none focus:ring-2 focus:ring-blue-600"
+                      data-testid="nas-share-input"
+                    />
+                  </div>
+                  <div>
+                    <label htmlFor="nas-username" className="block font-medium text-[#334155] mb-1">{t.nasUsernameLabel}</label>
+                    <input
+                      id="nas-username"
+                      type="text"
+                      value={nasUsername}
+                      onChange={(e) => setNasUsername(e.target.value)}
+                      placeholder="admin"
+                      className="w-full min-h-[44px] rounded-lg border border-[#CBD5E1] px-3.5 py-2 text-sm text-[#0F172A] focus:outline-none focus:ring-2 focus:ring-blue-600"
+                      data-testid="nas-user-input"
+                    />
+                  </div>
+                  <div>
+                    <label htmlFor="nas-password" className="block font-medium text-[#334155] mb-1">{t.nasPasswordLabel}</label>
+                    <input
+                      id="nas-password"
+                      type="password"
+                      value={nasPassword}
+                      onChange={(e) => setNasPassword(e.target.value)}
+                      placeholder="••••••••"
+                      className="w-full min-h-[44px] rounded-lg border border-[#CBD5E1] px-3.5 py-2 text-sm text-[#0F172A] focus:outline-none focus:ring-2 focus:ring-blue-600"
+                      data-testid="nas-pass-input"
+                    />
+                  </div>
+                </div>
+
+                {/* NAS Action Feedback */}
+                {nasTestMessage && (
+                  <div className={`mt-4 rounded-xl border p-3.5 text-xs ${
+                    nasTestStatus === "success"
+                      ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                      : "border-rose-200 bg-rose-50 text-rose-800"
+                  }`} role="alert" data-testid="nas-test-feedback">
+                    {nasTestMessage}
+                  </div>
+                )}
+                {nasMountMessage && (
+                  <div className={`mt-4 rounded-xl border p-3.5 text-xs ${
+                    nasMountStatus === "success"
+                      ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                      : "border-rose-200 bg-rose-50 text-rose-800"
+                  }`} role="alert" data-testid="nas-mount-feedback">
+                    {nasMountMessage}
+                  </div>
+                )}
+
+                <div className="mt-5 flex flex-wrap gap-3">
+                  <button
+                    type="button"
+                    onClick={handleTestNAS}
+                    disabled={nasTestStatus === "testing" || !nasHost || !nasShare}
+                    className="min-h-[44px] px-4 py-2.5 rounded-xl border border-[#CBD5E1] bg-white text-xs font-semibold text-[#0F172A] hover:bg-[#F8FAFC] transition-colors cursor-pointer disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
+                    data-testid="nas-test-btn"
+                  >
+                    {nasTestStatus === "testing" ? t.nasTesting : t.nasTestConnection}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleMountNAS}
+                    disabled={nasMountStatus === "mounting" || !nasHost || !nasShare}
+                    className="min-h-[44px] px-4 py-2.5 rounded-xl bg-blue-600 text-xs font-semibold text-white hover:bg-blue-700 transition-colors cursor-pointer disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
+                    data-testid="nas-mount-btn"
+                  >
+                    {nasMountStatus === "mounting" ? t.nasMounting : t.nasMountButton}
+                  </button>
+                </div>
+              </section>
+            </div>
           )}
 
           {/* TAB: Smart Hardware Sharing */}
@@ -1381,8 +1792,53 @@ export default function SettingsPage({
                   <span className="text-[#64748B]">Rollback Protection</span>
                   <span className="font-semibold text-emerald-600">Active (180s probe window)</span>
                 </div>
+                <div className="py-3 flex justify-between">
+                  <span className="text-[#64748B]">Appliance Hostname</span>
+                  <span className="font-mono font-semibold text-[#0F172A]">sovereign.local</span>
+                </div>
+              </div>
+
+              {/* Destructive Controls */}
+              <div className="mt-8 pt-6 border-t border-[#F1F5F9]">
+                <h2 className="text-sm font-bold text-rose-700 flex items-center gap-1.5">
+                  <span aria-hidden="true">⚠️</span>
+                  <span>Destructive Appliance Controls</span>
+                </h2>
+                <p className="mt-1 text-xs text-[#64748B]">
+                  Administrative operations requiring explicit confirmation. Safeguards prevent accidental execution.
+                </p>
+
+                <div className="mt-4 flex flex-wrap gap-4">
+                  <button
+                    type="button"
+                    onClick={() => setDestructiveModalState({
+                      isOpen: true,
+                      actionType: "reboot",
+                    })}
+                    className="flex min-h-[44px] items-center gap-2 rounded-xl border border-amber-300 bg-amber-50 px-4 py-2.5 text-xs font-semibold text-amber-900 shadow-xs hover:bg-amber-100 transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
+                    data-testid="reboot-appliance-btn"
+                  >
+                    <span aria-hidden="true">🔄</span>
+                    <span>{t.rebootTitle}</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setDestructiveModalState({
+                      isOpen: true,
+                      actionType: "factory-reset",
+                    })}
+                    className="flex min-h-[44px] items-center gap-2 rounded-xl border border-rose-300 bg-rose-50 px-4 py-2.5 text-xs font-semibold text-rose-900 shadow-xs hover:bg-rose-100 transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-500"
+                    data-testid="factory-reset-btn"
+                  >
+                    <span aria-hidden="true">⚠️</span>
+                    <span>{t.factoryResetTitle}</span>
+                  </button>
+                </div>
               </div>
             </section>
+          )}
+            </>
           )}
         </main>
       </div>
@@ -1603,6 +2059,30 @@ export default function SettingsPage({
           </div>
         </div>
       )}
+
+      {/* Administrator Login Modal */}
+      <AdminLoginModal
+        isOpen={isLoginModalOpen}
+        onClose={() => setIsLoginModalOpen(false)}
+        onSuccess={() => {
+          setIsAuthenticated(true);
+          setIsLoginModalOpen(false);
+        }}
+        apiClient={client}
+        currentLanguage={lang}
+      />
+
+      {/* Destructive Protection Modal */}
+      <DestructiveModal
+        isOpen={destructiveModalState.isOpen}
+        actionType={destructiveModalState.actionType}
+        serviceName={destructiveModalState.serviceName}
+        isProcessing={isDestructiveProcessing}
+        errorMessage={destructiveError}
+        onConfirm={handleConfirmDestructive}
+        onClose={() => setDestructiveModalState((prev) => ({ ...prev, isOpen: false }))}
+        currentLanguage={lang}
+      />
     </div>
   );
 }

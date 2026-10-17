@@ -104,6 +104,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/system/reboot": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Dispatches appliance reboot sequence
+         * @description Initiates a clean shutdown of running containers and restarts the appliance.
+         */
+        post: operations["rebootSystem"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/system/factory-reset": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Resets appliance configuration to factory defaults
+         * @description Validates RESET confirmation string, resets database state, and invalidates sessions.
+         */
+        post: operations["factoryReset"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/system/events": {
         parameters: {
             query?: never;
@@ -1410,6 +1450,16 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        SystemActionResponse: {
+            /** @example rebooting */
+            status: string;
+            /** @example Appliance is rebooting. */
+            message: string;
+        };
+        FactoryResetRequest: {
+            /** @example RESET */
+            confirmation: string;
+        };
         HealthResponse: {
             /**
              * @example ok
@@ -3026,6 +3076,95 @@ export interface operations {
             };
         };
     };
+    rebootSystem: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Appliance is rebooting. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SystemActionResponse"];
+                };
+            };
+            /** @description Unauthorized admin authentication required. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Internal server error. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    factoryReset: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FactoryResetRequest"];
+            };
+        };
+        responses: {
+            /** @description Appliance reset to factory defaults. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SystemActionResponse"];
+                };
+            };
+            /** @description Invalid confirmation string. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Unauthorized admin authentication required. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Database error resetting appliance. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
     getSystemEvents: {
         parameters: {
             query?: never;
@@ -3875,10 +4014,14 @@ export interface operations {
             };
             cookie?: never;
         };
+        /** @description Optional target revision or specific failed revision to rollback from. */
         requestBody?: {
             content: {
                 "application/json": {
-                    /** @description Optional revision number to rollback. */
+                    /**
+                     * @description Optional revision number to rollback.
+                     * @example 3
+                     */
                     revision?: number;
                 };
             };

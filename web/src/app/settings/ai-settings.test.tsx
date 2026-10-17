@@ -158,6 +158,34 @@ function createMockApiClient(overrides?: Partial<SovereignApiClient>): Sovereign
         },
       ],
     }),
+    getDisks: async () => ({
+      disks: [
+        {
+          name: "sda",
+          path: "/dev/sda",
+          model: "Samsung SSD 870",
+          size_bytes: 1000204886016,
+          type: "ssd",
+          rotational: false,
+          mounted: true,
+          is_system: true,
+        },
+      ],
+    }),
+    getStorageStatus: async () => ({
+      status: "ok",
+      pool_type: "local",
+      mount_point: "/data",
+      total_bytes: 1000204886016,
+      used_bytes: 150081429227,
+      available_bytes: 850123456789,
+    }),
+    testNAS: async () => ({ success: true, message: "NAS connection verified" }),
+    mountNAS: async () => ({ success: true, message: "NAS mounted" }),
+    rebootSystem: async () => ({ status: "rebooting", message: "Rebooting" }),
+    factoryReset: async () => ({ status: "resetting", message: "Resetting" }),
+    deactivateService: async () => ({ id: "video", name: "Jellyfin", status: "inactive" as any, health: "unknown" as any, icon: "🎬", category: "video", endpoints: [], compose_file: "" }),
+    getSession: async () => ({ status: "ok", session: { username: "admin", expires_at: "2026-10-18T00:00:00Z" } }),
     ...overrides,
   } as unknown as SovereignApiClient;
 
@@ -444,5 +472,141 @@ describe("SettingsPage & AI Administration Interface", () => {
 
     const errorModal = findByTestId(failingTree, "problem-details-modal");
     assert.ok(errorModal, "RFC 7807 Problem Details dialog must be displayed on rollback error");
+  });
+
+  it("renders Storage & Pools tab with detected physical disks table and storage pool status card", () => {
+    const mockClient = createMockApiClient();
+    const tree = renderComponent(SettingsPage, {
+      apiClientOverride: mockClient,
+      initialLanguage: "en",
+      initialTab: "storage",
+      initialDisks: [
+        {
+          name: "sda",
+          path: "/dev/sda",
+          model: "Samsung SSD 870",
+          size_bytes: 1000204886016,
+          type: "ssd",
+          rotational: false,
+          mounted: true,
+          is_system: true,
+        },
+      ],
+      initialStorageStatus: {
+        status: "ok",
+        pool_type: "local",
+        mount_point: "/data",
+        total_bytes: 1000204886016,
+        used_bytes: 150081429227,
+        available_bytes: 850123456789,
+      },
+    });
+
+    const storagePanel = findByTestId(tree, "storage-settings-panel");
+    assert.ok(storagePanel, "Storage settings panel must render when activeTab is storage");
+
+    const poolCard = findByTestId(tree, "storage-pool-card");
+    assert.ok(poolCard, "Storage pool card must render");
+
+    const disksTable = findByTestId(tree, "detected-disks-table");
+    assert.ok(disksTable, "Detected disks table must render");
+
+    const nasCard = findByTestId(tree, "nas-config-card");
+    assert.ok(nasCard, "External NAS configuration card must render");
+  });
+
+  it("handles NAS connection test and mount operations in Storage tab", () => {
+    const mockClient = createMockApiClient();
+    const tree = renderComponent(SettingsPage, {
+      apiClientOverride: mockClient,
+      initialLanguage: "en",
+      initialTab: "storage",
+    });
+
+    const testBtn = findByTestId(tree, "nas-test-btn");
+    assert.ok(testBtn, "Test NAS button must exist");
+
+    const mountBtn = findByTestId(tree, "nas-mount-btn");
+    assert.ok(mountBtn, "Mount NAS button must exist");
+
+    const hostInput = findByTestId(tree, "nas-host-input");
+    assert.ok(hostInput, "NAS host input must exist");
+
+    const shareInput = findByTestId(tree, "nas-share-input");
+    assert.ok(shareInput, "NAS share input must exist");
+
+    // Clicking test and mount buttons executes handlers without throwing
+    testBtn.props.onClick();
+    mountBtn.props.onClick();
+  });
+
+  it("renders Destructive Appliance Controls on System tab (reboot and factory-reset buttons)", () => {
+    const mockClient = createMockApiClient();
+    const tree = renderComponent(SettingsPage, {
+      apiClientOverride: mockClient,
+      initialLanguage: "en",
+      initialTab: "system",
+    });
+
+    const rebootBtn = findByTestId(tree, "reboot-appliance-btn");
+    assert.ok(rebootBtn, "Reboot appliance button must render on System tab");
+
+    const resetBtn = findByTestId(tree, "factory-reset-btn");
+    assert.ok(resetBtn, "Factory reset button must render on System tab");
+
+    // Clicking reboot triggers handler
+    rebootBtn.props.onClick();
+    resetBtn.props.onClick();
+  });
+
+  it("renders Deactivate Service buttons on Services tab", () => {
+    const mockClient = createMockApiClient();
+    const tree = renderComponent(SettingsPage, {
+      apiClientOverride: mockClient,
+      initialLanguage: "en",
+      initialTab: "services",
+    });
+
+    const deactVideo = findByTestId(tree, "deactivate-btn-video");
+    assert.ok(deactVideo, "Deactivate button for video service must render");
+
+    const deactAudio = findByTestId(tree, "deactivate-btn-audio");
+    assert.ok(deactAudio, "Deactivate button for audio service must render");
+
+    const deactDms = findByTestId(tree, "deactivate-btn-dms");
+    assert.ok(deactDms, "Deactivate button for dms service must render");
+
+    const deactAi = findByTestId(tree, "deactivate-btn-ai");
+    assert.ok(deactAi, "Deactivate button for ai service must render");
+
+    // Clicking deactivation triggers modal open
+    deactVideo.props.onClick();
+  });
+
+  it("renders Administrator Authentication lock screen when unauthenticated", () => {
+    const mockClient = createMockApiClient({
+      getSession: async () => {
+        throw new ProblemDetailsError({
+          type: "https://sovereign.local/errors/unauthorized",
+          title: "Unauthorized",
+          status: 401,
+          detail: "No active administrator session",
+          instance: "/api/v1/auth/session",
+        });
+      },
+    });
+
+    const tree = renderComponent(SettingsPage, {
+      apiClientOverride: mockClient,
+      initialLanguage: "en",
+      initialTab: "services",
+      initialAuthenticated: false,
+    });
+
+    const lockBanner = findByTestId(tree, "settings-auth-lock");
+    assert.ok(lockBanner, "Lock screen banner must be rendered when unauthenticated");
+
+    const unlockBtn = findByTestId(tree, "unlock-settings-btn");
+    assert.ok(unlockBtn, "Unlock button must be displayed on lock screen");
   });
 });

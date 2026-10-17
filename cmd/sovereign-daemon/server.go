@@ -1051,6 +1051,8 @@ func (s *Server) routes() {
 	s.router.HandleFunc("GET /api/v1/system/ingress", s.handleIngressStatus)
 	s.router.HandleFunc("GET /api/v1/system/revisions", s.handleListRevisions)
 	s.router.HandleFunc("GET /api/v1/system/revisions/active", s.handleGetActiveRevision)
+	s.router.HandleFunc("POST /api/v1/system/reboot", s.requireSetupOrAdmin(s.handleSystemReboot))
+	s.router.HandleFunc("POST /api/v1/system/factory-reset", s.requireSetupOrAdmin(s.handleFactoryReset))
 	s.router.HandleFunc("GET /api/v1/system/events", s.handleEvents)
 	s.router.HandleFunc("GET /api/events", s.handleEvents)
 	s.router.HandleFunc("GET /api/v1/storage/disks", s.handleStorageDisks)
@@ -2839,6 +2841,62 @@ func (s *Server) handleGetActiveRevision(w http.ResponseWriter, r *http.Request)
 	}
 
 	s.writeJSON(w, http.StatusOK, rev)
+}
+
+func (s *Server) handleSystemReboot(w http.ResponseWriter, r *http.Request) {
+	s.logger.Info("system reboot initiated by administrator")
+	if s.bootMgr != nil {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := s.bootMgr.RecordCleanShutdown(shutdownCtx); err != nil {
+			s.logger.Warn("failed to record clean shutdown for reboot", "error", err)
+		}
+	}
+
+	s.BroadcastEvent("system.rebooting", map[string]any{
+		"status":  "rebooting",
+		"message": "Appliance is restarting",
+	})
+	s.writeJSON(w, http.StatusOK, map[string]any{
+		"status":  "rebooting",
+		"message": "Appliance is rebooting. It will be back online in approximately 60 seconds.",
+	})
+}
+
+func (s *Server) handleFactoryReset(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Confirmation string `json:"confirmation"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Confirmation) != "RESET" {
+		s.writeProblem(w, http.StatusBadRequest, "Invalid Confirmation", "You must provide confirmation string 'RESET' to execute a factory reset.", r.URL.Path)
+		return
+	}
+
+	s.logger.Warn("factory reset initiated by administrator")
+	if s.db != nil {
+		if err := s.db.SetSetting(r.Context(), "setup_completed", "false"); err != nil {
+			s.logger.Error("failed to reset setup_completed setting", "error", err)
+			s.writeProblem(w, http.StatusInternalServerError, "Reset Failed", "Failed to reset appliance configuration: "+err.Error(), r.URL.Path)
+			return
+		}
+	}
+
+	if s.authMgr != nil {
+		if sess, err := s.authMgr.GetSessionFromRequest(r); err == nil && sess != nil {
+			_ = s.authMgr.RevokeSession(r.Context(), sess.Token)
+		}
+		s.authMgr.ClearSessionCookie(w)
+	}
+
+	s.BroadcastEvent("system.factory_reset", map[string]any{
+		"status":  "resetting",
+		"message": "Appliance has been reset to factory defaults",
+	})
+
+	s.writeJSON(w, http.StatusOK, map[string]any{
+		"status":  "resetting",
+		"message": "Appliance has been reset to factory defaults. Redirecting to setup...",
+	})
 }
 
 // handleDropUpload handles multipart file uploads to /api/v1/drop/upload.
