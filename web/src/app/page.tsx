@@ -36,6 +36,9 @@ export interface HomePageProps {
   initialReady?: boolean;
   initialServices?: Record<string, ServiceStateOverride>;
   initialPendingAction?: string | null;
+  initialActiveRollbackService?: string | null;
+  initialRollbackSuccessMessage?: string | null;
+  initialRevisionsMap?: Record<string, { currentVersion?: string; previousVersion?: string; snapshotTimestamp?: string }>;
   initialAIStatus?: AIStatusResponse | null;
 }
 
@@ -142,6 +145,9 @@ function HomeScreenContent({
   initialReady = false,
   initialServices = {},
   initialPendingAction = null,
+  initialActiveRollbackService = null,
+  initialRollbackSuccessMessage = null,
+  initialRevisionsMap = {},
   initialAIStatus = null,
 }: HomePageProps & { router?: { replace: (url: string) => void } }) {
   const client = apiClientOverride ?? defaultApiClient;
@@ -157,10 +163,24 @@ function HomeScreenContent({
   });
   const t = translations[language];
   const [isAuthenticated, setIsAuthenticated] = useState(initialAuthenticated);
-  const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
+  const [isLoginModalOpen, setIsLoginModalOpen] = useState(Boolean(initialPendingAction));
   const [pendingAction, setPendingAction] = useState<string | null>(initialPendingAction);
-  const [activeRollbackService, setActiveRollbackService] = useState<string | null>(null);
+  const [activeRollbackService, setActiveRollbackService] = useState<string | null>(initialActiveRollbackService);
+  const [revisionsMap, setRevisionsMap] = useState<
+    Record<string, { currentVersion?: string; previousVersion?: string; snapshotTimestamp?: string }>
+  >(initialRevisionsMap || {});
+  const [isRollingBack, setIsRollingBack] = useState(false);
+  const [rollbackSuccessMessage, setRollbackSuccessMessage] = useState<string | null>(initialRollbackSuccessMessage);
+  const rollbackToastTimerRef = useRef<NodeJS.Timeout | null>(null);
   const problemDetailsRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    return () => {
+      if (rollbackToastTimerRef.current) {
+        clearTimeout(rollbackToastTimerRef.current);
+      }
+    };
+  }, []);
   const [enabledFeatures, setEnabledFeatures] = useState<string[] | null>(null);
   const [serviceStates, setServiceStates] = useState<
     Record<string, ServiceStateOverride>
@@ -406,12 +426,68 @@ function HomeScreenContent({
     [isAuthenticated, executeRestart]
   );
 
+  useEffect(() => {
+    if (!activeRollbackService) return;
+    const backendId = backendServiceMap[activeRollbackService] || activeRollbackService;
+    void client
+      .getRevisions()
+      .then((res) => {
+        if (!res?.revisions) return;
+        const matching = res.revisions.find(
+          (r) => (r.service_id === backendId || r.service_id === activeRollbackService) && r.service_id !== ""
+        );
+        if (matching) {
+          setRevisionsMap((prev) => ({
+            ...prev,
+            [activeRollbackService]: {
+              currentVersion: matching.new_image || undefined,
+              previousVersion: matching.old_image || undefined,
+              snapshotTimestamp: matching.created_at || undefined,
+            },
+          }));
+        }
+      })
+      .catch(() => {
+        // Fallback gracefully
+      });
+  }, [activeRollbackService, client]);
+
   const handleRollback = useCallback(
     async (serviceId: string) => {
-      setActiveRollbackService(null);
-      await executeRestart(serviceId);
+      const backendId = backendServiceMap[serviceId] || serviceId;
+      setIsRollingBack(true);
+      try {
+        const res = await client.rollbackService(backendId);
+        setActiveRollbackService(null);
+        setServiceStates((prev) => ({
+          ...prev,
+          [serviceId]: {
+            ...prev[serviceId],
+            status: mapServiceStatus(res?.status, res?.health),
+            reassuranceMessage: undefined,
+            isRestarting: false,
+          },
+        }));
+        setRollbackSuccessMessage(t.rollbackSuccess);
+        if (rollbackToastTimerRef.current) {
+          clearTimeout(rollbackToastTimerRef.current);
+        }
+        rollbackToastTimerRef.current = setTimeout(() => setRollbackSuccessMessage(null), 4000);
+      } catch (err: unknown) {
+        let title = t.rollbackFailed;
+        let detail = "An unexpected error occurred while rolling back the service.";
+        if (err instanceof ProblemDetailsError) {
+          title = err.title || title;
+          detail = err.detail || detail;
+        } else if (err instanceof Error) {
+          detail = err.message;
+        }
+        setRestartError({ title, detail });
+      } finally {
+        setIsRollingBack(false);
+      }
     },
-    [executeRestart]
+    [client, t.rollbackSuccess, t.rollbackFailed]
   );
 
   const handleSettingsClick = useCallback(() => {
@@ -610,15 +686,43 @@ function HomeScreenContent({
                   onRestart={handleRestart}
                   onRollback={handleRollback}
                   isRollbackOpen={activeRollbackService === svc.id}
+                  onRollbackOpen={(id) => setActiveRollbackService(id)}
                   onRollbackClose={() => setActiveRollbackService(null)}
                   isRestarting={svc.isRestarting}
                   reassuranceMessage={svc.reassuranceMessage}
+                  currentVersion={revisionsMap[svc.id]?.currentVersion}
+                  previousVersion={revisionsMap[svc.id]?.previousVersion}
+                  snapshotTimestamp={revisionsMap[svc.id]?.snapshotTimestamp}
+                  isRollingBack={isRollingBack && activeRollbackService === svc.id}
                 />
               ))}
             </div>
           </section>
         </div>
       </main>
+
+      {/* Rollback Success Toast Notification */}
+      {rollbackSuccessMessage && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="fixed bottom-20 right-6 z-40 flex items-center gap-2.5 rounded-xl border border-emerald-200 bg-white px-4 py-3 text-sm text-emerald-900 shadow-xl animate-in fade-in slide-in-from-bottom-2"
+          data-testid="rollback-success-toast"
+        >
+          <span className="text-base" aria-hidden="true">
+            ✅
+          </span>
+          <span className="font-medium">{rollbackSuccessMessage}</span>
+          <button
+            type="button"
+            onClick={() => setRollbackSuccessMessage(null)}
+            className="ml-2 text-xs text-slate-400 hover:text-slate-600"
+            aria-label={t.close}
+          >
+            ✕
+          </button>
+        </div>
+      )}
 
       {/* Pinned 56px Telemetry Bar */}
       <TelemetryBar telemetry={telemetry} currentLanguage={language} />

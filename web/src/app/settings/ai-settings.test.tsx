@@ -10,7 +10,42 @@ import {
   AIModelsResponse,
   AIModelDownloadProgress,
   AIInferenceLogsResponse,
+  ProblemDetailsError,
 } from "@/lib/api";
+
+function renderComponent<T>(fn: (props: T) => React.ReactNode, props: T): any {
+  let result: any = null;
+  function Wrapper() {
+    result = fn(props);
+    return null;
+  }
+  renderToStaticMarkup(React.createElement(Wrapper));
+  return result;
+}
+
+function findByTestId(node: any, testId: string): any {
+  if (!node) return null;
+  if (node.props?.["data-testid"] === testId) return node;
+  if (typeof node.type === "function") {
+    try {
+      const rendered = renderComponent(node.type, node.props);
+      const found = findByTestId(rendered, testId);
+      if (found) return found;
+    } catch {
+      // not a functional component
+    }
+  }
+  if (node.props?.children) {
+    const children = Array.isArray(node.props.children)
+      ? node.props.children
+      : [node.props.children];
+    for (const child of children) {
+      const found = findByTestId(child, testId);
+      if (found) return found;
+    }
+  }
+  return null;
+}
 
 const defaultSettings: AISettingsResponse = {
   active_model: "qwen2.5-7b.gguf",
@@ -111,6 +146,18 @@ function createMockApiClient(overrides?: Partial<SovereignApiClient>): Sovereign
     reloadAIEngine: async () => ({ status: "reloaded", message: "AI engine reloaded" }),
     downloadAIModel: async () => defaultDownloads[0],
     cancelAIModelDownload: async () => ({ status: "cancelled", id: "dl-123" }),
+    rollbackService: async (id: string) => ({ status: "running", health: "healthy" }),
+    getRevisions: async () => ({
+      revisions: [
+        {
+          id: 1,
+          service_id: "jellyfin",
+          old_image: "jellyfin:10.8.13",
+          new_image: "jellyfin:12.3.0",
+          created_at: "2026-10-17T03:00:00Z",
+        },
+      ],
+    }),
     ...overrides,
   } as unknown as SovereignApiClient;
 
@@ -321,6 +368,11 @@ describe("SettingsPage & AI Administration Interface", () => {
       <SettingsPage apiClientOverride={mock} initialLanguage="en" initialTab="services" />
     );
     assert.ok(servicesHtml.includes("Video Streaming (Jellyfin)"), "renders Video service row in services tab");
+    assert.ok(servicesHtml.includes('data-testid="rollback-btn-video"'), "renders rollback button for video");
+    assert.ok(servicesHtml.includes('data-testid="rollback-btn-audio"'), "renders rollback button for audio");
+    assert.ok(servicesHtml.includes('data-testid="rollback-btn-dms"'), "renders rollback button for dms");
+    assert.ok(servicesHtml.includes('data-testid="rollback-btn-ai"'), "renders rollback button for ai");
+    assert.ok(servicesHtml.includes("Roll Back to Previous Version"), "renders rollback button label");
 
     const gpuHtml = renderToStaticMarkup(
       <SettingsPage apiClientOverride={mock} initialLanguage="en" initialTab="gpu" />
@@ -331,5 +383,66 @@ describe("SettingsPage & AI Administration Interface", () => {
       <SettingsPage apiClientOverride={mock} initialLanguage="en" initialTab="system" />
     );
     assert.ok(systemHtml.includes("Daily Update Window"), "renders Daily Update Window in system tab");
+  });
+
+  it("executes service rollback workflow and handles RFC 7807 failure dialog in Settings tab", async () => {
+    let rolledBackId = "";
+    const mock = createMockApiClient({
+      rollbackService: async (id: string) => {
+        rolledBackId = id;
+        return { status: "running", health: "healthy" } as any;
+      },
+    });
+
+    const tree = renderComponent(SettingsPage, {
+      apiClientOverride: mock,
+      initialLanguage: "en",
+      initialTab: "services",
+      initialRollbackServiceTarget: { id: "video", name: "Video Streaming", icon: "🎬" },
+      initialRevisionsMap: {
+        video: {
+          currentVersion: "jellyfin:12.3.0",
+          previousVersion: "jellyfin:10.8.13",
+          snapshotTimestamp: "2026-10-17T03:00:00Z",
+        },
+      },
+    });
+
+    const rollbackBtn = findByTestId(tree, "rollback-btn-video");
+    assert.ok(rollbackBtn, "Rollback button for video must exist");
+    rollbackBtn.props.onClick();
+
+    const modal = findByTestId(tree, "rollback-modal-video");
+    assert.ok(modal, "Rollback modal for video must open");
+    const confirmBtn = findByTestId(tree, "confirm-rollback-video");
+    assert.ok(confirmBtn, "Confirm rollback button must exist in modal");
+    await confirmBtn.props.onClick();
+    assert.equal(rolledBackId, "jellyfin", "client.rollbackService must be called with jellyfin");
+
+    // Failure path with ProblemDetailsError and RFC 7807 problem details modal
+    const failingMock = createMockApiClient({
+      rollbackService: async () => {
+        throw new ProblemDetailsError({
+          type: "https://sovereign.local/errors/rollback-failed",
+          title: "Rollback Failed",
+          status: 500,
+          detail: "Container image jellyfin:10.8.13 failed health verification",
+          instance: "/api/services/jellyfin/rollback",
+        });
+      },
+    });
+
+    const failingTree = renderComponent(SettingsPage, {
+      apiClientOverride: failingMock,
+      initialLanguage: "en",
+      initialTab: "services",
+      initialActionError: {
+        title: "Rollback Failed",
+        detail: "Container image jellyfin:10.8.13 failed health verification",
+      },
+    });
+
+    const errorModal = findByTestId(failingTree, "problem-details-modal");
+    assert.ok(errorModal, "RFC 7807 Problem Details dialog must be displayed on rollback error");
   });
 });

@@ -83,6 +83,14 @@ export interface DashboardTranslations {
   restartSuccess: string;
   restartFailed: string;
   rollbackPreservedNote: string;
+  currentVersionLabel: string;
+  previousVersionLabel: string;
+  snapshotTimestampLabel: string;
+  rollbackSuccess: string;
+  rollbackFailed: string;
+  rollingBack: string;
+  noPriorRevisions: string;
+  walAndConfig: string;
   diagnosticLogsDownloaded: string;
   close: string;
   inactive: string;
@@ -257,6 +265,14 @@ export const translations: Record<Language, DashboardTranslations> = {
     restartSuccess: "Service restarted successfully",
     restartFailed: "Failed to restart service",
     rollbackPreservedNote: "Your media, files, and documents are preserved and will not be touched.",
+    currentVersionLabel: "Current Version",
+    previousVersionLabel: "Previous Version",
+    snapshotTimestampLabel: "Backup Snapshot",
+    rollbackSuccess: "Service rolled back successfully",
+    rollbackFailed: "Failed to roll back service",
+    rollingBack: "Rolling back...",
+    noPriorRevisions: "No prior version available",
+    walAndConfig: "SQLite WAL + Config",
     diagnosticLogsDownloaded: "Diagnostic logs downloaded",
     close: "Close",
     inactive: "Inactive",
@@ -429,6 +445,14 @@ export const translations: Record<Language, DashboardTranslations> = {
     restartSuccess: "Dienst erfolgreich neu gestartet",
     restartFailed: "Fehler beim Neustart des Dienstes",
     rollbackPreservedNote: "Ihre Medien, Dateien und Dokumente bleiben erhalten und werden nicht verändert.",
+    currentVersionLabel: "Aktuelle Version",
+    previousVersionLabel: "Vorherige Version",
+    snapshotTimestampLabel: "Sicherungszeitpunkt",
+    rollbackSuccess: "Dienst erfolgreich zurückgesetzt",
+    rollbackFailed: "Fehler beim Zurücksetzen des Dienstes",
+    rollingBack: "Wird zurückgesetzt...",
+    noPriorRevisions: "Keine vorherige Version verfügbar",
+    walAndConfig: "SQLite-WAL + Konfiguration",
     diagnosticLogsDownloaded: "Diagnoseprotokolle heruntergeladen",
     close: "Schließen",
     inactive: "Inaktiv",
@@ -601,6 +625,14 @@ export const translations: Record<Language, DashboardTranslations> = {
     restartSuccess: "Servicio reiniciado con éxito",
     restartFailed: "Error al reiniciar el servicio",
     rollbackPreservedNote: "Sus medios, archivos y documentos se conservan y no se tocarán.",
+    currentVersionLabel: "Versión actual",
+    previousVersionLabel: "Versión anterior",
+    snapshotTimestampLabel: "Copia de seguridad",
+    rollbackSuccess: "Servicio revertido con éxito",
+    rollbackFailed: "Error al revertir el servicio",
+    rollingBack: "Revirtiendo...",
+    noPriorRevisions: "No hay versión anterior disponible",
+    walAndConfig: "SQLite WAL + Configuración",
     diagnosticLogsDownloaded: "Registros de diagnóstico descargados",
     close: "Cerrar",
     inactive: "Inactivo",
@@ -773,6 +805,14 @@ export const translations: Record<Language, DashboardTranslations> = {
     restartSuccess: "Service redémarré avec succès",
     restartFailed: "Échec du redémarrage du service",
     rollbackPreservedNote: "Vos médias, fichiers et documents sont préservés et ne seront pas modifiés.",
+    currentVersionLabel: "Version actuelle",
+    previousVersionLabel: "Version précédente",
+    snapshotTimestampLabel: "Instantané de sauvegarde",
+    rollbackSuccess: "Service restauré avec succès",
+    rollbackFailed: "Échec de la restauration du service",
+    rollingBack: "Restauration en cours...",
+    noPriorRevisions: "Aucune version précédente disponible",
+    walAndConfig: "SQLite WAL + Configuration",
     diagnosticLogsDownloaded: "Journaux de diagnostic téléchargés",
     close: "Fermer",
     inactive: "Inactif",

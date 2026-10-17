@@ -616,9 +616,16 @@ func TestEnrichmentEngine_Start_BackgroundPolling(t *testing.T) {
 	}
 
 	// Verify engine status returned to idle
-	status := engine.GetStatus()
-	if status.State != StateIdle {
-		t.Errorf("expected state %s, got %s", StateIdle, status.State)
+	idle := false
+	for time.Now().Before(deadline) {
+		if engine.GetStatus().State == StateIdle {
+			idle = true
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !idle {
+		t.Errorf("expected state %s, got %s", StateIdle, engine.GetStatus().State)
 	}
 
 	_ = engine.Close()

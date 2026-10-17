@@ -104,6 +104,7 @@ export function AdminLoginModal({
       role="dialog"
       aria-modal="true"
       aria-labelledby="admin-login-title"
+      data-testid="admin-login-modal"
     >
       <div
         ref={dialogRef}

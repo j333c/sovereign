@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { StatusBadge, StatusLevel } from "./StatusBadge";
+import { RollbackModal } from "./RollbackModal";
 import { Language, translations } from "@/lib/i18n";
 
 export interface ServiceCardProps {
@@ -22,8 +23,13 @@ export interface ServiceCardProps {
   isRestarting?: boolean;
   reassuranceMessage?: string;
   isRollbackOpen?: boolean;
+  onRollbackOpen?: (serviceId: string) => void;
   onRollbackClose?: () => void;
   initialMenuOpen?: boolean;
+  currentVersion?: string;
+  previousVersion?: string;
+  snapshotTimestamp?: string;
+  isRollingBack?: boolean;
 }
 
 export function ServiceCard({
@@ -44,8 +50,13 @@ export function ServiceCard({
   isRestarting = false,
   reassuranceMessage,
   isRollbackOpen: controlledRollbackOpen,
+  onRollbackOpen,
   onRollbackClose,
   initialMenuOpen = false,
+  currentVersion,
+  previousVersion,
+  snapshotTimestamp,
+  isRollingBack = false,
 }: ServiceCardProps) {
   const t = translations[currentLanguage];
   const [isMenuOpen, setIsMenuOpen] = useState(initialMenuOpen);
@@ -53,8 +64,6 @@ export function ServiceCard({
   const isRollbackOpen = Boolean(controlledRollbackOpen || localRollbackOpen);
   const menuRef = useRef<HTMLDivElement>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
-  const rollbackRef = useRef<HTMLDivElement>(null);
-
   const closeRollback = useCallback(() => {
     setLocalRollbackOpen(false);
     onRollbackClose?.();
@@ -70,12 +79,6 @@ export function ServiceCard({
       ) {
         setIsMenuOpen(false);
       }
-      if (
-        rollbackRef.current &&
-        !rollbackRef.current.contains(event.target as Node)
-      ) {
-        closeRollback();
-      }
     }
 
     function handleKeyDown(event: KeyboardEvent) {
@@ -84,13 +87,10 @@ export function ServiceCard({
           setIsMenuOpen(false);
           buttonRef.current?.focus();
         }
-        if (isRollbackOpen) {
-          closeRollback();
-        }
       }
     }
 
-    if (isMenuOpen || isRollbackOpen) {
+    if (isMenuOpen) {
       document.addEventListener("mousedown", handleClickOutside);
       window.addEventListener("keydown", handleKeyDown);
     }
@@ -98,7 +98,7 @@ export function ServiceCard({
       document.removeEventListener("mousedown", handleClickOutside);
       window.removeEventListener("keydown", handleKeyDown);
     };
-  }, [isMenuOpen, isRollbackOpen, closeRollback]);
+  }, [isMenuOpen]);
 
   async function handlePrivilegedAction(actionName: "restart" | "rollback") {
     setIsMenuOpen(false);
@@ -113,6 +113,7 @@ export function ServiceCard({
       }
     } else if (actionName === "rollback") {
       setLocalRollbackOpen(true);
+      onRollbackOpen?.(id);
     }
   }
 
@@ -372,57 +373,24 @@ export function ServiceCard({
       </div>
 
       {/* Accessible Rollback Confirmation Modal */}
-      {isRollbackOpen && (
-        <div
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby={`rollback-title-${id}`}
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
-          data-testid={`rollback-modal-${id}`}
-        >
-          <div
-            ref={rollbackRef}
-            className="w-full max-w-md rounded-xl border border-[#E5E7EB] bg-white p-6 shadow-xl text-[#0F172A]"
-          >
-            <div className="flex items-center gap-3">
-              <span className="text-2xl" aria-hidden="true">
-                ⏪
-              </span>
-              <h3
-                id={`rollback-title-${id}`}
-                className="text-base font-semibold text-[#0F172A]"
-              >
-                {t.rollbackVersion}
-              </h3>
-            </div>
-            <p className="mt-3 text-xs sm:text-sm text-[#475569] leading-relaxed">
-              {t.rollbackPreservedNote}
-            </p>
-            <div className="mt-6 flex justify-end gap-3">
-              <button
-                type="button"
-                onClick={closeRollback}
-                className="h-11 rounded-lg border border-[#E5E7EB] px-4 text-xs font-medium text-[#64748B] hover:bg-[#F8F9FA] focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:outline-none cursor-pointer"
-              >
-                {t.cancel}
-              </button>
-              <button
-                type="button"
-                onClick={async () => {
-                  closeRollback();
-                  if (onRollback) {
-                    await onRollback(id);
-                  }
-                }}
-                className="h-11 rounded-lg bg-[#0F172A] px-4 text-xs font-medium text-white hover:bg-[#1E293B] focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:outline-none cursor-pointer"
-                data-testid={`confirm-rollback-${id}`}
-              >
-                {t.rollbackVersion}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <RollbackModal
+        isOpen={isRollbackOpen}
+        serviceId={id}
+        serviceName={name}
+        serviceIcon={icon}
+        currentVersion={currentVersion}
+        previousVersion={previousVersion}
+        snapshotTimestamp={snapshotTimestamp}
+        isRollingBack={isRollingBack}
+        onConfirm={async () => {
+          if (onRollback) {
+            await onRollback(id);
+          }
+          closeRollback();
+        }}
+        onClose={closeRollback}
+        currentLanguage={currentLanguage}
+      />
     </article>
   );
 }

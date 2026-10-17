@@ -25,6 +25,15 @@ function renderComponent<T>(fn: (props: T) => React.ReactNode, props: T): any {
 function findByTestId(node: any, testId: string): any {
   if (!node) return null;
   if (node.props?.["data-testid"] === testId) return node;
+  if (typeof node.type === "function") {
+    try {
+      const rendered = renderComponent(node.type, node.props);
+      const found = findByTestId(rendered, testId);
+      if (found) return found;
+    } catch {
+      // not a functional component or evaluation failed
+    }
+  }
   if (node.props?.children) {
     const children = Array.isArray(node.props.children)
       ? node.props.children
@@ -764,6 +773,8 @@ describe("ServiceCard & StatusBadge Components", () => {
       onRollbackClose: () => {
         closedCalled = true;
       },
+      currentVersion: "jellyfin:12.3.0",
+      previousVersion: "jellyfin:10.8.13",
       onRollback: (id: string) => {
         rolledBackId = id;
       },
@@ -1374,6 +1385,70 @@ describe("Central Admin Dashboard Integration & i18n", () => {
       !htmlStopped.includes(translations.en.attentionRequired),
       "stopped service should not be rendered as amber Attention Required badge"
     );
+  });
+
+  it("HomeScreen handles rollback confirmation, calls apiClient.rollbackService, updates service status, and renders success toast", async () => {
+    let rollbackCalledWith = "";
+    const mockClient: any = {
+      rollbackService: async (id: string) => {
+        rollbackCalledWith = id;
+        return { status: "running", health: "healthy" };
+      },
+      getRevisions: async () => ({
+        revisions: [
+          {
+            id: 1,
+            service_id: "jellyfin",
+            old_image: "jellyfin:10.8.13",
+            new_image: "jellyfin:12.3.0",
+            created_at: "2026-10-17T03:00:00Z",
+          },
+        ],
+      }),
+      login: async () => ({ token: "mock-token" }),
+      getServices: async () => [],
+      getTelemetry: async () => null,
+      getSettings: async () => null,
+      getAIStatus: async () => null,
+    };
+
+    const tree = renderComponent(HomeScreen, {
+      initialReady: true,
+      initialLanguage: "en",
+      routerOverride: { replace: () => {} },
+      apiClientOverride: mockClient,
+      initialAuthenticated: true,
+      initialActiveRollbackService: "video",
+      initialRevisionsMap: {
+        video: {
+          currentVersion: "jellyfin:12.3.0",
+          previousVersion: "jellyfin:10.8.13",
+          snapshotTimestamp: "2026-10-17T03:00:00Z",
+        },
+      },
+      initialServices: {
+        video: { status: "degraded", reassuranceMessage: "Update in progress" },
+      },
+    });
+
+    // The rollback modal for video is open
+    const modal = findByTestId(tree, "rollback-modal-video");
+    assert.ok(modal, "Rollback modal for video must open");
+    const confirmBtn = findByTestId(tree, "confirm-rollback-video");
+    assert.ok(confirmBtn, "Confirm rollback button must exist in modal");
+    await confirmBtn.props.onClick();
+    assert.equal(rollbackCalledWith, "jellyfin", "rollbackService must be called with backend ID 'jellyfin'");
+
+    // Confirm that the success toast appears when rollbackSuccessMessage is present
+    const toastTree = renderComponent(HomeScreen, {
+      initialReady: true,
+      initialLanguage: "en",
+      routerOverride: { replace: () => {} },
+      apiClientOverride: mockClient,
+      initialRollbackSuccessMessage: "Service rolled back successfully",
+    });
+    const successToast = findByTestId(toastTree, "rollback-success-toast");
+    assert.ok(successToast, "Rollback success toast must be rendered when rollbackSuccessMessage is present");
   });
 });
 

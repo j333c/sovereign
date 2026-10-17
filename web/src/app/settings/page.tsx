@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import Link from "next/link";
 import { AppHeader } from "@/components/AppHeader";
+import { RollbackModal } from "@/components/RollbackModal";
 import { Language, translations } from "@/lib/i18n";
 import {
   apiClient as defaultApiClient,
@@ -22,6 +23,9 @@ export interface SettingsPageProps {
   initialAISettings?: AISettingsResponse | null;
   initialModels?: AIModelInfo[];
   initialDownloads?: AIModelDownloadProgress[];
+  initialRollbackServiceTarget?: { id: string; name: string; icon: string } | null;
+  initialActionError?: { title: string; detail?: string } | null;
+  initialRevisionsMap?: Record<string, { currentVersion?: string; previousVersion?: string; snapshotTimestamp?: string }>;
 }
 
 export function formatBytes(bytes: number): string {
@@ -54,6 +58,9 @@ export default function SettingsPage({
   initialAISettings = null,
   initialModels = [],
   initialDownloads = [],
+  initialRollbackServiceTarget = null,
+  initialActionError = null,
+  initialRevisionsMap = {},
 }: SettingsPageProps) {
   const client = apiClientOverride || defaultApiClient;
   const [lang, setLang] = useState<Language>(initialLanguage);
@@ -78,9 +85,28 @@ export default function SettingsPage({
   const [showLogsModal, setShowLogsModal] = useState<boolean>(false);
   const [modelToDelete, setModelToDelete] = useState<string | null>(null);
   const [generationPreset, setGenerationPreset] = useState<string>("balanced");
-  const [actionError, setActionError] = useState<{ title: string; detail?: string } | null>(null);
+  const [actionError, setActionError] = useState<{ title: string; detail?: string } | null>(initialActionError);
   const [sliderGpuLayers, setSliderGpuLayers] = useState<number | null>(null);
   const [sliderIdleTimeout, setSliderIdleTimeout] = useState<number | null>(null);
+
+  // Rollback state
+  const [rollbackServiceTarget, setRollbackServiceTarget] = useState<{ id: string; name: string; icon: string } | null>(
+    initialRollbackServiceTarget
+  );
+  const [revisionsMap, setRevisionsMap] = useState<
+    Record<string, { currentVersion?: string; previousVersion?: string; snapshotTimestamp?: string }>
+  >(initialRevisionsMap || {});
+  const [isRollingBack, setIsRollingBack] = useState<boolean>(false);
+  const [rollbackSuccess, setRollbackSuccess] = useState<string | null>(null);
+  const rollbackToastTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (rollbackToastTimerRef.current) {
+        clearTimeout(rollbackToastTimerRef.current);
+      }
+    };
+  }, []);
 
   // Download form state
   const [downloadUrl, setDownloadUrl] = useState<string>("");
@@ -196,6 +222,90 @@ export default function SettingsPage({
 
     return () => clearInterval(interval);
   }, [downloads, client, activeTab]);
+
+  useEffect(() => {
+    if (!rollbackServiceTarget) return;
+    const backendServiceMap: Record<string, string> = {
+      video: "jellyfin",
+      audio: "navidrome",
+      dms: "paperless",
+      ai: "llama-server",
+    };
+    const backendId = backendServiceMap[rollbackServiceTarget.id] || rollbackServiceTarget.id;
+    void client
+      .getRevisions()
+      .then((res) => {
+        if (!res?.revisions) return;
+        const matching = res.revisions.find(
+          (r) => (r.service_id === backendId || r.service_id === rollbackServiceTarget.id) && r.service_id !== ""
+        );
+        if (matching) {
+          setRevisionsMap((prev) => ({
+            ...prev,
+            [rollbackServiceTarget.id]: {
+              currentVersion: matching.new_image || undefined,
+              previousVersion: matching.old_image || undefined,
+              snapshotTimestamp: matching.created_at || undefined,
+            },
+          }));
+        }
+      })
+      .catch(() => {});
+  }, [rollbackServiceTarget, client]);
+
+  const handleConfirmRollback = async () => {
+    if (!rollbackServiceTarget) return;
+    const targetServiceId = rollbackServiceTarget.id;
+    const backendServiceMap: Record<string, string> = {
+      video: "jellyfin",
+      audio: "navidrome",
+      dms: "paperless",
+      ai: "llama-server",
+    };
+    const backendId = backendServiceMap[targetServiceId] || targetServiceId;
+    setIsRollingBack(true);
+    try {
+      await client.rollbackService(backendId);
+      setRollbackSuccess(t.rollbackSuccess);
+      setRollbackServiceTarget(null);
+      if (rollbackToastTimerRef.current) {
+        clearTimeout(rollbackToastTimerRef.current);
+      }
+      rollbackToastTimerRef.current = setTimeout(() => setRollbackSuccess(null), 4000);
+      void client
+        .getRevisions()
+        .then((res) => {
+          if (!res?.revisions) return;
+          const matching = res.revisions.find(
+            (r) => (r.service_id === backendId || r.service_id === targetServiceId) && r.service_id !== ""
+          );
+          if (matching) {
+            setRevisionsMap((prev) => ({
+              ...prev,
+              [targetServiceId]: {
+                currentVersion: matching.new_image || undefined,
+                previousVersion: matching.old_image || undefined,
+                snapshotTimestamp: matching.created_at || undefined,
+              },
+            }));
+          }
+        })
+        .catch(() => {});
+    } catch (err: unknown) {
+      setRollbackServiceTarget(null);
+      let title = t.rollbackFailed;
+      let detail = "An unexpected error occurred while rolling back the service.";
+      if (err instanceof ProblemDetailsError) {
+        title = err.title || title;
+        detail = err.detail || detail;
+      } else if (err instanceof Error) {
+        detail = err.message;
+      }
+      setActionError({ title, detail });
+    } finally {
+      setIsRollingBack(false);
+    }
+  };
 
   // Model switching handler
   const handleSwitchModel = async (filename: string) => {
@@ -1137,36 +1247,80 @@ export default function SettingsPage({
               </p>
 
               <div className="mt-6 divide-y divide-[#F1F5F9]">
-                <div className="py-3 flex items-center justify-between">
+                <div className="py-3.5 flex items-center justify-between gap-4">
                   <div>
                     <span className="text-sm font-medium text-[#0F172A]">{t.videoTitle} ({t.videoSubtitle})</span>
                     <p className="text-xs text-[#64748B]">{t.videoDesc}</p>
                   </div>
-                  <span className="text-xs font-semibold text-emerald-600">● {t.runningHealthy}</span>
+                  <div className="flex items-center gap-3">
+                    <span className="text-xs font-semibold text-emerald-600">● {t.runningHealthy}</span>
+                    <button
+                      type="button"
+                      onClick={() => setRollbackServiceTarget({ id: "video", name: t.videoTitle, icon: "🎬" })}
+                      className="h-11 min-h-[44px] px-3.5 text-xs font-medium rounded-lg border border-[#CBD5E1] bg-white text-[#0F172A] hover:bg-[#F8FAFC] transition-colors cursor-pointer flex items-center gap-1.5 focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:outline-none"
+                      data-testid="rollback-btn-video"
+                    >
+                      <span aria-hidden="true">⏪</span>
+                      <span>{t.rollbackVersion}</span>
+                    </button>
+                  </div>
                 </div>
 
-                <div className="py-3 flex items-center justify-between">
+                <div className="py-3.5 flex items-center justify-between gap-4">
                   <div>
                     <span className="text-sm font-medium text-[#0F172A]">{t.audioTitle} ({t.audioSubtitle})</span>
                     <p className="text-xs text-[#64748B]">{t.audioDesc}</p>
                   </div>
-                  <span className="text-xs font-semibold text-emerald-600">● {t.runningHealthy}</span>
+                  <div className="flex items-center gap-3">
+                    <span className="text-xs font-semibold text-emerald-600">● {t.runningHealthy}</span>
+                    <button
+                      type="button"
+                      onClick={() => setRollbackServiceTarget({ id: "audio", name: t.audioTitle, icon: "🎵" })}
+                      className="h-11 min-h-[44px] px-3.5 text-xs font-medium rounded-lg border border-[#CBD5E1] bg-white text-[#0F172A] hover:bg-[#F8FAFC] transition-colors cursor-pointer flex items-center gap-1.5 focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:outline-none"
+                      data-testid="rollback-btn-audio"
+                    >
+                      <span aria-hidden="true">⏪</span>
+                      <span>{t.rollbackVersion}</span>
+                    </button>
+                  </div>
                 </div>
 
-                <div className="py-3 flex items-center justify-between">
+                <div className="py-3.5 flex items-center justify-between gap-4">
                   <div>
                     <span className="text-sm font-medium text-[#0F172A]">{t.dmsTitle} ({t.dmsSubtitle})</span>
                     <p className="text-xs text-[#64748B]">{t.dmsDesc}</p>
                   </div>
-                  <span className="text-xs font-semibold text-emerald-600">● {t.runningHealthy}</span>
+                  <div className="flex items-center gap-3">
+                    <span className="text-xs font-semibold text-emerald-600">● {t.runningHealthy}</span>
+                    <button
+                      type="button"
+                      onClick={() => setRollbackServiceTarget({ id: "dms", name: t.dmsTitle, icon: "📑" })}
+                      className="h-11 min-h-[44px] px-3.5 text-xs font-medium rounded-lg border border-[#CBD5E1] bg-white text-[#0F172A] hover:bg-[#F8FAFC] transition-colors cursor-pointer flex items-center gap-1.5 focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:outline-none"
+                      data-testid="rollback-btn-dms"
+                    >
+                      <span aria-hidden="true">⏪</span>
+                      <span>{t.rollbackVersion}</span>
+                    </button>
+                  </div>
                 </div>
 
-                <div className="py-3 flex items-center justify-between">
+                <div className="py-3.5 flex items-center justify-between gap-4">
                   <div>
                     <span className="text-sm font-medium text-[#0F172A]">{t.aiTitle} ({t.aiSubtitle})</span>
                     <p className="text-xs text-[#64748B]">{t.aiDesc}</p>
                   </div>
-                  <span className="text-xs font-semibold text-emerald-600">● {t.runningHealthy}</span>
+                  <div className="flex items-center gap-3">
+                    <span className="text-xs font-semibold text-emerald-600">● {t.runningHealthy}</span>
+                    <button
+                      type="button"
+                      onClick={() => setRollbackServiceTarget({ id: "ai", name: t.aiTitle, icon: "⚡" })}
+                      className="h-11 min-h-[44px] px-3.5 text-xs font-medium rounded-lg border border-[#CBD5E1] bg-white text-[#0F172A] hover:bg-[#F8FAFC] transition-colors cursor-pointer flex items-center gap-1.5 focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:outline-none"
+                      data-testid="rollback-btn-ai"
+                    >
+                      <span aria-hidden="true">⏪</span>
+                      <span>{t.rollbackVersion}</span>
+                    </button>
+                  </div>
                 </div>
               </div>
             </section>
@@ -1364,6 +1518,86 @@ export default function SettingsPage({
                 data-testid="confirm-delete-button"
               >
                 {t.deleteModel}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Service Rollback Confirmation Modal */}
+      {rollbackServiceTarget && (
+        <RollbackModal
+          isOpen={true}
+          serviceId={rollbackServiceTarget.id}
+          serviceName={rollbackServiceTarget.name}
+          serviceIcon={rollbackServiceTarget.icon}
+          currentVersion={revisionsMap[rollbackServiceTarget.id]?.currentVersion}
+          previousVersion={revisionsMap[rollbackServiceTarget.id]?.previousVersion}
+          snapshotTimestamp={revisionsMap[rollbackServiceTarget.id]?.snapshotTimestamp}
+          isRollingBack={isRollingBack}
+          onConfirm={handleConfirmRollback}
+          onClose={() => setRollbackServiceTarget(null)}
+          currentLanguage={lang}
+        />
+      )}
+
+      {/* Rollback Success Toast Notification */}
+      {rollbackSuccess && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="fixed bottom-6 right-6 z-50 flex items-center gap-2.5 rounded-xl border border-emerald-200 bg-white px-4 py-3 text-sm text-emerald-900 shadow-xl animate-in fade-in slide-in-from-bottom-2"
+          data-testid="settings-rollback-success-toast"
+        >
+          <span className="text-base" aria-hidden="true">
+            ✅
+          </span>
+          <span className="font-medium">{rollbackSuccess}</span>
+          <button
+            type="button"
+            onClick={() => setRollbackSuccess(null)}
+            className="ml-2 text-xs text-slate-400 hover:text-slate-600"
+            aria-label={t.close}
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
+      {/* RFC 7807 Problem Details Modal */}
+      {actionError && (
+        <div
+          role="alertdialog"
+          aria-modal="true"
+          aria-labelledby="settings-error-title"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          data-testid="problem-details-modal"
+        >
+          <div className="w-full max-w-md rounded-xl border border-red-200 bg-white p-6 shadow-xl text-[#0F172A]">
+            <div className="flex items-center gap-3">
+              <span className="text-2xl text-red-600" aria-hidden="true">
+                ⚠️
+              </span>
+              <h3
+                id="settings-error-title"
+                className="text-base font-semibold text-[#0F172A]"
+              >
+                {actionError.title}
+              </h3>
+            </div>
+            {actionError.detail && (
+              <p className="mt-3 text-xs sm:text-sm text-[#475569] leading-relaxed">
+                {actionError.detail}
+              </p>
+            )}
+            <div className="mt-6 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setActionError(null)}
+                className="h-11 rounded-lg bg-[#0F172A] px-4 text-xs font-medium text-white hover:bg-[#1E293B] focus-visible:ring-2 focus-visible:ring-blue-600 focus-visible:outline-none cursor-pointer"
+                data-testid="close-problem-details"
+              >
+                {t.close}
               </button>
             </div>
           </div>
