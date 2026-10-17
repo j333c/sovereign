@@ -63,12 +63,18 @@ const (
 	HealthUnknown   = "unknown"
 )
 
+// Consumer reassurance messages
+const (
+	ReassuranceRollbackRestored = "Update couldn't start properly. We've safely restored your previous working version."
+)
+
 var (
 	ErrServiceNotFound  = errors.New("service not found")
 	ErrPullFailed       = errors.New("image pull failed")
 	ErrInactiveService  = errors.New("cannot restart inactive service; activate it first")
 	ErrServiceInactive  = errors.New("service is inactive")
 	ErrInvalidOperation = errors.New("invalid operation")
+	ErrNoPriorRevision  = errors.New("no prior revision found")
 )
 
 // ServiceDef holds the immutable specification of a managed service.
@@ -99,6 +105,7 @@ type ServiceStatus struct {
 	Port                int      `json:"port"`
 	Volumes             []string `json:"volumes,omitempty"`
 	UpdatedAt           string   `json:"updated_at,omitempty"`
+	ReassuranceMessage  string   `json:"reassurance_message,omitempty"`
 }
 
 // ServicePullProgress matches the OpenAPI service.pull_progress event payload.
@@ -237,9 +244,10 @@ func (w *WatchdogDebouncer) GetState(serviceID string) ServiceWatchdogState {
 	return ServiceWatchdogState{CurrentHealth: HealthUnknown}
 }
 
-// RevisionStore defines the interface needed by ServiceManager for revisioning and pre-upgrade snapshots.
+// RevisionStore defines the interface needed by ServiceManager for revisioning, pre-upgrade snapshots, and rollback.
 type RevisionStore interface {
 	CreateSnapshot(ctx context.Context, destPath string) error
+	RestoreSnapshot(ctx context.Context, snapshotPath string) error
 	RecordRevision(ctx context.Context, rev *store.ComposeRevision) error
 	GetRevision(ctx context.Context, revision int) (*store.ComposeRevision, error)
 	GetActiveRevision(ctx context.Context) (*store.ComposeRevision, error)
@@ -248,6 +256,11 @@ type RevisionStore interface {
 	GetNextRevisionNumber(ctx context.Context) (int, error)
 	SetActiveRevisionNumber(ctx context.Context, revision int) error
 	GetActiveRevisionNumber(ctx context.Context) (int, error)
+}
+
+// AlertNotifier defines the interface for dispatching rollback alerts.
+type AlertNotifier interface {
+	SendRollbackAlert(ctx context.Context, serviceID, serviceName, failedVersion, restoredVersion, reason string) error
 }
 
 // ServiceManagerConfig holds options for initializing the ServiceManager.
@@ -265,6 +278,8 @@ type ServiceManagerConfig struct {
 	OpenWebUIProvisioner *OpenWebUIProvisioner
 	RevisionStore        RevisionStore
 	Store                RevisionStore
+	AlertNotifier        AlertNotifier
+	VerificationEngine   *VerificationEngine
 }
 
 // ServiceManager orchestrates on-demand container lifecycles, health probing, and volume preservation.
@@ -287,6 +302,8 @@ type ServiceManager struct {
 	llamaProvisioner     *LlamaProvisioner
 	openwebuiProvisioner *OpenWebUIProvisioner
 	revisionStore        RevisionStore
+	alertNotifier        AlertNotifier
+	verificationEngine   *VerificationEngine
 }
 
 // NewServiceManager constructs and initializes the appliance service lifecycle manager.
@@ -454,7 +471,7 @@ func NewServiceManager(cfg ServiceManagerConfig) *ServiceManager {
 		rs = cfg.Store
 	}
 
-	return &ServiceManager{
+	sm := &ServiceManager{
 		dataDir:              cfg.DataDir,
 		engine:               cfg.Engine,
 		logger:               cfg.Logger,
@@ -470,7 +487,44 @@ func NewServiceManager(cfg ServiceManagerConfig) *ServiceManager {
 		llamaProvisioner:     lp,
 		openwebuiProvisioner: owp,
 		revisionStore:        rs,
+		alertNotifier:        cfg.AlertNotifier,
 	}
+
+	if cfg.VerificationEngine != nil {
+		sm.verificationEngine = cfg.VerificationEngine
+	} else {
+		sm.verificationEngine = NewVerificationEngine(sm, DefaultVerificationConfig(), cfg.Logger)
+	}
+
+	return sm
+}
+
+// AlertNotifier returns the registered AlertNotifier.
+func (m *ServiceManager) AlertNotifier() AlertNotifier {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.alertNotifier
+}
+
+// SetAlertNotifier sets the alert notifier callback.
+func (m *ServiceManager) SetAlertNotifier(notifier AlertNotifier) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.alertNotifier = notifier
+}
+
+// VerificationEngine returns the verification engine.
+func (m *ServiceManager) VerificationEngine() *VerificationEngine {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.verificationEngine
+}
+
+// SetVerificationEngine sets the verification engine.
+func (m *ServiceManager) SetVerificationEngine(v *VerificationEngine) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.verificationEngine = v
 }
 
 // RevisionStore returns the registered RevisionStore.
@@ -1333,7 +1387,11 @@ func (m *ServiceManager) Close() error {
 		if m.cancelWatch != nil {
 			m.cancelWatch()
 		}
+		ve := m.verificationEngine
 		m.mu.Unlock()
+		if ve != nil {
+			ve.Close()
+		}
 	})
 	return nil
 }

@@ -48,6 +48,14 @@ func NewWebhookClient() *WebhookClient {
 
 // SendWebhook dispatches a webhook payload to the specified URL with a 5-second timeout.
 func (c *WebhookClient) SendWebhook(ctx context.Context, webhookURL string, payload *WebhookDeadlinePayload) error {
+	if payload != nil && payload.Event == "" {
+		payload.Event = EventDocumentDeadline
+	}
+	return c.SendWebhookJSON(ctx, webhookURL, payload)
+}
+
+// SendWebhookJSON dispatches an arbitrary JSON payload to the specified webhook URL.
+func (c *WebhookClient) SendWebhookJSON(ctx context.Context, webhookURL string, payload any) error {
 	trimmedURL := strings.TrimSpace(webhookURL)
 	if trimmedURL == "" {
 		return errors.New("webhook URL cannot be empty")
@@ -60,9 +68,6 @@ func (c *WebhookClient) SendWebhook(ctx context.Context, webhookURL string, payl
 
 	if payload == nil {
 		return errors.New("webhook payload cannot be nil")
-	}
-	if payload.Event == "" {
-		payload.Event = EventDocumentDeadline
 	}
 
 	bodyBytes, err := json.Marshal(payload)

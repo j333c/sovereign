@@ -105,6 +105,66 @@ func (c *EmailClient) SendTestEmail(ctx context.Context, cfg SMTPConfig, to stri
 	return c.sendMail(ctx, cfg, to, subject, plainText, htmlText)
 }
 
+// SendRollbackAlert delivers an email notifying the homeowner of an automated service rollback.
+func (c *EmailClient) SendRollbackAlert(ctx context.Context, cfg SMTPConfig, to string, serviceName, failedVersion, restoredVersion, reason string) error {
+	subject := fmt.Sprintf("Automated Rollback: %s — Sovereign Alert", serviceName)
+	plainText := fmt.Sprintf("Automated Service Rollback Notification\n"+
+		"=======================================\n\n"+
+		"Update couldn't start properly. We've safely restored your previous working version.\n\n"+
+		"Service: %s\n"+
+		"Restored Working Version: %s\n"+
+		"Failed Version: %s\n"+
+		"Reason: %s\n\n"+
+		"Your files, media, and documents remain secure and untouched.\n"+
+		"---------------------------------------\n"+
+		"100%% Local & Private: Your files and personal data never leave your home.\n",
+		serviceName, restoredVersion, failedVersion, reason)
+
+	htmlText := fmt.Sprintf(`<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Automated Service Rollback</title>
+</head>
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #F8F9FA; margin: 0; padding: 24px; color: #0F172A;">
+  <div style="max-width: 580px; margin: 0 auto; background: #FFFFFF; border: 1px solid #E5E7EB; border-radius: 8px; padding: 32px;">
+    <h2 style="margin-top: 0; font-size: 20px; font-weight: 600; color: #0F172A;">Automated Service Rollback</h2>
+    <div style="background: #FFFBEB; border: 1px solid #FDE68A; border-radius: 6px; padding: 16px; margin: 20px 0;">
+      <p style="margin: 0; font-size: 14px; font-weight: 500; color: #92400E;">
+        ◆ Update couldn't start properly. We've safely restored your previous working version.
+      </p>
+    </div>
+    <table style="width: 100%%; font-size: 14px; border-collapse: collapse; margin-top: 16px;">
+      <tr>
+        <td style="padding: 8px 0; color: #64748B; width: 140px;">Service:</td>
+        <td style="padding: 8px 0; color: #0F172A; font-weight: 600;">%s</td>
+      </tr>
+      <tr>
+        <td style="padding: 8px 0; color: #64748B;">Restored Version:</td>
+        <td style="padding: 8px 0; color: #065F46; font-weight: 600;">%s</td>
+      </tr>
+      <tr>
+        <td style="padding: 8px 0; color: #64748B;">Failed Update:</td>
+        <td style="padding: 8px 0; color: #991B1B;">%s</td>
+      </tr>
+      <tr>
+        <td style="padding: 8px 0; color: #64748B;">Reason:</td>
+        <td style="padding: 8px 0; color: #475569;">%s</td>
+      </tr>
+    </table>
+    <p style="font-size: 13px; color: #475569; margin-top: 20px;">
+      Your media libraries, files, and documents are preserved and were not modified.
+    </p>
+    <p style="font-size: 13px; color: #64748B; margin-top: 24px; border-top: 1px solid #E5E7EB; padding-top: 16px;">
+      100%% Local &amp; Private: Your files and personal data never leave your home.
+    </p>
+  </div>
+</body>
+</html>`, html.EscapeString(serviceName), html.EscapeString(restoredVersion), html.EscapeString(failedVersion), html.EscapeString(reason))
+
+	return c.sendMail(ctx, cfg, to, subject, plainText, htmlText)
+}
+
 func (c *EmailClient) sendMail(ctx context.Context, cfg SMTPConfig, to, subject, plainBody, htmlBody string) error {
 	host := strings.TrimSpace(cfg.Host)
 	if host == "" {

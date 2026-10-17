@@ -1887,7 +1887,45 @@ describe("SovereignApiClient", () => {
       }
     );
   });
+
+  it("rollbackService calls POST /api/v1/services/{id}/rollback with optional revision body", async () => {
+    let capturedUrl = "";
+    let capturedMethod = "";
+    let capturedBody: any = null;
+
+    const mockFetch: typeof fetch = async (input, init) => {
+      capturedUrl = String(input);
+      capturedMethod = init?.method || "GET";
+      if (init?.body) {
+        capturedBody = JSON.parse(String(init.body));
+      }
+      return new Response(
+        JSON.stringify({
+          id: "paperless",
+          name: "Paperless-ngx",
+          status: "degraded",
+          health: "degraded",
+          reassurance_message: "Update couldn't start properly. We've safely restored your previous working version.",
+          image: "paperless/paperless:2.3.0",
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } }
+      );
+    };
+
+    const client = new SovereignApiClient({
+      baseUrl: "http://localhost:8080",
+      fetchFn: mockFetch,
+    });
+
+    const result = await client.rollbackService("paperless", 2);
+    assert.equal(capturedUrl, "http://localhost:8080/api/v1/services/paperless/rollback");
+    assert.equal(capturedMethod, "POST");
+    assert.deepEqual(capturedBody, { revision: 2 });
+    assert.equal(result.status, "degraded");
+    assert.equal(result.reassurance_message, "Update couldn't start properly. We've safely restored your previous working version.");
+  });
 });
+
 
 
 

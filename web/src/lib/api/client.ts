@@ -362,6 +362,17 @@ export class SovereignApiClient {
   }
 
   /**
+   * Rollback a service container image to prior revision restoring compose, volumes, and SQLite snapshot.
+   */
+  async rollbackService(id: string, revision?: number): Promise<ServiceStatus> {
+    return this.request<ServiceStatus>(`/api/v1/services/${encodeURIComponent(id)}/rollback`, {
+      method: "POST",
+      headers: revision !== undefined ? { "Content-Type": "application/json" } : undefined,
+      body: revision !== undefined ? JSON.stringify({ revision }) : undefined,
+    });
+  }
+
+  /**
    * List declarative Compose revisions and snapshots.
    */
   async getRevisions(): Promise<ComposeRevisionsResponse> {

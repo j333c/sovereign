@@ -758,6 +758,65 @@ paths:
               schema:
                 $ref: '#/components/schemas/ProblemDetails'
 
+  /api/v1/services/{id}/rollback:
+    post:
+      summary: Manually trigger atomic rollback of service
+      description: Reverts the service container, compose file, volumes, and SQLite snapshot to the prior working revision.
+      operationId: rollbackService
+      tags:
+        - Services
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Unique service identifier (e.g. jellyfin, navidrome, audiobookshelf, paperless).
+          schema:
+            type: string
+            example: paperless
+      requestBody:
+        description: Optional target revision or specific failed revision to rollback from.
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                revision:
+                  type: integer
+                  description: Optional revision number to rollback.
+                  example: 3
+      responses:
+        '200':
+          description: Service successfully rolled back.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServiceStatus'
+        '400':
+          description: Invalid request body or service identifier.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '401':
+          description: Administrative authentication required.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '404':
+          description: Service not found or no prior revision available.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '500':
+          description: Internal supervisor error during rollback.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+
   /api/v1/drop/upload:
     post:
       summary: Upload media or document file to dropzone
@@ -2816,6 +2875,10 @@ components:
         updated_at:
           type: string
           format: date-time
+        reassurance_message:
+          type: string
+          description: Reassurance copy displayed to user after recovery or rollback (e.g. "Update couldn't start properly. We've safely restored your previous working version.").
+          example: "Update couldn't start properly. We've safely restored your previous working version."
 
     ComposeRevision:
       type: object

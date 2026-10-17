@@ -178,6 +178,96 @@ func TestDB_CreateSnapshot(t *testing.T) {
 	}
 }
 
+func TestDB_RestoreSnapshot(t *testing.T) {
+	tempDir := t.TempDir()
+	dbPath := filepath.Join(tempDir, "state", "sovereign.db")
+
+	db, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("Open failed: %v", err)
+	}
+	defer db.Close()
+
+	ctx := context.Background()
+
+	// Initial state before snapshot
+	if err := db.SetSetting(ctx, "cluster_name", "alpha"); err != nil {
+		t.Fatalf("SetSetting failed: %v", err)
+	}
+	if err := db.SetSetting(ctx, "app_version", "1.0.0"); err != nil {
+		t.Fatalf("SetSetting failed: %v", err)
+	}
+
+	snapPath := filepath.Join(tempDir, "backups", "pre-upgrade-1.db")
+	if err := db.CreateSnapshot(ctx, snapPath); err != nil {
+		t.Fatalf("CreateSnapshot failed: %v", err)
+	}
+
+	// Mutate state after snapshot (simulating post-upgrade modifications)
+	if err := db.SetSetting(ctx, "app_version", "2.0.0"); err != nil {
+		t.Fatalf("SetSetting update failed: %v", err)
+	}
+	if err := db.SetSetting(ctx, "newly_added_key", "unwanted_data"); err != nil {
+		t.Fatalf("SetSetting insert failed: %v", err)
+	}
+
+	val, err := db.GetSetting(ctx, "app_version")
+	if err != nil || val != "2.0.0" {
+		t.Fatalf("expected post-upgrade version '2.0.0', got %q", val)
+	}
+
+	// Restore snapshot
+	if err := db.RestoreSnapshot(ctx, snapPath); err != nil {
+		t.Fatalf("RestoreSnapshot failed: %v", err)
+	}
+
+	// Verify restored state matches pre-upgrade snapshot
+	val, err = db.GetSetting(ctx, "app_version")
+	if err != nil || val != "1.0.0" {
+		t.Fatalf("expected restored version '1.0.0', got %q (err=%v)", val, err)
+	}
+
+	val, err = db.GetSetting(ctx, "cluster_name")
+	if err != nil || val != "alpha" {
+		t.Fatalf("expected restored cluster_name 'alpha', got %q (err=%v)", val, err)
+	}
+
+	val, err = db.GetSetting(ctx, "newly_added_key")
+	if err != nil || val != "" {
+		t.Fatalf("expected newly_added_key to be gone after restore, got %q", val)
+	}
+
+	// Verify WAL mode is preserved and functional
+	var journalMode string
+	if err := db.QueryRowContext(ctx, "PRAGMA journal_mode;").Scan(&journalMode); err != nil {
+		t.Fatalf("failed to query journal_mode: %v", err)
+	}
+	if strings.ToLower(journalMode) != "wal" {
+		t.Fatalf("expected journal_mode 'wal' after restore, got %q", journalMode)
+	}
+
+	ok, msg, err := db.CheckIntegrity(ctx)
+	if err != nil || !ok || msg != "ok" {
+		t.Fatalf("CheckIntegrity failed after restore: ok=%v, msg=%s, err=%v", ok, msg, err)
+	}
+
+	// Error handling tests:
+	// Empty path
+	if err := db.RestoreSnapshot(ctx, ""); err == nil {
+		t.Fatalf("expected error for empty snapshot path, got nil")
+	}
+
+	// Non-existent path
+	if err := db.RestoreSnapshot(ctx, filepath.Join(tempDir, "does-not-exist.db")); err == nil {
+		t.Fatalf("expected error for non-existent snapshot path, got nil")
+	}
+
+	// Directory path
+	if err := db.RestoreSnapshot(ctx, tempDir); err == nil {
+		t.Fatalf("expected error for directory path, got nil")
+	}
+}
+
 func TestDB_ComposeRevisions(t *testing.T) {
 	tempDir := t.TempDir()
 	dbPath := filepath.Join(tempDir, "state", "sovereign.db")

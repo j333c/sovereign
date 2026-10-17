@@ -720,13 +720,16 @@ func NewServer(cfg Config) (*Server, error) {
 	}
 	s.obligationScanner = cfg.ObligationScanner
 
-	// 13. Initialize AlertDispatcher and wire into ObligationScanner
-	if cfg.AlertDispatcher == nil && s.deadlineStore != nil && db != nil {
+	// 13. Initialize AlertDispatcher and wire into ObligationScanner & ServiceManager
+	if cfg.AlertDispatcher == nil && db != nil {
 		cfg.AlertDispatcher = notify.NewAlertDispatcher(db, s.deadlineStore, cfg.Logger)
 	}
 	s.alertDispatcher = cfg.AlertDispatcher
 	if s.obligationScanner != nil && s.alertDispatcher != nil {
 		s.obligationScanner.SetAlertDispatcher(s.alertDispatcher)
+	}
+	if s.serviceMgr != nil && s.alertDispatcher != nil {
+		s.serviceMgr.SetAlertNotifier(s.alertDispatcher)
 	}
 	if s.obligationScanner != nil && db != nil {
 		if nCfg, err := notify.LoadConfig(context.Background(), db); err == nil && nCfg != nil && nCfg.DeadlineAlertThreshold > 0 {
@@ -1074,6 +1077,7 @@ func (s *Server) routes() {
 	s.router.HandleFunc("POST /api/v1/services/{id}/deactivate", s.handleDeactivateService)
 	s.router.HandleFunc("POST /api/v1/services/{id}/restart", s.requireSetupOrAdmin(s.handleRestartService))
 	s.router.HandleFunc("POST /api/v1/services/{id}/upgrade", s.requireSetupOrAdmin(s.handleUpgradeService))
+	s.router.HandleFunc("POST /api/v1/services/{id}/rollback", s.requireSetupOrAdmin(s.handleRollbackService))
 	s.router.HandleFunc("POST /api/v1/services/{id}/refresh", s.handleRefreshService)
 
 	// Media Dropzone ingestion endpoints
@@ -2736,6 +2740,60 @@ func (s *Server) handleUpgradeService(w http.ResponseWriter, r *http.Request) {
 	s.syncIngressRoutes(r.Context())
 
 	s.writeJSON(w, http.StatusOK, rev)
+}
+
+func (s *Server) handleRollbackService(w http.ResponseWriter, r *http.Request) {
+	s.mu.RLock()
+	mgr := s.serviceMgr
+	s.mu.RUnlock()
+
+	if mgr == nil {
+		s.writeProblem(w, http.StatusInternalServerError, "Internal Server Error", "Service manager is not initialized", r.URL.Path)
+		return
+	}
+
+	id := extractServiceID(r, "rollback")
+	if id == "" {
+		s.writeProblem(w, http.StatusBadRequest, "Invalid Request", "Service ID missing in request path", r.URL.Path)
+		return
+	}
+
+	failedRevNum := 0
+	if r.Body != nil {
+		var req struct {
+			Revision int `json:"revision"`
+		}
+		err := json.NewDecoder(r.Body).Decode(&req)
+		if err != nil && !errors.Is(err, io.EOF) {
+			s.writeProblem(w, http.StatusBadRequest, "Invalid Request", "Malformed JSON request body", r.URL.Path)
+			return
+		}
+		if req.Revision > 0 {
+			failedRevNum = req.Revision
+		}
+	}
+
+	rollbackCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	svc, err := mgr.RollbackService(rollbackCtx, id, failedRevNum)
+	if err != nil {
+		if errors.Is(err, supervisor.ErrServiceNotFound) {
+			s.writeProblem(w, http.StatusNotFound, "Service Not Found", fmt.Sprintf("Service '%s' is not defined", id), r.URL.Path)
+			return
+		}
+		if errors.Is(err, supervisor.ErrNoPriorRevision) {
+			s.writeProblem(w, http.StatusNotFound, "Not Found", fmt.Sprintf("No prior revision found for service '%s'", id), r.URL.Path)
+			return
+		}
+		s.logger.Error("failed to rollback service", "service", id, "error", err)
+		s.writeProblem(w, http.StatusInternalServerError, "Internal Server Error", fmt.Sprintf("Failed to rollback service '%s': %v", id, err), r.URL.Path)
+		return
+	}
+
+	s.syncIngressRoutes(rollbackCtx)
+
+	s.writeJSON(w, http.StatusOK, svc)
 }
 
 func (s *Server) handleListRevisions(w http.ResponseWriter, r *http.Request) {

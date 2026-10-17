@@ -511,6 +511,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/services/{id}/rollback": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Manually trigger atomic rollback of service
+         * @description Reverts the service container, compose file, volumes, and SQLite snapshot to the prior working revision.
+         */
+        post: operations["rollbackService"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/drop/upload": {
         parameters: {
             query?: never;
@@ -1809,6 +1829,11 @@ export interface components {
             volumes?: string[];
             /** Format: date-time */
             updated_at?: string;
+            /**
+             * @description Reassurance copy displayed to user after recovery or rollback (e.g. "Update couldn't start properly. We've safely restored your previous working version.").
+             * @example Update couldn't start properly. We've safely restored your previous working version.
+             */
+            reassurance_message?: string;
         };
         ComposeRevision: {
             /**
@@ -3830,6 +3855,72 @@ export interface operations {
                 };
             };
             /** @description Internal supervisor error during upgrade. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    rollbackService: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Unique service identifier (e.g. jellyfin, navidrome, audiobookshelf, paperless). */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": {
+                    /** @description Optional revision number to rollback. */
+                    revision?: number;
+                };
+            };
+        };
+        responses: {
+            /** @description Service successfully rolled back. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ServiceStatus"];
+                };
+            };
+            /** @description Invalid request body or service identifier. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Administrative authentication required. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Service not found or no prior revision available. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Internal supervisor error during rollback. */
             500: {
                 headers: {
                     [name: string]: unknown;

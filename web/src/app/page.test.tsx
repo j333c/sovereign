@@ -1315,6 +1315,67 @@ describe("Central Admin Dashboard Integration & i18n", () => {
     assert.ok(htmlDegraded.includes("data-testid=\"reassurance-banner-ai\""));
     assert.ok(htmlDegraded.includes("Safe Stub Mode"));
   });
+
+  it("displays rollback reassurance banner and amber badge across EN, DE, ES, FR, while preserving stopped status on stopped services", () => {
+    const languages = ["en", "de", "es", "fr"] as const;
+    for (const lang of languages) {
+      const t = translations[lang];
+      const htmlRolledBack = renderToStaticMarkup(
+        <ServiceCard
+          id="paperless"
+          name="Document Archive"
+          techSubtitle="Paperless-ngx"
+          icon="📑"
+          status="degraded"
+          metric="Automatic Text Search Active"
+          secondaryDescriptor="Mailbox Connected"
+          actionUrl="/docs"
+          actionLabel="Open Documents UI"
+          currentLanguage={lang}
+          onRequireAdmin={() => {}}
+          isAuthenticated={false}
+          reassuranceMessage={t.rollbackReassurance}
+        />
+      );
+      const expectedText = t.rollbackReassurance.replace(/'/g, "&#x27;");
+      assert.ok(
+        htmlRolledBack.includes(expectedText),
+        `expected ServiceCard to render rollback reassurance message in ${lang}`
+      );
+      assert.ok(
+        htmlRolledBack.includes(t.attentionRequired) && htmlRolledBack.includes("◆"),
+        `expected amber status badge when rolled back in ${lang}`
+      );
+    }
+
+    // Stopped service with reassurance message remains stopped and not amber
+    const htmlStopped = renderToStaticMarkup(
+      <ServiceCard
+        id="jellyfin"
+        name="Video Streaming"
+        techSubtitle="Jellyfin"
+        icon="🎬"
+        status="stopped"
+        metric="0 Movies"
+        secondaryDescriptor="Inactive"
+        actionUrl="/media"
+        actionLabel="Open Streaming UI"
+        currentLanguage="en"
+        onRequireAdmin={() => {}}
+        isAuthenticated={false}
+        reassuranceMessage="Service is safely stopped."
+      />
+    );
+    assert.ok(
+      htmlStopped.includes("▲") && htmlStopped.includes(translations.en.stoppedError),
+      "expected stopped service to maintain stopped red/gray status badge"
+    );
+    assert.ok(
+      !htmlStopped.includes(translations.en.attentionRequired),
+      "stopped service should not be rendered as amber Attention Required badge"
+    );
+  });
 });
+
 
 

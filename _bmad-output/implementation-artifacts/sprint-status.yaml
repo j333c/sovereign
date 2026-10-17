@@ -78,7 +78,7 @@ development_status:
 
   epic-6: in-progress
   6-1-declarative-compose-revisioning-pre-upgrade-snapshot-engine: done
-  6-2-automated-180-second-health-verification-atomic-rollback-exe: backlog
+  6-2-automated-180-second-health-verification-atomic-rollback-exe: done
   6-3-one-click-manual-rollback-rollback-confirmation-modal: backlog
   6-4-modular-central-settings-hub-destructive-protection-dialogs: backlog
   6-5-full-four-language-internationalization-i18n: backlog

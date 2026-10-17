@@ -505,5 +505,11 @@ func (m *ServiceManager) UpgradeService(ctx context.Context, serviceID string, n
 	}
 	m.mu.Unlock()
 
+	// 5. Initialize 180-second health verification session
+	ve := m.VerificationEngine()
+	if ve != nil {
+		ve.StartSession(ctx, id, rev.Revision)
+	}
+
 	return rev, nil
 }

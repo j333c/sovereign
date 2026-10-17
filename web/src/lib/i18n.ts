@@ -50,6 +50,7 @@ export interface DashboardTranslations {
   dmsDesc: string;
   dmsDescDisconnected: string;
   dmsMailboxDisconnectedReassurance: string;
+  rollbackReassurance: string;
   dmsAction: string;
   aiTitle: string;
   aiSubtitle: string;
@@ -223,6 +224,7 @@ export const translations: Record<Language, DashboardTranslations> = {
     dmsDesc: "Mailbox Connected",
     dmsDescDisconnected: "Mailbox Disconnected",
     dmsMailboxDisconnectedReassurance: "Mailbox disconnected: We couldn't connect to your email account. Please check your email password in Settings.",
+    rollbackReassurance: "Update couldn't start properly. We've safely restored your previous working version.",
     dmsAction: "Open Documents UI",
     aiTitle: "Local AI Assistant",
     aiSubtitle: "Open WebUI / llama.cpp",
@@ -394,6 +396,7 @@ export const translations: Record<Language, DashboardTranslations> = {
     dmsDesc: "Postfach verbunden",
     dmsDescDisconnected: "Postfach getrennt",
     dmsMailboxDisconnectedReassurance: "Postfach getrennt: Verbindung zum E-Mail-Konto fehlgeschlagen. Bitte überprüfen Sie Ihr Passwort in den Einstellungen.",
+    rollbackReassurance: "Das Update konnte nicht ordnungsgemäß gestartet werden. Ihre vorherige funktionierende Version wurde sicher wiederhergestellt.",
     dmsAction: "Dokumenten-UI öffnen",
     aiTitle: "Lokaler KI-Assistent",
     aiSubtitle: "Open WebUI / llama.cpp",
@@ -565,6 +568,7 @@ export const translations: Record<Language, DashboardTranslations> = {
     dmsDesc: "Buzón conectado",
     dmsDescDisconnected: "Buzón desconectado",
     dmsMailboxDisconnectedReassurance: "Buzón desconectado: No se pudo conectar a su cuenta de correo. Verifique su contraseña en Configuración.",
+    rollbackReassurance: "La actualización no se pudo iniciar correctamente. Hemos restaurado de forma segura su versión de trabajo anterior.",
     dmsAction: "Abrir interfaz de documentos",
     aiTitle: "Asistente de IA local",
     aiSubtitle: "Open WebUI / llama.cpp",
@@ -736,6 +740,7 @@ export const translations: Record<Language, DashboardTranslations> = {
     dmsDesc: "Boîte mail connectée",
     dmsDescDisconnected: "Boîte mail déconnectée",
     dmsMailboxDisconnectedReassurance: "Boîte mail déconnectée : Impossible de se connecter à votre compte e-mail. Veuillez vérifier votre mot de passe dans les Paramètres.",
+    rollbackReassurance: "La mise à jour n'a pas pu démarrer correctement. Nous avons restauré en toute sécurité votre version précédente fonctionnelle.",
     dmsAction: "Ouvrir l'interface documents",
     aiTitle: "Assistant IA local",
     aiSubtitle: "Open WebUI / llama.cpp",

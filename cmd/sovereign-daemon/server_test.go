@@ -6558,6 +6558,83 @@ func TestServer_ServiceUpgrade_MalformedJSON(t *testing.T) {
 	}
 }
 
+func TestServer_ServiceRollback_Success(t *testing.T) {
+	srv, _ := setupTestServer(t)
+	defer srv.Close()
+
+	// 1. Upgrade jellyfin first
+	reqUp := httptest.NewRequest(http.MethodPost, "/api/v1/services/jellyfin/upgrade", bytes.NewBufferString(`{"image_tag":"jellyfin/jellyfin:12.3.0"}`))
+	reqUp.Header.Set("Content-Type", "application/json")
+	rrUp := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rrUp, reqUp)
+	if rrUp.Code != http.StatusOK {
+		t.Fatalf("expected status 200 for upgrade, got %d: %s", rrUp.Code, rrUp.Body.String())
+	}
+
+	// 2. Perform rollback
+	reqRoll := httptest.NewRequest(http.MethodPost, "/api/v1/services/jellyfin/rollback", bytes.NewBufferString(`{"revision":1}`))
+	reqRoll.Header.Set("Content-Type", "application/json")
+	rrRoll := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rrRoll, reqRoll)
+
+	if rrRoll.Code != http.StatusOK {
+		t.Fatalf("expected status 200 for rollback, got %d: %s", rrRoll.Code, rrRoll.Body.String())
+	}
+
+	var status supervisor.ServiceStatus
+	if err := json.Unmarshal(rrRoll.Body.Bytes(), &status); err != nil {
+		t.Fatalf("failed to decode service status: %v", err)
+	}
+	if status.Status != supervisor.StatusDegraded {
+		t.Errorf("expected status degraded, got %q", status.Status)
+	}
+	if status.ReassuranceMessage != supervisor.ReassuranceRollbackRestored {
+		t.Errorf("expected reassurance message %q, got %q", supervisor.ReassuranceRollbackRestored, status.ReassuranceMessage)
+	}
+}
+
+func TestServer_ServiceRollback_NotFound(t *testing.T) {
+	srv, _ := setupTestServer(t)
+	defer srv.Close()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/services/nonexistent/rollback", nil)
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("expected status 404 for nonexistent service, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestServer_ServiceRollback_MalformedJSON(t *testing.T) {
+	srv, _ := setupTestServer(t)
+	defer srv.Close()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/services/jellyfin/rollback", bytes.NewBufferString(`{malformed`))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected status 400 for malformed json, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestServer_ServiceRollback_NoPriorRevision(t *testing.T) {
+	srv, _ := setupTestServer(t)
+	defer srv.Close()
+
+	// Jellyfin has not been upgraded yet, so no revisions exist
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/services/jellyfin/rollback", nil)
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("expected status 404 when no prior revisions exist, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+
 
 
 

@@ -317,6 +317,78 @@ func (d *AlertDispatcher) TestEmail(ctx context.Context, to, host string, port i
 	return d.emailClient.SendTestEmail(ctx, smtpCfg, to)
 }
 
+// SendRollbackAlert dispatches notifications when an automated or manual rollback occurs.
+func (d *AlertDispatcher) SendRollbackAlert(ctx context.Context, serviceID, serviceName, failedVersion, restoredVersion, reason string) error {
+	d.dispatchMu.Lock()
+	defer d.dispatchMu.Unlock()
+
+	if d.db == nil {
+		return errors.New("database is not initialized")
+	}
+
+	cfg, err := LoadConfig(ctx, d.db)
+	if err != nil {
+		return fmt.Errorf("failed to load alert config: %w", err)
+	}
+
+	// 1. Home Assistant Webhook
+	if cfg.HAWebhookURL != "" {
+		payload := map[string]any{
+			"event":               "service_rollback",
+			"service_id":          serviceID,
+			"service_name":        serviceName,
+			"failed_version":      failedVersion,
+			"restored_version":    restoredVersion,
+			"reason":              reason,
+			"reassurance_message": "Update couldn't start properly. We've safely restored your previous working version.",
+			"timestamp":           d.nowFunc().UTC().Format(time.RFC3339),
+		}
+		_ = d.webhookClient.SendWebhookJSON(ctx, cfg.HAWebhookURL, payload)
+	}
+
+	// 2. MQTT
+	if cfg.MQTTBrokerHost != "" {
+		mqttOpts := MQTTConnectOptions{
+			Host:     cfg.MQTTBrokerHost,
+			Port:     cfg.MQTTBrokerPort,
+			Username: cfg.MQTTUsername,
+			Password: cfg.MQTTPassword,
+		}
+		payloadBytes, _ := json.Marshal(map[string]any{
+			"event":               "service_rollback",
+			"service_id":          serviceID,
+			"service_name":        serviceName,
+			"failed_version":      failedVersion,
+			"restored_version":    restoredVersion,
+			"reason":              reason,
+			"reassurance_message": "Update couldn't start properly. We've safely restored your previous working version.",
+			"timestamp":           d.nowFunc().UTC().Format(time.RFC3339),
+		})
+		topic := cfg.MQTTTopic
+		if topic == "" {
+			topic = "sovereign/alerts/services"
+		}
+		_ = d.mqttClient.PublishQoS1(ctx, mqttOpts, topic, payloadBytes)
+	}
+
+	// 3. Email
+	if cfg.AlertEmail != "" && cfg.SMTPHost != "" {
+		smtpCfg := SMTPConfig{
+			Host:     cfg.SMTPHost,
+			Port:     cfg.SMTPPort,
+			Username: cfg.SMTPUsername,
+			Password: cfg.SMTPPassword,
+			From:     cfg.SMTPFrom,
+		}
+		if err := d.emailClient.SendRollbackAlert(ctx, smtpCfg, cfg.AlertEmail, serviceName, failedVersion, restoredVersion, reason); err != nil {
+			d.logger.Error("failed to send rollback alert email", "error", err, "recipient", cfg.AlertEmail)
+			return err
+		}
+	}
+
+	return nil
+}
+
 // computeDaysRemaining calculates calendar days between due date and now,
 // normalized to midnight UTC.
 func computeDaysRemaining(dueDateStr string, now time.Time) int {

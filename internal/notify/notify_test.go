@@ -683,3 +683,73 @@ func TestAlertDispatcher_EmailFailureRetainsPending(t *testing.T) {
 		t.Errorf("expected status 'pending' retained on email failure, got %q", dlAfter.Status)
 	}
 }
+
+func TestAlertDispatcher_SendRollbackAlert(t *testing.T) {
+	tempDir := t.TempDir()
+	dbPath := filepath.Join(tempDir, "rollback_notify_test.db")
+	db, err := store.Open(dbPath)
+	if err != nil {
+		t.Fatalf("failed to open test db: %v", err)
+	}
+	defer db.Close()
+
+	ctx := context.Background()
+
+	var webhookReceived bool
+	var webhookPayload map[string]any
+	webhookServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		webhookReceived = true
+		_ = json.NewDecoder(r.Body).Decode(&webhookPayload)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer webhookServer.Close()
+
+	mqttHost, mqttPort, cleanupMQTT, mqttReceived := startMockMQTTBroker(t, "", "")
+	defer cleanupMQTT()
+
+	smtpHost, smtpPort, cleanupSMTP, smtpReceived := startMockSMTPServer(t, "", "")
+	defer cleanupSMTP()
+
+	cfg := &AlertConfig{
+		HAWebhookURL:   webhookServer.URL,
+		MQTTBrokerHost: mqttHost,
+		MQTTBrokerPort: mqttPort,
+		AlertEmail:     "admin@family.net",
+		SMTPHost:       smtpHost,
+		SMTPPort:       smtpPort,
+	}
+	if err := SaveConfig(ctx, db, cfg); err != nil {
+		t.Fatalf("SaveConfig failed: %v", err)
+	}
+
+	dispatcher := NewAlertDispatcher(db, nil, nil)
+	err = dispatcher.SendRollbackAlert(ctx, "paperless", "Paperless-ngx", "paperless:2.4.0", "paperless:2.3.0", "Container probe failure")
+	if err != nil {
+		t.Fatalf("SendRollbackAlert failed: %v", err)
+	}
+
+	// Verify Webhook
+	if !webhookReceived {
+		t.Errorf("expected webhook alert to be delivered")
+	} else {
+		if webhookPayload["event"] != "service_rollback" || webhookPayload["service_id"] != "paperless" {
+			t.Errorf("unexpected webhook payload: %+v", webhookPayload)
+		}
+	}
+
+	// Verify SMTP
+	if len(*smtpReceived) != 1 {
+		t.Errorf("expected 1 email received, got %d", len(*smtpReceived))
+	} else {
+		body := (*smtpReceived)[0]
+		if !strings.Contains(body, "Paperless-ngx") || !strings.Contains(body, "restored your previous working version") {
+			t.Errorf("email body missing service or reassurance text: %s", body)
+		}
+	}
+
+	// Verify MQTT
+	if len(*mqttReceived) < 1 {
+		t.Errorf("expected at least 1 MQTT alert received")
+	}
+}
+

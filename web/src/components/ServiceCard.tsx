@@ -150,12 +150,24 @@ export function ServiceCard({
   }
 
   const isStarting = status === "starting" || isRestarting;
+  const isRollbackReassurance = Boolean(
+    reassuranceMessage &&
+      (/restored your previous working version|update couldn't start properly|vorherige funktionierende version|actualización no se pudo iniciar|mise à jour n'a pas pu démarrer/i.test(
+        reassuranceMessage
+      ) ||
+        reassuranceMessage === t.rollbackReassurance)
+  );
+  const isStoppedOrInactive = status === "stopped" || status === "inactive";
   const isGreen =
     (status === "healthy" || status === "operational" || status === "running") &&
-    !isStarting;
+    !isStarting &&
+    !reassuranceMessage &&
+    !isStoppedOrInactive;
   const isAmber =
-    (status === "amber" || status === "degraded") && !isStarting;
-  const isStoppedOrInactive = status === "stopped" || status === "inactive";
+    ((status === "amber" || status === "degraded") ||
+      Boolean(reassuranceMessage?.trim())) &&
+    !isStarting &&
+    !isStoppedOrInactive;
 
   const effectiveStatus: StatusLevel = isStarting
     ? "starting"
@@ -191,6 +203,8 @@ export function ServiceCard({
       ? id === "video"
         ? t.videoPausedMemoryUse
         : t.pausedMemoryUse
+      : isRollbackReassurance
+      ? t.rollbackReassurance
       : reassuranceMessage;
 
   const showReassurance = Boolean(
