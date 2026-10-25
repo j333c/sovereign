@@ -6275,13 +6275,22 @@ func TestServer_AI_Models_DownloadAndCancel(t *testing.T) {
 	modelsDir := filepath.Join(tmpDir, "models")
 	_ = os.MkdirAll(modelsDir, 0755)
 
-	modelData := []byte("GGUF\x03\x00\x00\x00\x01\x00\x00\x00\x00\x00\x00\x00\x01\x00\x00\x00\x00\x00\x00\x00dummy-payload-data")
+	blockCh := make(chan struct{})
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Length", fmt.Sprintf("%d", len(modelData)))
+		w.Header().Set("Content-Length", "1000000")
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write(modelData)
+		if flusher, ok := w.(http.Flusher); ok {
+			flusher.Flush()
+		}
+		select {
+		case <-blockCh:
+		case <-r.Context().Done():
+		}
 	}))
-	defer ts.Close()
+	defer func() {
+		close(blockCh)
+		ts.Close()
+	}()
 	srv.ModelManager().SetDiskFree(func(path string) (int64, error) {
 		return 50 * 1024 * 1024 * 1024, nil
 	})
