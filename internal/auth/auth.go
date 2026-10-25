@@ -397,13 +397,13 @@ func (m *Manager) CompleteSetup(ctx context.Context, req SetupRequest) (*Session
 		}
 	}
 
-	if err := tx.Commit(); err != nil {
-		return nil, fmt.Errorf("failed to commit setup transaction: %w", err)
+	session, err := m.CreateSessionTx(ctx, tx, username, RoleAdmin)
+	if err != nil {
+		return nil, fmt.Errorf("failed to issue admin session inside setup transaction: %w", err)
 	}
 
-	session, err := m.CreateSession(ctx, username, RoleAdmin)
-	if err != nil {
-		return nil, fmt.Errorf("failed to issue admin session after setup: %w", err)
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("failed to commit setup transaction: %w", err)
 	}
 
 	return session, nil
@@ -435,6 +435,31 @@ func (m *Manager) Authenticate(ctx context.Context, username, password string) (
 	}
 
 	return m.CreateSession(ctx, username, Role(roleStr))
+}
+
+// CreateSessionTx generates a new session and persists it in SQLite within the provided transaction.
+func (m *Manager) CreateSessionTx(ctx context.Context, tx *sql.Tx, username string, role Role) (*Session, error) {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return nil, fmt.Errorf("failed to generate random session token: %w", err)
+	}
+	token := hex.EncodeToString(b)
+	expiresAt := time.Now().Add(time.Duration(DefaultSessionMaxAge) * time.Second).Unix()
+
+	_, err := tx.ExecContext(ctx, `
+		INSERT INTO sessions (token, username, role, expires_at)
+		VALUES (?, ?, ?, ?)
+	`, token, username, string(role), expiresAt)
+	if err != nil {
+		return nil, fmt.Errorf("failed to persist session record: %w", err)
+	}
+
+	return &Session{
+		Token:     token,
+		Username:  username,
+		Role:      role,
+		ExpiresAt: expiresAt,
+	}, nil
 }
 
 // CreateSession generates a new cryptographically secure session and persists it in SQLite.

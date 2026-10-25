@@ -138,6 +138,9 @@ type TelemetryUpdate struct {
 	OverallStatus     string  `json:"overall_status"`
 	OpticalStatus     string  `json:"optical_status"`
 	GPUStatus         string  `json:"gpu_status"`
+	DockerAvailable   bool    `json:"docker_available"`
+	DockerStatus      string  `json:"docker_status,omitempty"`
+	DockerMessage     string  `json:"docker_message,omitempty"`
 	Timestamp         string  `json:"timestamp"`
 }
 
@@ -211,6 +214,7 @@ type Config struct {
 	PersonaStore      *ai.PersonaStore
 	RAGEngine         *ai.RAGEngine
 	ModelManager      *ai.ModelManager
+	DockerSocketPath  string
 }
 
 type sseEvent struct {
@@ -221,6 +225,7 @@ type sseEvent struct {
 // Server is the appliance core supervisor HTTP daemon.
 type Server struct {
 	cfg               Config
+	dockerSocketPath  string
 	db                *store.DB
 	bootMgr           *store.BootManager
 	storageEngine     *storage.Engine
@@ -382,10 +387,26 @@ func NewServer(cfg Config) (*Server, error) {
 		s.llamaProvisioner = cfg.LlamaProvisioner
 	}
 
+	sockPath := cfg.DockerSocketPath
+	if sockPath == "" {
+		sockPath = "/var/run/docker.sock"
+	}
+	s.dockerSocketPath = sockPath
+
+	dockerFound := false
+	if fi, err := os.Stat(sockPath); err == nil && fi != nil {
+		dockerFound = true
+	} else {
+		cfg.Logger.Warn("Docker socket unavailable; container operations paused",
+			"socket", sockPath,
+			"status", "degraded",
+			"reassurance", "Container engine unavailable — background tasks paused",
+		)
+	}
+
 	if cfg.ServiceMgr == nil {
 		var engine supervisor.RuntimeEngine
-		sockPath := "/var/run/docker.sock"
-		if _, err := os.Stat(sockPath); err == nil {
+		if dockerFound {
 			engine = supervisor.NewDockerEngine(sockPath, cfg.Logger)
 		} else {
 			engine = supervisor.NewMockRuntimeEngine()
@@ -1055,6 +1076,7 @@ func (s *Server) routes() {
 	s.router.HandleFunc("POST /api/v1/system/factory-reset", s.requireSetupOrAdmin(s.handleFactoryReset))
 	s.router.HandleFunc("GET /api/v1/system/events", s.handleEvents)
 	s.router.HandleFunc("GET /api/events", s.handleEvents)
+	s.router.HandleFunc("GET /api/v1/events", s.handleEvents)
 	s.router.HandleFunc("GET /api/v1/storage/disks", s.handleStorageDisks)
 	s.router.HandleFunc("POST /api/v1/storage/initialize", s.requireSetupOrAdmin(s.handleStorageInitialize))
 	s.router.HandleFunc("POST /api/v1/storage/nas/test", s.requireSetupOrAdmin(s.handleStorageNASTest))
@@ -2054,6 +2076,21 @@ func (s *Server) getTelemetryUpdate(ctx context.Context) TelemetryUpdate {
 		gpuStatus = s.transcodeEngine.GetGPUStatus()
 	}
 
+	dockerPath := s.dockerSocketPath
+	if dockerPath == "" {
+		dockerPath = "/var/run/docker.sock"
+	}
+
+	dockerAvailable := false
+	dockerStatus := "degraded"
+	dockerMessage := "Container engine unavailable — background tasks paused"
+
+	if fi, err := os.Stat(dockerPath); err == nil && fi != nil {
+		dockerAvailable = true
+		dockerStatus = "connected"
+		dockerMessage = "Container engine operational"
+	}
+
 	return TelemetryUpdate{
 		CPUPercent:        cpuPercent,
 		MemoryUsedBytes:   memUsed,
@@ -2066,6 +2103,9 @@ func (s *Server) getTelemetryUpdate(ctx context.Context) TelemetryUpdate {
 		OverallStatus:     overallStatus,
 		OpticalStatus:     opticalStatus,
 		GPUStatus:         gpuStatus,
+		DockerAvailable:   dockerAvailable,
+		DockerStatus:      dockerStatus,
+		DockerMessage:     dockerMessage,
 		Timestamp:         time.Now().UTC().Format(time.RFC3339),
 	}
 }
@@ -2101,6 +2141,17 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		}
 		flusher.Flush()
 	}
+	if !initEvt.DockerAvailable {
+		if unavailData, err := json.Marshal(map[string]any{
+			"docker_available": false,
+			"status":           "degraded",
+			"message":          initEvt.DockerMessage,
+			"timestamp":        initEvt.Timestamp,
+		}); err == nil {
+			_, _ = fmt.Fprintf(w, "event: system.docker_unavailable\ndata: %s\n\n", unavailData)
+			flusher.Flush()
+		}
+	}
 
 	interval := s.telemetryInterval
 	if interval <= 0 {
@@ -2132,6 +2183,16 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 			}
 			if _, err := fmt.Fprintf(w, "event: telemetry.update\ndata: %s\n\n", data); err != nil {
 				return
+			}
+			if !evt.DockerAvailable {
+				if unavailData, err := json.Marshal(map[string]any{
+					"docker_available": false,
+					"status":           "degraded",
+					"message":          evt.DockerMessage,
+					"timestamp":        evt.Timestamp,
+				}); err == nil {
+					_, _ = fmt.Fprintf(w, "event: system.docker_unavailable\ndata: %s\n\n", unavailData)
+				}
 			}
 			flusher.Flush()
 		}

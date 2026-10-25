@@ -343,3 +343,124 @@ func TestRollbackService_NoPriorRevision(t *testing.T) {
 	}
 }
 
+func TestRollback_CircuitBreaker(t *testing.T) {
+	tempDir := t.TempDir()
+	db, err := store.Open(filepath.Join(tempDir, "state", "sovereign.db"))
+	if err != nil {
+		t.Fatalf("store.Open failed: %v", err)
+	}
+	defer db.Close()
+
+	engine := NewMockRuntimeEngine()
+	ctx := context.Background()
+
+	var eventsMu sync.Mutex
+	type eventRecord struct {
+		Event string
+		Data  any
+	}
+	var events []eventRecord
+	broadcaster := func(event string, data any) {
+		eventsMu.Lock()
+		defer eventsMu.Unlock()
+		events = append(events, eventRecord{Event: event, Data: data})
+	}
+
+	mgr := NewServiceManager(ServiceManagerConfig{
+		DataDir:          tempDir,
+		Engine:           engine,
+		RevisionStore:    db,
+		EventBroadcaster: broadcaster,
+	})
+	defer mgr.Close()
+
+	// 1. Initial activation (Rev 1)
+	_, err = mgr.ActivateService(ctx, "jellyfin")
+	if err != nil {
+		t.Fatalf("ActivateService failed: %v", err)
+	}
+
+	// 2. Upgrade service (Rev 2)
+	rev2, err := mgr.UpgradeService(ctx, "jellyfin", "jellyfin/jellyfin:12.3.0")
+	if err != nil {
+		t.Fatalf("UpgradeService failed: %v", err)
+	}
+
+	// First automated rollback attempt (attempt 1 <= 2)
+	st1, err := mgr.RollbackService(ctx, "jellyfin", rev2.Revision)
+	if err != nil {
+		t.Fatalf("RollbackService attempt 1 failed: %v", err)
+	}
+	if st1.Status != StatusDegraded {
+		t.Errorf("expected status 'degraded' after attempt 1, got %q", st1.Status)
+	}
+	if attempts := mgr.GetRollbackAttempts("jellyfin", rev2.Revision); attempts != 1 {
+		t.Errorf("expected 1 rollback attempt recorded, got %d", attempts)
+	}
+
+	// Second automated rollback attempt (attempt 2 <= 2)
+	st2, err := mgr.RollbackService(ctx, "jellyfin", rev2.Revision)
+	if err != nil {
+		t.Fatalf("RollbackService attempt 2 failed: %v", err)
+	}
+	if st2.Status != StatusDegraded {
+		t.Errorf("expected status 'degraded' after attempt 2, got %q", st2.Status)
+	}
+	if attempts := mgr.GetRollbackAttempts("jellyfin", rev2.Revision); attempts != 2 {
+		t.Errorf("expected 2 rollback attempts recorded, got %d", attempts)
+	}
+
+	// Third automated rollback attempt: circuit breaker trips (attempts >= 2)
+	st3, err := mgr.RollbackService(ctx, "jellyfin", rev2.Revision)
+	if err != nil {
+		t.Fatalf("RollbackService attempt 3 returned unexpected error: %v", err)
+	}
+
+	if st3.Status != StatusSafeRecovery {
+		t.Errorf("expected status 'safe_recovery' when circuit breaker trips, got %q", st3.Status)
+	}
+	if st3.Health != HealthDegraded {
+		t.Errorf("expected health 'degraded', got %q", st3.Health)
+	}
+	if st3.ReassuranceMessage != ReassuranceSafeRecovery {
+		t.Errorf("expected reassurance message %q, got %q", ReassuranceSafeRecovery, st3.ReassuranceMessage)
+	}
+
+	// Verify container is kept stopped
+	info, err := engine.InspectContainer(ctx, "jellyfin")
+	if err == nil && info != nil && info.Running {
+		t.Errorf("expected container to be stopped in safe recovery mode, got running")
+	}
+
+	// Verify emergency.rollback_loop SSE event was broadcast
+	eventsMu.Lock()
+	foundEmergencyEvent := false
+	for _, e := range events {
+		if e.Event == "emergency.rollback_loop" {
+			foundEmergencyEvent = true
+			if payload, ok := e.Data.(map[string]any); ok {
+				if payload["service_id"] != "jellyfin" {
+					t.Errorf("expected emergency event service_id 'jellyfin', got %v", payload["service_id"])
+				}
+				if payload["status"] != StatusSafeRecovery {
+					t.Errorf("expected emergency event status 'safe_recovery', got %v", payload["status"])
+				}
+			}
+		}
+	}
+	eventsMu.Unlock()
+
+	if !foundEmergencyEvent {
+		t.Errorf("expected emergency.rollback_loop SSE event to be broadcast")
+	}
+
+	// 4. Test manual rollback resets attempt counter
+	_, err = mgr.ManualRollbackService(ctx, "jellyfin", rev2.Revision)
+	if err != nil {
+		t.Fatalf("ManualRollbackService failed: %v", err)
+	}
+	if attempts := mgr.GetRollbackAttempts("jellyfin", rev2.Revision); attempts != 0 {
+		t.Errorf("expected manual rollback to reset attempts counter to 0, got %d", attempts)
+	}
+}
+

@@ -443,6 +443,9 @@ func (m *ServiceManager) UpgradeService(ctx context.Context, serviceID string, n
 		return nil, ErrServiceNotFound
 	}
 
+	// Reset rollback attempt counter on new upgrade
+	m.ResetRollbackAttempts(id)
+
 	// 1. Create Pre-Upgrade Revision (snapshot DB, backup volumes, write rev-:rev.yaml, record revision)
 	rev, err := m.CreatePreUpgradeRevision(ctx, serviceID, newImageTag)
 	if err != nil {

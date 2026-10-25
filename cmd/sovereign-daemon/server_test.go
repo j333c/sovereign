@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"mime/multipart"
 	"net"
 	"net/http"
@@ -6820,6 +6821,99 @@ func TestServer_ProtectedEndpoints_RequireAdminAfterSetup(t *testing.T) {
 		})
 	}
 }
+
+func TestDockerSocket_MissingWarning(t *testing.T) {
+	tempDir := t.TempDir()
+	dataDir := filepath.Join(tempDir, "data")
+	stateDir := filepath.Join(dataDir, "state")
+	_ = os.MkdirAll(stateDir, 0755)
+	_ = os.WriteFile(filepath.Join(stateDir, "boot_state.json"), []byte(`{"clean_shutdown": true}`), 0644)
+
+	var logBuf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logBuf, nil))
+
+	missingSockPath := filepath.Join(tempDir, "nonexistent-docker.sock")
+	mockOpticalDriver := optical.NewMockOpticalDriver()
+
+	srv, err := NewServer(Config{
+		DataDir:          dataDir,
+		Logger:           logger,
+		DockerSocketPath: missingSockPath,
+		OpticalDriver:    mockOpticalDriver,
+	})
+	if err != nil {
+		t.Fatalf("NewServer failed: %v", err)
+	}
+	defer srv.Close()
+
+	// 1. Verify warning log output surfaces reassuring consumer copy
+	logOutput := logBuf.String()
+	if !strings.Contains(logOutput, "Docker socket unavailable") {
+		t.Errorf("expected warning log for missing Docker socket, got: %s", logOutput)
+	}
+	if !strings.Contains(logOutput, "Container engine unavailable — background tasks paused") {
+		t.Errorf("expected reassuring microcopy in daemon logs, got: %s", logOutput)
+	}
+
+	// 2. Verify getTelemetryUpdate marks docker_available: false, docker_status: unavailable, overall_status: degraded
+	ctx := context.Background()
+	telemetry := srv.getTelemetryUpdate(ctx)
+	if telemetry.DockerAvailable {
+		t.Errorf("expected docker_available = false when socket missing, got true")
+	}
+	if telemetry.DockerStatus != "degraded" {
+		t.Errorf("expected docker_status = 'degraded', got %q", telemetry.DockerStatus)
+	}
+	if telemetry.DockerMessage != "Container engine unavailable — background tasks paused" {
+		t.Errorf("expected reassuring docker message, got %q", telemetry.DockerMessage)
+	}
+
+	// 3. Verify SSE stream includes telemetry.update with docker fields and system.docker_unavailable event
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/events", nil)
+	w := httptest.NewRecorder()
+
+	sseCtx, sseCancel := context.WithCancel(context.Background())
+	defer sseCancel()
+	req = req.WithContext(sseCtx)
+
+	doneCh := make(chan struct{})
+	go func() {
+		srv.Handler().ServeHTTP(w, req)
+		close(doneCh)
+	}()
+
+	// Wait briefly for initial events to flush, then cancel request
+	time.Sleep(50 * time.Millisecond)
+	sseCancel()
+	<-doneCh
+
+	body := w.Body.String()
+	if !strings.Contains(body, "event: telemetry.update") {
+		t.Fatalf("expected SSE stream to contain telemetry.update event, got: %s", body)
+	}
+	if !strings.Contains(body, `"docker_available":false`) {
+		t.Errorf("expected SSE telemetry.update data to contain docker_available: false, got: %s", body)
+	}
+	if !strings.Contains(body, "event: system.docker_unavailable") {
+		t.Errorf("expected SSE stream to emit system.docker_unavailable event, got: %s", body)
+	}
+
+	// 4. Verify non-container features (health, boot status) continue without error or panics
+	healthReq := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
+	healthRec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(healthRec, healthReq)
+	if healthRec.Code != http.StatusOK {
+		t.Errorf("expected /api/v1/health to return 200 OK without docker socket, got %d", healthRec.Code)
+	}
+
+	bootReq := httptest.NewRequest(http.MethodGet, "/api/v1/system/boot-status", nil)
+	bootRec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(bootRec, bootReq)
+	if bootRec.Code != http.StatusOK {
+		t.Errorf("expected /api/v1/system/boot-status to return 200 OK without docker socket, got %d", bootRec.Code)
+	}
+}
+
 
 
 

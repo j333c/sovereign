@@ -420,3 +420,115 @@ func TestPruneExpiredSessions(t *testing.T) {
 	}
 }
 
+func TestCompleteSetup_Atomicity(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("Injected session creation failure rolls back users and settings", func(t *testing.T) {
+		db := newTestDB(t)
+		mgr := fastTestManager(t, db)
+
+		// Inject failure right when sessions table is inserted into
+		_, err := db.Exec(`
+			CREATE TRIGGER fail_sessions_insert BEFORE INSERT ON sessions
+			BEGIN
+				SELECT RAISE(ABORT, 'simulated session creation failure');
+			END;
+		`)
+		if err != nil {
+			t.Fatalf("failed to create failure trigger: %v", err)
+		}
+
+		// Attempt setup wizard completion
+		sess, err := mgr.CompleteSetup(ctx, auth.SetupRequest{
+			Username: "admin",
+			Password: "ValidPassword123!",
+			Email:    "admin@sovereign.local",
+			Language: "en",
+			Features: []string{"video", "audio"},
+			Hostname: "sovereign.local",
+		})
+		if err == nil {
+			t.Fatalf("expected CompleteSetup to fail due to injected trigger, got session: %+v", sess)
+		}
+
+		// Verify zero rows in users table
+		var userCount int
+		if err := db.QueryRow("SELECT COUNT(*) FROM users").Scan(&userCount); err != nil {
+			t.Fatalf("failed to count users: %v", err)
+		}
+		if userCount != 0 {
+			t.Fatalf("atomicity violation: expected 0 users after rollback, found %d", userCount)
+		}
+
+		// Verify zero rows in settings table
+		var settingsCount int
+		if err := db.QueryRow("SELECT COUNT(*) FROM settings").Scan(&settingsCount); err != nil {
+			t.Fatalf("failed to count settings: %v", err)
+		}
+		if settingsCount != 0 {
+			t.Fatalf("atomicity violation: expected 0 settings after rollback, found %d", settingsCount)
+		}
+
+		// Verify zero rows in sessions table
+		var sessionCount int
+		if err := db.QueryRow("SELECT COUNT(*) FROM sessions").Scan(&sessionCount); err != nil {
+			t.Fatalf("failed to count sessions: %v", err)
+		}
+		if sessionCount != 0 {
+			t.Fatalf("atomicity violation: expected 0 sessions after rollback, found %d", sessionCount)
+		}
+
+		// Verify IsConfigured is still false
+		configured, err := mgr.IsConfigured(ctx)
+		if err != nil {
+			t.Fatalf("IsConfigured check failed: %v", err)
+		}
+		if configured {
+			t.Fatalf("expected IsConfigured to be false after rollback")
+		}
+	})
+
+	t.Run("Injected settings failure rolls back user creation", func(t *testing.T) {
+		db := newTestDB(t)
+		mgr := fastTestManager(t, db)
+
+		// Inject failure when settings table is inserted into
+		_, err := db.Exec(`
+			CREATE TRIGGER fail_settings_insert BEFORE INSERT ON settings
+			BEGIN
+				SELECT RAISE(ABORT, 'simulated settings persistence failure');
+			END;
+		`)
+		if err != nil {
+			t.Fatalf("failed to create failure trigger: %v", err)
+		}
+
+		sess, err := mgr.CompleteSetup(ctx, auth.SetupRequest{
+			Username: "admin",
+			Password: "ValidPassword123!",
+			Email:    "admin@sovereign.local",
+		})
+		if err == nil {
+			t.Fatalf("expected CompleteSetup to fail due to injected trigger, got session: %+v", sess)
+		}
+
+		var userCount int
+		_ = db.QueryRow("SELECT COUNT(*) FROM users").Scan(&userCount)
+		if userCount != 0 {
+			t.Fatalf("expected 0 users after rollback, found %d", userCount)
+		}
+
+		var settingsCount int
+		_ = db.QueryRow("SELECT COUNT(*) FROM settings").Scan(&settingsCount)
+		if settingsCount != 0 {
+			t.Fatalf("expected 0 settings after rollback, found %d", settingsCount)
+		}
+
+		var sessionCount int
+		_ = db.QueryRow("SELECT COUNT(*) FROM sessions").Scan(&sessionCount)
+		if sessionCount != 0 {
+			t.Fatalf("expected 0 sessions after rollback, found %d", sessionCount)
+		}
+	})
+}
+

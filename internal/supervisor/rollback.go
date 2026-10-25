@@ -313,6 +313,72 @@ func (m *ServiceManager) rollbackServiceInternal(ctx context.Context, serviceID 
 		return nil, ErrNoPriorRevision
 	}
 
+	revNumForCounter := failedRevNum
+	if revNumForCounter <= 0 && failedRev != nil {
+		revNumForCounter = failedRev.Revision
+	}
+
+	// Automated rollback circuit breaker: cap rollback retry attempts (max 2 attempts) to prevent infinite loops
+	if !isManual {
+		key := fmt.Sprintf("%s:%d", id, revNumForCounter)
+		m.mu.Lock()
+		attempts := m.rollbackAttempts[key]
+		if attempts >= 2 {
+			m.mu.Unlock()
+
+			// Halt rollback loop, keep container stopped
+			if m.engine != nil {
+				_ = m.engine.StopContainer(ctx, id)
+			}
+
+			m.mu.Lock()
+			if st, exists := m.statuses[id]; exists {
+				st.Status = StatusSafeRecovery
+				st.Health = HealthDegraded
+				st.ReassuranceMessage = ReassuranceSafeRecovery
+				st.UpdatedAt = m.timeNow().UTC().Format(time.RFC3339)
+			}
+			m.mu.Unlock()
+
+			m.logger.Error("emergency alert: rollback circuit breaker tripped, maximum attempts exceeded",
+				"service", id,
+				"revision", revNumForCounter,
+				"attempts", attempts,
+			)
+
+			if m.broadcaster != nil {
+				m.broadcaster("emergency.rollback_loop", map[string]any{
+					"service_id": id,
+					"revision":   revNumForCounter,
+					"attempts":   attempts,
+					"status":     StatusSafeRecovery,
+					"message":    ReassuranceSafeRecovery,
+					"timestamp":  m.timeNow().UTC().Format(time.RFC3339),
+				})
+				m.broadcaster("service.status_changed", map[string]any{
+					"service_id":          id,
+					"status":              StatusSafeRecovery,
+					"health":              HealthDegraded,
+					"reassurance_message": ReassuranceSafeRecovery,
+					"timestamp":           m.timeNow().UTC().Format(time.RFC3339),
+				})
+				m.broadcaster("service.health_changed", ServiceHealthChanged{
+					ServiceID: id,
+					Status:    StatusSafeRecovery,
+					Health:    HealthDegraded,
+					Detail:    ReassuranceSafeRecovery,
+					Timestamp: m.timeNow().UTC().Format(time.RFC3339),
+				})
+			}
+
+			return m.GetService(ctx, id)
+		}
+		m.rollbackAttempts[key] = attempts + 1
+		m.mu.Unlock()
+	} else {
+		m.ResetRollbackAttempts(id)
+	}
+
 	// 1. Terminate the failing upgraded container (engine.StopContainer)
 	if m.engine != nil {
 		_ = m.engine.StopContainer(ctx, id)

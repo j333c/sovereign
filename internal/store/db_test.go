@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -265,6 +266,77 @@ func TestDB_RestoreSnapshot(t *testing.T) {
 	// Directory path
 	if err := db.RestoreSnapshot(ctx, tempDir); err == nil {
 		t.Fatalf("expected error for directory path, got nil")
+	}
+}
+
+func TestRestoreSnapshot_ConnectionCyclingAndFileReplacement(t *testing.T) {
+	tempDir := t.TempDir()
+	dbPath := filepath.Join(tempDir, "state", "sovereign.db")
+
+	db, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("Open failed: %v", err)
+	}
+	defer db.Close()
+
+	ctx := context.Background()
+
+	// Setup baseline state
+	if err := db.SetSetting(ctx, "baseline_key", "baseline_val"); err != nil {
+		t.Fatalf("SetSetting failed: %v", err)
+	}
+
+	snapPath := filepath.Join(tempDir, "backups", "test-pre-upgrade.db")
+	if err := db.CreateSnapshot(ctx, snapPath); err != nil {
+		t.Fatalf("CreateSnapshot failed: %v", err)
+	}
+
+	// Mutate active DB post-snapshot
+	if err := db.SetSetting(ctx, "post_upgrade_key", "unwanted"); err != nil {
+		t.Fatalf("SetSetting failed: %v", err)
+	}
+
+	// Capture the active database connection pool handle before restore
+	oldDBPool := db.DB
+
+	// Perform snapshot restoration
+	if err := db.RestoreSnapshot(ctx, snapPath); err != nil {
+		t.Fatalf("RestoreSnapshot failed: %v", err)
+	}
+
+	// 1. Verify that the underlying connection pool was replaced
+	if db.DB == oldDBPool {
+		t.Fatalf("expected database connection pool handle to be replaced upon restore")
+	}
+
+	// 2. Verify that the previous connection pool was cleanly closed
+	if err := oldDBPool.Ping(); err == nil {
+		t.Fatalf("expected old database connection pool to be closed, but ping succeeded")
+	}
+
+	// 3. Verify that the new database connection pool is active and operational
+	if err := db.Ping(); err != nil {
+		t.Fatalf("expected new database connection pool to be responsive, ping failed: %v", err)
+	}
+
+	// 4. Verify disk file content reflects the snapshot state
+	val, err := db.GetSetting(ctx, "baseline_key")
+	if err != nil || val != "baseline_val" {
+		t.Fatalf("expected baseline_val, got %q (err=%v)", val, err)
+	}
+	val, err = db.GetSetting(ctx, "post_upgrade_key")
+	if err != nil || val != "" {
+		t.Fatalf("expected post_upgrade_key to be wiped, got %q", val)
+	}
+
+	// 5. Verify corrupted snapshot is rejected with an error
+	corruptSnapPath := filepath.Join(tempDir, "backups", "corrupted.db")
+	if err := os.WriteFile(corruptSnapPath, []byte("NOT_A_VALID_SQLITE_DATABASE_HEADER"), 0644); err != nil {
+		t.Fatalf("failed to write corrupted snapshot file: %v", err)
+	}
+
+	if err := db.RestoreSnapshot(ctx, corruptSnapPath); err == nil {
+		t.Fatalf("expected RestoreSnapshot to fail on corrupted snapshot file, got nil")
 	}
 }
 

@@ -1818,6 +1818,22 @@ export interface components {
             /** @example Daytime (AI Priority) */
             gpu_status: string;
             /**
+             * @description Whether the container engine runtime socket (/var/run/docker.sock) is available and responsive.
+             * @example true
+             */
+            docker_available?: boolean;
+            /**
+             * @description Operational status of the Docker socket connection.
+             * @example connected
+             * @enum {string}
+             */
+            docker_status?: "connected" | "degraded" | "unavailable";
+            /**
+             * @description Calm, reassuring status or warning message regarding container engine availability.
+             * @example Container engine operational
+             */
+            docker_message?: string;
+            /**
              * Format: date-time
              * @example 2026-10-15T15:30:00Z
              */
@@ -1843,7 +1859,7 @@ export interface components {
              * @example inactive
              * @enum {string}
              */
-            status: "inactive" | "starting" | "running" | "degraded" | "stopped" | "error";
+            status: "inactive" | "starting" | "running" | "degraded" | "stopped" | "error" | "safe_recovery";
             /**
              * @example unknown
              * @enum {string}

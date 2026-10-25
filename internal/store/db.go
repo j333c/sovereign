@@ -6,13 +6,14 @@ import (
 	_ "embed"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
-	"modernc.org/sqlite"
+	_ "modernc.org/sqlite"
 )
 
 //go:embed schema.sql
@@ -249,7 +250,8 @@ func (d *DB) CreateSnapshot(ctx context.Context, destPath string) error {
 }
 
 // RestoreSnapshot safely replaces the active SQLite database with the pre-upgrade snapshot
-// at snapshotPath, resetting WAL state and restoring previous schema/state without corrupting database connections.
+// at snapshotPath, executing PRAGMA wal_checkpoint(TRUNCATE), cleanly closing the active database
+// connection pool, replacing the database file on disk, reopening the database, and running an integrity check.
 func (d *DB) RestoreSnapshot(ctx context.Context, snapshotPath string) error {
 	if snapshotPath == "" {
 		return errors.New("snapshot path cannot be empty")
@@ -266,82 +268,76 @@ func (d *DB) RestoreSnapshot(ctx context.Context, snapshotPath string) error {
 		return fmt.Errorf("snapshot path is a directory, expected file: %s", snapshotPath)
 	}
 
-	// 1. Flush active WAL before restoring
+	// 1. Flush active WAL to truncate log before closing connection
 	_ = d.FlushWAL(ctx)
 
-	// 2. Obtain dedicated raw connection to perform online SQLite restore
-	sqlConn, err := d.DB.Conn(ctx)
+	// 2. Cleanly close active database connection pool before touching disk files
+	if d.DB != nil {
+		if err := d.DB.Close(); err != nil {
+			return fmt.Errorf("failed to close active database connection pool: %w", err)
+		}
+	}
+
+	// 3. Remove existing WAL and SHM files to prevent desynchronization with restored file
+	_ = os.Remove(d.path + "-wal")
+	_ = os.Remove(d.path + "-shm")
+
+	// 4. Replace database file on disk with snapshot file
+	srcFile, err := os.Open(snapshotPath)
 	if err != nil {
-		return fmt.Errorf("failed to acquire connection for restore: %w", err)
+		return fmt.Errorf("failed to open snapshot file %s: %w", snapshotPath, err)
 	}
-	defer func() {
-		if sqlConn != nil {
-			_ = sqlConn.Close()
-		}
-	}()
+	defer srcFile.Close()
 
-	type restorer interface {
-		NewRestore(srcUri string) (*sqlite.Backup, error)
-	}
-
-	err = sqlConn.Raw(func(driverConn any) error {
-		r, ok := driverConn.(restorer)
-		if !ok {
-			return errors.New("sqlite connection does not support NewRestore")
-		}
-
-		bck, err := r.NewRestore(snapshotPath)
-		if err != nil {
-			return fmt.Errorf("failed to initialize sqlite restore: %w", err)
-		}
-
-		var stepErr error
-		for {
-			if ctxErr := ctx.Err(); ctxErr != nil {
-				stepErr = ctxErr
-				break
-			}
-			more, err := bck.Step(100)
-			if err != nil {
-				stepErr = fmt.Errorf("sqlite restore step failed: %w", err)
-				break
-			}
-			if !more {
-				break
-			}
-		}
-
-		if finishErr := bck.Finish(); finishErr != nil && stepErr == nil {
-			stepErr = fmt.Errorf("sqlite restore finish failed: %w", finishErr)
-		}
-		return stepErr
-	})
-
+	destFile, err := os.OpenFile(d.path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
 	if err != nil {
-		return fmt.Errorf("restore snapshot failed: %w", err)
+		return fmt.Errorf("failed to open destination database file %s: %w", d.path, err)
+	}
+	defer destFile.Close()
+
+	if _, err := io.Copy(destFile, srcFile); err != nil {
+		return fmt.Errorf("failed to copy snapshot content to %s: %w", d.path, err)
+	}
+	if err := destFile.Sync(); err != nil {
+		return fmt.Errorf("failed to sync restored database file: %w", err)
+	}
+	_ = destFile.Close()
+	_ = srcFile.Close()
+
+	// 5. Reopen SQLite database with WAL mode and synchronous=NORMAL
+	separator := "?"
+	if strings.Contains(d.path, "?") {
+		separator = "&"
+	}
+	dsn := fmt.Sprintf("%s%s_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=busy_timeout(5000)", d.path, separator)
+
+	newDB, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		return fmt.Errorf("failed to reopen sqlite database: %w", err)
 	}
 
-	// Explicitly close the dedicated connection before running pragmas so pool is unblocked
-	if closeErr := sqlConn.Close(); closeErr != nil {
-		sqlConn = nil
-		return fmt.Errorf("failed to close restore connection: %w", closeErr)
-	}
-	sqlConn = nil
+	newDB.SetMaxOpenConns(1)
+	newDB.SetMaxIdleConns(1)
+	newDB.SetConnMaxLifetime(0)
 
-	// 3. Reset and enforce WAL and NORMAL synchronous pragmas
 	var journalMode string
-	if err := d.QueryRowContext(ctx, "PRAGMA journal_mode = WAL;").Scan(&journalMode); err != nil {
-		return fmt.Errorf("failed to enforce journal_mode=WAL after restore: %w", err)
+	if err := newDB.QueryRowContext(ctx, "PRAGMA journal_mode = WAL;").Scan(&journalMode); err != nil {
+		newDB.Close()
+		return fmt.Errorf("failed to enforce journal_mode=WAL on reopened database: %w", err)
 	}
 	if strings.ToLower(strings.TrimSpace(journalMode)) != "wal" {
-		return fmt.Errorf("failed to enforce journal_mode=WAL after restore: got %q", journalMode)
+		newDB.Close()
+		return fmt.Errorf("expected journal_mode WAL on reopened database, got: %s", journalMode)
 	}
-	if _, err := d.ExecContext(ctx, "PRAGMA synchronous = NORMAL;"); err != nil {
-		return fmt.Errorf("failed to apply synchronous=NORMAL after restore: %w", err)
-	}
-	_ = d.FlushWAL(ctx)
 
-	// 4. Verify integrity of restored database
+	if _, err := newDB.ExecContext(ctx, "PRAGMA synchronous = NORMAL;"); err != nil {
+		newDB.Close()
+		return fmt.Errorf("failed to apply synchronous=NORMAL on reopened database: %w", err)
+	}
+
+	d.DB = newDB
+
+	// 6. Verify integrity of restored database
 	ok, msg, err := d.CheckIntegrity(ctx)
 	if err != nil {
 		return fmt.Errorf("integrity check failed after restore: %w", err)

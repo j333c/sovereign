@@ -2894,6 +2894,19 @@ components:
         gpu_status:
           type: string
           example: Daytime (AI Priority)
+        docker_available:
+          type: boolean
+          description: Whether the container engine runtime socket (/var/run/docker.sock) is available and responsive.
+          example: true
+        docker_status:
+          type: string
+          description: Operational status of the Docker socket connection.
+          enum: [connected, degraded, unavailable]
+          example: connected
+        docker_message:
+          type: string
+          description: Calm, reassuring status or warning message regarding container engine availability.
+          example: Container engine operational
         timestamp:
           type: string
           format: date-time
@@ -2924,7 +2937,7 @@ components:
           example: Document Management
         status:
           type: string
-          enum: [inactive, starting, running, degraded, stopped, error]
+          enum: [inactive, starting, running, degraded, stopped, error, safe_recovery]
           example: inactive
         health:
           type: string

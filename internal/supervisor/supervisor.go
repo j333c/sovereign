@@ -47,12 +47,13 @@ const (
 
 // Service lifecycle states
 const (
-	StatusInactive = "inactive"
-	StatusStarting = "starting"
-	StatusRunning  = "running"
-	StatusDegraded = "degraded"
-	StatusStopped  = "stopped"
-	StatusError    = "error"
+	StatusInactive     = "inactive"
+	StatusStarting     = "starting"
+	StatusRunning      = "running"
+	StatusDegraded     = "degraded"
+	StatusStopped      = "stopped"
+	StatusError        = "error"
+	StatusSafeRecovery = "safe_recovery"
 )
 
 // Service health states
@@ -66,15 +67,17 @@ const (
 // Consumer reassurance messages
 const (
 	ReassuranceRollbackRestored = "Update couldn't start properly. We've safely restored your previous working version."
+	ReassuranceSafeRecovery     = "Service update encountered recurring issues. Container safely paused in recovery mode."
 )
 
 var (
-	ErrServiceNotFound  = errors.New("service not found")
-	ErrPullFailed       = errors.New("image pull failed")
-	ErrInactiveService  = errors.New("cannot restart inactive service; activate it first")
-	ErrServiceInactive  = errors.New("service is inactive")
-	ErrInvalidOperation = errors.New("invalid operation")
-	ErrNoPriorRevision  = errors.New("no prior revision found")
+	ErrServiceNotFound        = errors.New("service not found")
+	ErrPullFailed             = errors.New("image pull failed")
+	ErrInactiveService        = errors.New("cannot restart inactive service; activate it first")
+	ErrServiceInactive        = errors.New("service is inactive")
+	ErrInvalidOperation       = errors.New("invalid operation")
+	ErrNoPriorRevision        = errors.New("no prior revision found")
+	ErrRollbackCircuitBreaker = errors.New("rollback circuit breaker tripped: maximum rollback attempts exceeded")
 )
 
 // ServiceDef holds the immutable specification of a managed service.
@@ -304,6 +307,7 @@ type ServiceManager struct {
 	revisionStore        RevisionStore
 	alertNotifier        AlertNotifier
 	verificationEngine   *VerificationEngine
+	rollbackAttempts     map[string]int
 }
 
 // NewServiceManager constructs and initializes the appliance service lifecycle manager.
@@ -488,6 +492,7 @@ func NewServiceManager(cfg ServiceManagerConfig) *ServiceManager {
 		openwebuiProvisioner: owp,
 		revisionStore:        rs,
 		alertNotifier:        cfg.AlertNotifier,
+		rollbackAttempts:     make(map[string]int),
 	}
 
 	if cfg.VerificationEngine != nil {
@@ -497,6 +502,27 @@ func NewServiceManager(cfg ServiceManagerConfig) *ServiceManager {
 	}
 
 	return sm
+}
+
+// ResetRollbackAttempts clears rollback attempt counters for the specified service.
+func (m *ServiceManager) ResetRollbackAttempts(serviceID string) {
+	id := m.resolveID(serviceID)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for k := range m.rollbackAttempts {
+		if strings.HasPrefix(k, id+":") {
+			delete(m.rollbackAttempts, k)
+		}
+	}
+}
+
+// GetRollbackAttempts returns the current rollback attempt count for service and revision.
+func (m *ServiceManager) GetRollbackAttempts(serviceID string, revision int) int {
+	id := m.resolveID(serviceID)
+	key := fmt.Sprintf("%s:%d", id, revision)
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.rollbackAttempts[key]
 }
 
 // AlertNotifier returns the registered AlertNotifier.
