@@ -218,7 +218,7 @@ action_items:
     epic: 7
     action: "Refresh repository agent instructions with bmad-project-context"
     owner: "Winston (Architect)"
-    status: open
+    status: done
     ref: "_bmad-output/implementation-artifacts/epic-7-retro-2026-10-25.md"
   - id: "epic-7-retro-item-2-hardware-warranty-disclaimer"
     epic: 7
