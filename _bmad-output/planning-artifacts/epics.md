@@ -45,6 +45,7 @@ FR18: Active GPU & VRAM Arbitration & Day/Night Scheduling — The system dynami
 FR19: Multi-Language UI & Documentation — The system displays all admin interfaces, setup wizards, and user documentation in four primary launch languages (English, German, Spanish, French) with an instant language switcher and browser language autodetection.
 FR20: Project Marketing Site & GitHub Presence — The project maintains a public marketing website and open-source GitHub repository detailing project architecture, BMad Method attribution, transparent AI-assistance notes, and FOSS license compliance.
 FR21: Minimum Hardware Specification Guidance & Future Hardware Roadmap — The platform publishes concrete minimum hardware profiles across three tiers (Light Tier, Media Tier, AI & Power Tier) and reserves architectural hooks for turnkey hardware appliance sales.
+FR22: Turnkey One-Line Linux Host Installer — The user can provision a standard Linux machine (Debian/Ubuntu, Fedora, Arch) into a fully operational Sovereign home server appliance by pasting a single shell command (`curl -fsSL https://get.sovereign.local/install.sh | sudo bash`), executing automated OS pre-flight validation, official Docker CE / Compose substrate installation, `/opt/sovereign` binary and asset deployment, partitioned `/data` hierarchy creation, systemd service registration, and instant browser setup handoff.
 
 ### NonFunctional Requirements
 
@@ -104,6 +105,7 @@ FR18: Epic 5 - Active GPU & VRAM Arbitration & Day/Night Scheduling (Daytime 07:
 FR19: Epic 6 - Multi-Language UI & Documentation (English, German, Spanish, French language selector, browser language autodetection, translated guides)
 FR20: Epic 7 - Project Marketing Site & GitHub Presence (Marketing landing page, GitHub README with BMad attribution, transparent AI-assistance notice, and open-source license compliance)
 FR21: Epic 7 - Minimum Hardware Specification Guidance & Future Hardware Roadmap (Three-tier hardware profiles: Light, Media, AI & Power tiers; architectural hooks for future hardware sales)
+FR22: Epic 9 - Turnkey One-Line Linux Host Installer (One-line shell installer, OS pre-flight checks, automated Docker substrate setup, systemd service integration, setup wizard handoff, uninstaller/upgrade routines)
 
 ## Epic List
 
@@ -134,6 +136,14 @@ The user can rely on unattended scheduled container updates with automatic 180s 
 ### Epic 7: Ecosystem Governance, Hardware Profiles & Project Presence
 The open-source user or hardware adopter can consult public hardware specification tiers to choose or assemble compatible equipment, access comprehensive multilingual documentation, and explore the transparent marketing site and GitHub repository with full attribution and licensing compliance.
 **FRs covered:** FR20, FR21
+
+### Epic 8: Operational Hardening, Edge-Case Resilience & Verification Safety Net
+The appliance administrator and developer can rely on comprehensive transaction atomicity during initial setup, safe WAL checkpointing before snapshot restoration, rollback loop circuit breakers, pre-flight disk capacity guards, graceful peripheral disconnect handling, and rigorous fault-injection and stream duration test suites.
+**FRs covered:** AR6, AR7, AR3, NFR1, NFR4 (Action Items from Epics 1–7 Retrospectives)
+
+### Epic 9: Turnkey One-Line Linux Host Installer & Host Provisioning Engine
+The user can convert any compatible x86_64 or ARM64 Linux machine into a fully functional Sovereign appliance via a single console command (`curl -fsSL https://get.sovereign.local/install.sh | sudo bash`), featuring automated OS detection, Docker/Compose provisioning, `/opt/sovereign` deployment, systemd integration, and instant setup wizard handoff.
+**FRs covered:** FR22
 
 
 ## Epic 1: Appliance Foundation, Setup Wizard & Power Resilience
@@ -652,3 +662,159 @@ So that the project remains a compliant, reputable, and welcoming open-source ec
 **When** reviewing `README.md`
 **Then** it provides an architecture overview, quickstart instructions, explicit attribution of creation via the BMad Method, and transparent notes on AI-assisted development.
 **And** prominent attribution, original copyright notices, and license compliance texts for all bundled open-source tools (Jellyfin, Navidrome, Audiobookshelf, Paperless-ngx, Open WebUI, llama.cpp, Caddy, ARM) are cataloged without proprietary restrictions.
+
+
+## Epic 8: Operational Hardening, Edge-Case Resilience & Verification Safety Net
+
+The appliance administrator and developer can rely on comprehensive transaction atomicity during initial setup, safe WAL checkpointing before snapshot restoration, rollback loop circuit breakers, pre-flight disk capacity guards, graceful peripheral disconnect handling, and rigorous fault-injection and stream duration test suites.
+
+### Story 8.1: Core Daemon Transaction Atomicity, WAL Restoration Checkpointing & Rollback Circuit Breaker
+
+As an appliance administrator,
+I want the supervisor daemon to enforce database transaction atomicity during setup, force a WAL checkpoint before database snapshot restorations, implement a circuit breaker on container rollbacks, and log active telemetry warnings if the Docker socket is unavailable,
+So that unexpected system crashes, corrupted state transitions, or unrecoverable rollback loops never leave the server in an inconsistent state.
+
+**Acceptance Criteria:**
+
+**Given** the First-Run Setup completion endpoint `CompleteSetup`
+**When** an error or abort occurs during any stage of setup execution
+**Then** the underlying database transaction rolls back atomically without leaving partial setup records or orphaned state in `sovereign.db`.
+**Given** an automated or manual database snapshot rollback
+**When** restoring a database snapshot file
+**Then** `PRAGMA wal_checkpoint(TRUNCATE)` is executed and the active SQLite connection is cleanly closed before replacing the database file on disk.
+**Given** a rolling service update failure that triggers automatic rollback
+**When** rollback execution is attempted
+**Then** a circuit breaker pattern caps rollback retry attempts (max 2 attempts) to prevent infinite rollback loops, logging an emergency alert state if the previous revision also fails health verification.
+**Given** the supervisor daemon running without access to `/var/run/docker.sock`
+**When** system telemetry is polled or streamed via SSE
+**Then** an explicit, reassuring warning indicator is surfaced in the telemetry stream and daemon logs rather than unhandled nil-pointer or silent container state failures.
+
+### Story 8.2: Ingestion Pre-Flight Capacity Guards & Peripheral Error Recovery
+
+As a household user uploading media or archiving documents,
+I want the dropzone to verify disk capacity before accepting large files, the optical ripper to handle drive disconnection or eject errors gracefully, metadata queries to retry with exponential backoff, and IMAP document ingestion to support custom/self-signed TLS certificates,
+So that peripheral hiccups or unusual network environments do not crash background tasks or corrupt data.
+
+**Acceptance Criteria:**
+
+**Given** a user uploading files to the media dropzone (`/drop` or `\\sovereign\drop`)
+**When** the upload request starts
+**Then** a pre-flight disk capacity check verifies that the target storage pool has sufficient free space (upload size + 1 GB safety buffer), rejecting with a calm, informative error message if capacity is insufficient.
+**Given** an active optical disc ripping operation
+**When** an unexpected drive disconnection (`EIO`), bus reset, or tray eject failure occurs
+**Then** the rip task terminates cleanly, cleans up temporary staging files, logs a descriptive error, and prevents daemon lockup.
+**Given** metadata enrichment requests for media or albums (TMDb, MusicBrainz)
+**When** external API rate limits or network connection failures occur
+**Then** the enrichment service retries requests with exponential backoff and jitter up to 3 times before deferring the task, avoiding rate-limit bans or tight retry loops.
+**Given** an administrator configuring IMAP email polling for document archiving
+**When** connecting to a mail server with a custom internal CA or self-signed TLS certificate
+**Then** the configuration interface allows specifying custom TLS certificate options (or enabling trusted internal CA verification) without failing the TLS handshake.
+
+### Story 8.3: Critical Path Fault-Injection & Long-Running Stream Verification Suite
+
+As a platform maintainer,
+I want automated end-to-end integration tests verifying SSE stream endurance, persistent alert dispatch queue retries, and the 5GB model storage reservation guard,
+So that critical operational safety invariants remain robust and verified against regressions.
+
+**Acceptance Criteria:**
+
+**Given** a long-running Server-Sent Events (SSE) telemetry connection
+**When** tested under an end-to-end connection duration harness
+**Then** the stream remains open and stable for >= 300 seconds without server-side write timeout drops, mid-stream memory leaks, or unhandled socket closure errors.
+**Given** an urgent document deadline or system alert dispatch via SMTP or Home Assistant webhook
+**When** the remote notification target is unreachable during the initial attempt
+**Then** the alert payload is enqueued in a persistent retry queue and successfully re-dispatched when the target becomes reachable again, verified by automated fault-injection tests.
+**Given** the Local AI model download engine
+**When** a GGUF model download is requested on a filesystem with less than (model size + 5 GB reserve) available
+**Then** the pre-flight storage guard aborts the download immediately, leaving the reserve buffer untouched and returning an actionable HTTP 507 Insufficient Storage status with zero partial file clutter.
+
+### Story 8.4: Multilingual Modal Token Validation & Hardware Calculator Baseline Fallback
+
+As an international user or prospective builder,
+I want destructive confirmation dialogs to validate localized confirmation tokens accurately, the hardware calculator to provide a sensible Light Tier baseline, and turnkey hardware roadmap docs to display clear warranty disclaimers,
+So that users across all languages and hardware tiers have an intuitive, safe, and transparent experience.
+
+**Acceptance Criteria:**
+
+**Given** the `DestructiveModal` component rendered in German, Spanish, or French
+**When** an administrator types the localized confirmation word (e.g., "LÖSCHEN", "ELIMINAR", "SUPPRIMER", or "DELETE")
+**Then** the modal validates the token case-insensitively according to the active locale without rejecting valid localized input.
+**Given** the public marketing landing page hardware calculator
+**When** all feature sliders and toggle switches are set to zero or unselected
+**Then** the calculator displays a clear Light Tier baseline (Dual-core x86/ARM64, 4 GB RAM, 64 GB storage) rather than a blank or broken state.
+**Given** the turnkey hardware specification and roadmap documentation
+**When** reviewing hardware tiers and pre-assembled appliance offerings
+**Then** clear open-source warranty boundaries and community support disclaimers are explicitly articulated.
+
+
+## Epic 9: Turnkey One-Line Linux Host Installer & Host Provisioning Engine
+
+The user can convert any compatible x86_64 or ARM64 Linux machine into a fully functional Sovereign appliance via a single console command (`curl -fsSL https://get.sovereign.local/install.sh | sudo bash`), featuring automated OS detection, Docker/Compose provisioning, `/opt/sovereign` deployment, systemd integration, and instant setup wizard handoff.
+
+### Story 9.1: One-Line Installer Shell Script & Host Environment Validation Engine
+
+As a home server adopter,
+I want to paste a single command into my Linux console (`curl -fsSL https://get.sovereign.local/install.sh | sudo bash`) that checks my hardware and operating system compatibility,
+So that I can verify my machine meets all requirements before any system modifications occur.
+
+**Acceptance Criteria:**
+
+**Given** a clean Linux system running Debian, Ubuntu, Fedora, or Arch Linux on x86_64 or aarch64 (ARM64)
+**When** running the installation script with root or sudo privileges
+**Then** the script validates OS distribution, CPU architecture, available RAM (minimum 4 GB checked), and root storage capacity (minimum 20 GB checked).
+**And** reassuring, formatted console output displays check results with colored indicators (`[OK]`, `[WARN]`, `[FAIL]`) adhering to consumer-grade microcopy.
+**And** running with `--yes` or non-interactively proceeds automatically without interactive prompts, while interactive execution requests explicit confirmation before proceeding.
+**And** incompatible distributions or insufficient hardware capacities abort cleanly with actionable next steps without altering host state.
+
+### Story 9.2: Automated Dependency Provisioning & Docker Substrate Setup
+
+As a system installer,
+I want the script to automatically install and configure Docker Engine and Docker Compose v2 from official upstream repositories if not already present,
+So that the host has a fully certified container substrate ready for Sovereign's supervisor daemon.
+
+**Acceptance Criteria:**
+
+**Given** a host without Docker or Docker Compose installed
+**When** the installer provisions runtime dependencies
+**Then** it installs the official Docker Engine and Docker Compose v2 plugin using official distribution packages or upstream repository setup scripts.
+**And** the `docker` systemd service is enabled and started on boot.
+**And** the calling non-root user (if executed via `sudo`) and a dedicated `sovereign` system user are added to the `docker` group.
+**Given** a host that already has Docker and Compose v2 installed
+**When** the installer runs
+**Then** it detects the existing Docker installation, verifies version compatibility (Docker >= 24.0, Compose v2 >= 2.20), and skips redundant installation steps cleanly.
+
+### Story 9.3: Appliance Filesystem Layout, Service Configuration & Systemd Integration
+
+As an appliance administrator,
+I want the installer to deploy the Sovereign supervisor daemon, Caddy ingress gateway, and web assets to `/opt/sovereign`, initialize `/data`, and register a persistent `sovereign.service` systemd unit,
+So that Sovereign boots automatically on machine startup and recovers gracefully from system reboots.
+
+**Acceptance Criteria:**
+
+**Given** valid installation dependencies on the host
+**When** the installer deploys the appliance
+**Then** the Sovereign daemon binary, web static build, initial `Caddyfile`, and compose templates are installed into `/opt/sovereign` with appropriate permissions.
+**And** the structured `/data` hierarchy is initialized (`/data/state`, `/data/media`, `/data/documents`, `/data/models`, `/data/drop`) with ownership set to the `sovereign` service user.
+**And** a `sovereign.service` systemd unit is installed to `/etc/systemd/system/sovereign.service`, enabled for automatic startup at boot (`multi-user.target`), and started immediately.
+**And** the systemd unit enforces restart-on-failure with backoff and clean graceful shutdown forwarding `SIGTERM` to the daemon.
+**And** active host firewalls (UFW or firewalld) are detected and configured to allow HTTP (80/tcp), HTTPS (443/tcp), and mDNS (5353/udp) traffic.
+
+### Story 9.4: Setup Handoff, Uninstaller & Maintenance Utilities
+
+As a home server owner,
+I want the installation to conclude with an informative summary banner and web setup link, and provide a reliable uninstall script,
+So that I know exactly how to open the Setup Wizard in my browser and have a safe way to remove Sovereign or upgrade in the future.
+
+**Acceptance Criteria:**
+
+**Given** successful installation and startup of `sovereign.service`
+**When** the installer finishes execution
+**Then** it queries the active network interface and mDNS status, displaying an appliance banner with local IP address (e.g. `http://192.168.1.50`) and mDNS link (`http://sovereign.local`).
+**And** reassuring instructions invite the user to open their browser and complete the 5-step First-Run Setup Wizard.
+**Given** an administrator wishing to remove Sovereign
+**When** running `sovereign-uninstall` or `install.sh --uninstall`
+**Then** the script stops and disables `sovereign.service`, stops and removes Sovereign managed containers, and prompts the user whether to preserve or purge `/data` storage to prevent accidental data loss.
+**Given** an administrator updating the appliance host installer
+**When** running `install.sh --upgrade`
+**Then** the installer pulls the latest daemon release and updates systemd units without destroying persistent configuration or database state.
+
