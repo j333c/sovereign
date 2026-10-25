@@ -509,20 +509,20 @@ func (m *ServiceManager) ResetRollbackAttempts(serviceID string) {
 	id := m.resolveID(serviceID)
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	for k := range m.rollbackAttempts {
-		if strings.HasPrefix(k, id+":") {
-			delete(m.rollbackAttempts, k)
-		}
+	if m.rollbackAttempts != nil {
+		delete(m.rollbackAttempts, id)
 	}
 }
 
-// GetRollbackAttempts returns the current rollback attempt count for service and revision.
+// GetRollbackAttempts returns the current rollback attempt count for service.
 func (m *ServiceManager) GetRollbackAttempts(serviceID string, revision int) int {
 	id := m.resolveID(serviceID)
-	key := fmt.Sprintf("%s:%d", id, revision)
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	return m.rollbackAttempts[key]
+	if m.rollbackAttempts == nil {
+		return 0
+	}
+	return m.rollbackAttempts[id]
 }
 
 // AlertNotifier returns the registered AlertNotifier.

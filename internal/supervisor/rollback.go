@@ -320,8 +320,11 @@ func (m *ServiceManager) rollbackServiceInternal(ctx context.Context, serviceID 
 
 	// Automated rollback circuit breaker: cap rollback retry attempts (max 2 attempts) to prevent infinite loops
 	if !isManual {
-		key := fmt.Sprintf("%s:%d", id, revNumForCounter)
+		key := id
 		m.mu.Lock()
+		if m.rollbackAttempts == nil {
+			m.rollbackAttempts = make(map[string]int)
+		}
 		attempts := m.rollbackAttempts[key]
 		if attempts >= 2 {
 			m.mu.Unlock()
@@ -371,7 +374,8 @@ func (m *ServiceManager) rollbackServiceInternal(ctx context.Context, serviceID 
 				})
 			}
 
-			return m.GetService(ctx, id)
+			st, _ := m.GetService(ctx, id)
+			return st, ErrRollbackCircuitBreaker
 		}
 		m.rollbackAttempts[key] = attempts + 1
 		m.mu.Unlock()

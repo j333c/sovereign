@@ -801,6 +801,7 @@ describe("ServiceCard & StatusBadge Components", () => {
     assert.equal(mapServiceStatus("running", "stopped"), "stopped");
     assert.equal(mapServiceStatus("starting"), "starting");
     assert.equal(mapServiceStatus("degraded"), "degraded");
+    assert.equal(mapServiceStatus("safe_recovery"), "degraded");
     assert.equal(mapServiceStatus("amber"), "degraded");
     assert.equal(mapServiceStatus("error"), "error");
     assert.equal(mapServiceStatus("running", "unhealthy"), "error");

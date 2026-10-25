@@ -412,8 +412,11 @@ func TestRollback_CircuitBreaker(t *testing.T) {
 
 	// Third automated rollback attempt: circuit breaker trips (attempts >= 2)
 	st3, err := mgr.RollbackService(ctx, "jellyfin", rev2.Revision)
-	if err != nil {
-		t.Fatalf("RollbackService attempt 3 returned unexpected error: %v", err)
+	if !errors.Is(err, ErrRollbackCircuitBreaker) {
+		t.Fatalf("expected ErrRollbackCircuitBreaker on attempt 3, got: %v", err)
+	}
+	if st3 == nil {
+		t.Fatalf("expected st3 to not be nil")
 	}
 
 	if st3.Status != StatusSafeRecovery {

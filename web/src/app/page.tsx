@@ -119,7 +119,13 @@ export function mapServiceStatus(status?: string, health?: string): StatusLevel 
   if (s === "error" || h === "unhealthy" || h === "error") {
     return "error";
   }
-  if (s === "degraded" || h === "degraded" || s === "amber" || h === "amber") {
+  if (
+    s === "degraded" ||
+    s === "safe_recovery" ||
+    h === "degraded" ||
+    s === "amber" ||
+    h === "amber"
+  ) {
     return "degraded";
   }
   if (

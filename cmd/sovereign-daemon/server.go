@@ -394,7 +394,7 @@ func NewServer(cfg Config) (*Server, error) {
 	s.dockerSocketPath = sockPath
 
 	dockerFound := false
-	if fi, err := os.Stat(sockPath); err == nil && fi != nil {
+	if fi, err := os.Stat(sockPath); err == nil && fi != nil && (fi.Mode()&os.ModeSocket != 0) {
 		dockerFound = true
 	} else {
 		cfg.Logger.Warn("Docker socket unavailable; container operations paused",
@@ -2085,7 +2085,7 @@ func (s *Server) getTelemetryUpdate(ctx context.Context) TelemetryUpdate {
 	dockerStatus := "degraded"
 	dockerMessage := "Container engine unavailable — background tasks paused"
 
-	if fi, err := os.Stat(dockerPath); err == nil && fi != nil {
+	if fi, err := os.Stat(dockerPath); err == nil && fi != nil && (fi.Mode()&os.ModeSocket != 0) {
 		dockerAvailable = true
 		dockerStatus = "connected"
 		dockerMessage = "Container engine operational"
@@ -2141,6 +2141,7 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		}
 		flusher.Flush()
 	}
+	lastDockerAvailable := initEvt.DockerAvailable
 	if !initEvt.DockerAvailable {
 		if unavailData, err := json.Marshal(map[string]any{
 			"docker_available": false,
@@ -2184,7 +2185,7 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 			if _, err := fmt.Fprintf(w, "event: telemetry.update\ndata: %s\n\n", data); err != nil {
 				return
 			}
-			if !evt.DockerAvailable {
+			if !evt.DockerAvailable && lastDockerAvailable {
 				if unavailData, err := json.Marshal(map[string]any{
 					"docker_available": false,
 					"status":           "degraded",
@@ -2194,6 +2195,7 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 					_, _ = fmt.Fprintf(w, "event: system.docker_unavailable\ndata: %s\n\n", unavailData)
 				}
 			}
+			lastDockerAvailable = evt.DockerAvailable
 			flusher.Flush()
 		}
 	}

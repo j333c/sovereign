@@ -530,5 +530,16 @@ func TestCompleteSetup_Atomicity(t *testing.T) {
 			t.Fatalf("expected 0 sessions after rollback, found %d", sessionCount)
 		}
 	})
+
+	t.Run("CreateSessionTx returns error when tx is nil", func(t *testing.T) {
+		db := newTestDB(t)
+		defer db.Close()
+		mgr := fastTestManager(t, db)
+
+		sess, err := mgr.CreateSessionTx(context.Background(), nil, "admin", auth.RoleAdmin)
+		if err == nil {
+			t.Fatalf("expected error when tx is nil, got session: %+v", sess)
+		}
+	})
 }
 

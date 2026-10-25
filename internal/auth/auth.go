@@ -439,6 +439,9 @@ func (m *Manager) Authenticate(ctx context.Context, username, password string) (
 
 // CreateSessionTx generates a new session and persists it in SQLite within the provided transaction.
 func (m *Manager) CreateSessionTx(ctx context.Context, tx *sql.Tx, username string, role Role) (*Session, error) {
+	if tx == nil {
+		return nil, errors.New("transaction cannot be nil")
+	}
 	b := make([]byte, 32)
 	if _, err := rand.Read(b); err != nil {
 		return nil, fmt.Errorf("failed to generate random session token: %w", err)

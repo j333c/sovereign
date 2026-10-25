@@ -6914,6 +6914,82 @@ func TestDockerSocket_MissingWarning(t *testing.T) {
 	}
 }
 
+func TestDockerSocket_PresentHealthy(t *testing.T) {
+	tempDir := t.TempDir()
+	dataDir := filepath.Join(tempDir, "data")
+	stateDir := filepath.Join(dataDir, "state")
+	_ = os.MkdirAll(stateDir, 0755)
+	_ = os.WriteFile(filepath.Join(stateDir, "boot_state.json"), []byte(`{"clean_shutdown": true}`), 0644)
+
+	// Create genuine unix domain socket
+	sockPath := filepath.Join(tempDir, "docker.sock")
+	l, err := net.Listen("unix", sockPath)
+	if err != nil {
+		t.Fatalf("failed to create unix domain socket listener: %v", err)
+	}
+	defer l.Close()
+
+	var logBuf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logBuf, nil))
+	mockOpticalDriver := optical.NewMockOpticalDriver()
+
+	srv, err := NewServer(Config{
+		DataDir:          dataDir,
+		Logger:           logger,
+		DockerSocketPath: sockPath,
+		OpticalDriver:    mockOpticalDriver,
+	})
+	if err != nil {
+		t.Fatalf("NewServer failed: %v", err)
+	}
+	defer srv.Close()
+
+	// 1. Verify getTelemetryUpdate marks DockerAvailable: true, DockerStatus: "connected"
+	ctx := context.Background()
+	telemetry := srv.getTelemetryUpdate(ctx)
+	if !telemetry.DockerAvailable {
+		t.Errorf("expected docker_available = true when socket present, got false")
+	}
+	if telemetry.DockerStatus != "connected" {
+		t.Errorf("expected docker_status = 'connected', got %q", telemetry.DockerStatus)
+	}
+	if telemetry.DockerMessage != "Container engine operational" {
+		t.Errorf("expected operational docker message, got %q", telemetry.DockerMessage)
+	}
+
+	// 2. Verify SSE stream includes telemetry.update with docker fields and NO system.docker_unavailable event
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/events", nil)
+	w := httptest.NewRecorder()
+
+	sseCtx, sseCancel := context.WithCancel(context.Background())
+	defer sseCancel()
+	req = req.WithContext(sseCtx)
+
+	doneCh := make(chan struct{})
+	go func() {
+		srv.Handler().ServeHTTP(w, req)
+		close(doneCh)
+	}()
+
+	time.Sleep(50 * time.Millisecond)
+	sseCancel()
+	<-doneCh
+
+	body := w.Body.String()
+	if !strings.Contains(body, "event: telemetry.update") {
+		t.Fatalf("expected SSE stream to contain telemetry.update event, got: %s", body)
+	}
+	if !strings.Contains(body, `"docker_available":true`) {
+		t.Errorf("expected SSE telemetry.update to contain docker_available: true, got: %s", body)
+	}
+	if !strings.Contains(body, `"docker_status":"connected"`) {
+		t.Errorf("expected SSE telemetry.update to contain docker_status: connected, got: %s", body)
+	}
+	if strings.Contains(body, "event: system.docker_unavailable") {
+		t.Errorf("expected SSE stream NOT to emit system.docker_unavailable event when socket present, got: %s", body)
+	}
+}
+
 
 
 

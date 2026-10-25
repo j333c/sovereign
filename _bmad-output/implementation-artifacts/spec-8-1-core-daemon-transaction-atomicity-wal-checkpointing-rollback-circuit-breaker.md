@@ -2,7 +2,7 @@
 title: 'Story 8.1: Core Daemon Transaction Atomicity, WAL Restoration Checkpointing & Rollback Circuit Breaker'
 type: 'feature'
 created: '2026-10-25'
-status: 'completed'
+status: 'in-review'
 baseline_commit: '8943d107e134743043b57a3ef7b3694b26c9be0c'
 route: 'dispatch'
 review_loop_iteration: 0
@@ -80,6 +80,19 @@ context:
 ## Spec Change Log
 
 ## Review Triage Log
+
+| Finding | Verdict | Evidence | Disposition |
+|---------|---------|----------|-------------|
+| Destructive file truncate and missing self-restore guard in `RestoreSnapshot` (`internal/store/db.go`) | high | Destination opened with `O_TRUNC` before copy; self-restore would wipe DB and corrupted copy leaves database destroyed without rollback | patch |
+| SSE event duplicate emission on ticker ticks (`cmd/sovereign-daemon/server.go`) | medium | Emits `system.docker_unavailable` on every ticker tick instead of once on state change, causing stream flooding and test races | patch |
+| Missing adoption of `safe_recovery` in frontend `mapServiceStatus` (`web/src/app/page.tsx`) | medium | Status falls through all checks to "healthy" if health is empty, masking stopped containers in UI | patch |
+| Missing positive verification test for active Docker socket | medium | Gap verified by verification-gap reviewer; only missing socket path was tested | patch |
+| Re-verifying restored container after automated rollback (`internal/supervisor/rollback.go`) | medium | Restored container is restarted without starting verification session, preventing second verification failure in cascading loop | patch |
+| Cascading rollback attempt tracking key (`internal/supervisor/rollback.go`) | medium | Keying attempts by service ID ensures total consecutive failures across chained revisions are counted against max attempts (2) | patch |
+| Nil check in `CreateSessionTx` (`internal/auth/auth.go`) | low | Added defensive nil check for `tx` argument | patch |
+| Dead error definition `ErrRollbackCircuitBreaker` (`internal/supervisor/rollback.go`) | low | Return exported error when circuit breaker trips so callers can detect it | patch |
+| Inode mode check for Docker socket (`cmd/sovereign-daemon/server.go`) | low | Check `fi.Mode()&os.ModeSocket != 0` to ensure file is an actual socket | patch |
+
 
 ## Design Notes
 

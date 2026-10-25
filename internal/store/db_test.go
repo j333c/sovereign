@@ -329,7 +329,16 @@ func TestRestoreSnapshot_ConnectionCyclingAndFileReplacement(t *testing.T) {
 		t.Fatalf("expected post_upgrade_key to be wiped, got %q", val)
 	}
 
-	// 5. Verify corrupted snapshot is rejected with an error
+	// 5. Verify self-restore is rejected and does not corrupt active database
+	if err := db.RestoreSnapshot(ctx, dbPath); err == nil {
+		t.Fatalf("expected RestoreSnapshot to fail when snapshot path is same as database path, got nil")
+	}
+	val, err = db.GetSetting(ctx, "baseline_key")
+	if err != nil || val != "baseline_val" {
+		t.Fatalf("expected database to remain intact after rejected self-restore, got %q (err=%v)", val, err)
+	}
+
+	// 6. Verify corrupted snapshot is rejected with an error
 	corruptSnapPath := filepath.Join(tempDir, "backups", "corrupted.db")
 	if err := os.WriteFile(corruptSnapPath, []byte("NOT_A_VALID_SQLITE_DATABASE_HEADER"), 0644); err != nil {
 		t.Fatalf("failed to write corrupted snapshot file: %v", err)

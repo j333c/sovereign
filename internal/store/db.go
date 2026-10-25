@@ -268,6 +268,16 @@ func (d *DB) RestoreSnapshot(ctx context.Context, snapshotPath string) error {
 		return fmt.Errorf("snapshot path is a directory, expected file: %s", snapshotPath)
 	}
 
+	// Ensure snapshot does not resolve to the same destination file
+	absSnapshot, err1 := filepath.Abs(snapshotPath)
+	absDest, err2 := filepath.Abs(d.path)
+	if err1 == nil && err2 == nil && absSnapshot == absDest {
+		return errors.New("snapshot path cannot be the same as the database file")
+	}
+	if destFi, err := os.Stat(d.path); err == nil && os.SameFile(fi, destFi) {
+		return errors.New("snapshot path cannot be the same as the database file")
+	}
+
 	// 1. Flush active WAL to truncate log before closing connection
 	_ = d.FlushWAL(ctx)
 
@@ -282,27 +292,37 @@ func (d *DB) RestoreSnapshot(ctx context.Context, snapshotPath string) error {
 	_ = os.Remove(d.path + "-wal")
 	_ = os.Remove(d.path + "-shm")
 
-	// 4. Replace database file on disk with snapshot file
+	// 4. Stage copy of snapshot file to temporary file with Sync(), then atomically rename
+	tmpPath := d.path + ".restore.tmp"
+	defer os.Remove(tmpPath)
+
 	srcFile, err := os.Open(snapshotPath)
 	if err != nil {
 		return fmt.Errorf("failed to open snapshot file %s: %w", snapshotPath, err)
 	}
 	defer srcFile.Close()
 
-	destFile, err := os.OpenFile(d.path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+	destFile, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
 	if err != nil {
-		return fmt.Errorf("failed to open destination database file %s: %w", d.path, err)
+		return fmt.Errorf("failed to open staging file %s: %w", tmpPath, err)
 	}
-	defer destFile.Close()
 
 	if _, err := io.Copy(destFile, srcFile); err != nil {
-		return fmt.Errorf("failed to copy snapshot content to %s: %w", d.path, err)
+		destFile.Close()
+		return fmt.Errorf("failed to copy snapshot content to staging file: %w", err)
 	}
 	if err := destFile.Sync(); err != nil {
-		return fmt.Errorf("failed to sync restored database file: %w", err)
+		destFile.Close()
+		return fmt.Errorf("failed to sync staging file: %w", err)
 	}
-	_ = destFile.Close()
+	if err := destFile.Close(); err != nil {
+		return fmt.Errorf("failed to close staging file: %w", err)
+	}
 	_ = srcFile.Close()
+
+	if err := os.Rename(tmpPath, d.path); err != nil {
+		return fmt.Errorf("failed to replace database file %s with snapshot: %w", d.path, err)
+	}
 
 	// 5. Reopen SQLite database with WAL mode and synchronous=NORMAL
 	separator := "?"
@@ -340,9 +360,13 @@ func (d *DB) RestoreSnapshot(ctx context.Context, snapshotPath string) error {
 	// 6. Verify integrity of restored database
 	ok, msg, err := d.CheckIntegrity(ctx)
 	if err != nil {
+		newDB.Close()
+		d.DB = nil
 		return fmt.Errorf("integrity check failed after restore: %w", err)
 	}
 	if !ok || msg != "ok" {
+		newDB.Close()
+		d.DB = nil
 		return fmt.Errorf("database corrupted after restore: %s", msg)
 	}
 
