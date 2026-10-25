@@ -6585,11 +6585,11 @@ func TestServer_ServiceRollback_Success(t *testing.T) {
 	if err := json.Unmarshal(rrRoll.Body.Bytes(), &status); err != nil {
 		t.Fatalf("failed to decode service status: %v", err)
 	}
-	if status.Status != supervisor.StatusDegraded {
-		t.Errorf("expected status degraded, got %q", status.Status)
+	if status.Status != supervisor.StatusRunning {
+		t.Errorf("expected status running, got %q", status.Status)
 	}
-	if status.ReassuranceMessage != supervisor.ReassuranceRollbackRestored {
-		t.Errorf("expected reassurance message %q, got %q", supervisor.ReassuranceRollbackRestored, status.ReassuranceMessage)
+	if status.Health != supervisor.HealthHealthy {
+		t.Errorf("expected health healthy, got %q", status.Health)
 	}
 }
 
@@ -6758,6 +6758,69 @@ func TestServer_FactoryReset(t *testing.T) {
 		t.Errorf("expected is_configured to be false after factory reset, got %v", statusMap["is_configured"])
 	}
 }
+
+func TestServer_ProtectedEndpoints_RequireAdminAfterSetup(t *testing.T) {
+	srv, _ := setupTestServer(t)
+	defer srv.Close()
+
+	cookie := loginTestAdmin(t, srv)
+
+	protectedRoutes := []struct {
+		method string
+		path   string
+		body   string
+	}{
+		{"POST", "/api/v1/services/jellyfin/activate", ""},
+		{"POST", "/api/v1/services/jellyfin/deactivate", ""},
+		{"POST", "/api/v1/services/jellyfin/refresh", ""},
+		{"POST", "/api/v1/optical/eject", ""},
+		{"POST", "/api/v1/enrichment/scan", ""},
+		{"POST", "/api/v1/transcode/queue", `{"source_path":"/data/media/raw/test.mkv"}`},
+		{"GET", "/api/v1/documents/deadlines", ""},
+		{"POST", "/api/v1/ai/personas/active", `{"persona_id":"legal"}`},
+		{"POST", "/api/v1/ai/rag/search", `{"query":"test"}`},
+		{"POST", "/api/v1/ai/rag/query", `{"query":"test"}`},
+		{"GET", "/api/v1/ai/logs", ""},
+	}
+
+	for _, tc := range protectedRoutes {
+		t.Run("Unauthenticated_"+tc.method+"_"+tc.path, func(t *testing.T) {
+			var bodyReader io.Reader
+			if tc.body != "" {
+				bodyReader = strings.NewReader(tc.body)
+			}
+			req := httptest.NewRequest(tc.method, tc.path, bodyReader)
+			if tc.body != "" {
+				req.Header.Set("Content-Type", "application/json")
+			}
+			rr := httptest.NewRecorder()
+			srv.Handler().ServeHTTP(rr, req)
+
+			if rr.Code != http.StatusUnauthorized {
+				t.Errorf("expected 401 Unauthorized for %s %s without cookie, got %d", tc.method, tc.path, rr.Code)
+			}
+		})
+
+		t.Run("Authenticated_"+tc.method+"_"+tc.path, func(t *testing.T) {
+			var bodyReader io.Reader
+			if tc.body != "" {
+				bodyReader = strings.NewReader(tc.body)
+			}
+			req := httptest.NewRequest(tc.method, tc.path, bodyReader)
+			if tc.body != "" {
+				req.Header.Set("Content-Type", "application/json")
+			}
+			req.AddCookie(cookie)
+			rr := httptest.NewRecorder()
+			srv.Handler().ServeHTTP(rr, req)
+
+			if rr.Code == http.StatusUnauthorized {
+				t.Errorf("unexpected 401 Unauthorized for authenticated %s %s", tc.method, tc.path)
+			}
+		})
+	}
+}
+
 
 
 

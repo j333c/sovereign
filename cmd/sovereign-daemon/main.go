@@ -64,12 +64,16 @@ func main() {
 	defer bgCancel()
 	server.StartBackgroundServices(bgCtx)
 
+	// Configure http.Server timeouts:
+	// - ReadHeaderTimeout protects against Slowloris header attacks.
+	// - IdleTimeout reclaims idle keep-alive TCP connections.
+	// - WriteTimeout is intentionally 0 (disabled) at connection level to allow persistent
+	//   Server-Sent Events (/api/events), large media dropzone uploads, and daytime AI inference
+	//   warm-up buffers (>=60s) without premature transport disconnection.
 	httpServer := &http.Server{
 		Addr:              listenAddr,
 		Handler:           server.Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
-		ReadTimeout:       30 * time.Second,
-		WriteTimeout:      30 * time.Second,
 		IdleTimeout:       120 * time.Second,
 	}
 

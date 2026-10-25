@@ -95,7 +95,7 @@ action_items:
     action: "Adjust http.Server timeouts in main.go to support persistent SSE connections
       and long streams"
     owner: "Amelia (Dev)"
-    status: open
+    status: done
     ref: "_bmad-output/implementation-artifacts/epic-1-retro-2026-10-25.md"
   - id: "epic-1-retro-item-2-setup-tx-atomicity"
     epic: 1
@@ -114,7 +114,7 @@ action_items:
     action: "Wrap service activation and deactivation endpoints with authentication
       guard"
     owner: "Amelia (Dev)"
-    status: open
+    status: done
     ref: "_bmad-output/implementation-artifacts/epic-2-retro-2026-10-25.md"
   - id: "epic-2-retro-item-2-docker-socket-telemetry"
     epic: 2
@@ -133,7 +133,7 @@ action_items:
     action: "Apply authentication middleware to optical eject and transcode enqueue
       endpoints"
     owner: "Amelia (Dev)"
-    status: open
+    status: done
     ref: "_bmad-output/implementation-artifacts/epic-3-retro-2026-10-25.md"
   - id: "epic-3-retro-item-2-metadata-retry-backoff"
     epic: 3
@@ -151,7 +151,7 @@ action_items:
     epic: 4
     action: "Protect deadline queries with administrative authentication"
     owner: "Amelia (Dev)"
-    status: open
+    status: done
     ref: "_bmad-output/implementation-artifacts/epic-4-retro-2026-10-25.md"
   - id: "epic-4-retro-item-2-imap-tls-options"
     epic: 4
@@ -169,19 +169,19 @@ action_items:
     epic: 5
     action: "Eliminate net/http/httptest import from production rag.go"
     owner: "Amelia (Dev)"
-    status: open
+    status: done
     ref: "_bmad-output/implementation-artifacts/epic-5-retro-2026-10-25.md"
   - id: "epic-5-retro-item-2-rag-logs-auth"
     epic: 5
     action: "Protect AI RAG search/query and inference log endpoints with authentication"
     owner: "Amelia (Dev)"
-    status: open
+    status: done
     ref: "_bmad-output/implementation-artifacts/epic-5-retro-2026-10-25.md"
   - id: "epic-5-retro-item-3-warmup-timeout-alignment"
     epic: 5
     action: "Align main.go HTTP timeouts with Story 5.3 >=60s warm-up buffer"
     owner: "Amelia (Dev)"
-    status: open
+    status: done
     ref: "_bmad-output/implementation-artifacts/epic-5-retro-2026-10-25.md"
   - id: "epic-5-retro-item-4-model-storage-reserve-test"
     epic: 5
@@ -194,7 +194,7 @@ action_items:
     action: "Restore feature card to Green / Healthy status after successful manual
       rollback"
     owner: "Amelia (Dev)"
-    status: open
+    status: done
     ref: "_bmad-output/implementation-artifacts/epic-6-retro-2026-10-25.md"
   - id: "epic-6-retro-item-2-wal-checkpoint-pre-restore"
     epic: 6

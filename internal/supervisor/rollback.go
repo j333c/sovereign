@@ -239,18 +239,19 @@ func (v *VerificationEngine) GetSession(serviceID string) *VerificationSession {
 	return v.sessions[id]
 }
 
-// RollbackService executes an atomic rollback for a failing or rolled-back service:
-// 1. Terminates failing upgraded container
-// 2. Identifies prior active revision
-// 3. Restores declarative compose specification
-// 4. Restores service configuration volume state
-// 5. Restores SQLite state from pre-upgrade snapshot
-// 6. Restarts container with restored specification
-// 7. Updates revision records (failed -> rolled_back, prior -> active)
-// 8. Updates service runtime status to degraded with reassurance microcopy
-// 9. Dispatches alert notification via notify.AlertDispatcher
-// 10. Broadcasts SSE events (service.health_changed, service.status_changed)
+// ManualRollbackService executes an intentional manual rollback initiated by an administrator.
+// The container is restored to its prior stable release and returned to Green running/healthy status once healthy.
+func (m *ServiceManager) ManualRollbackService(ctx context.Context, serviceID string, failedRevNum int) (*ServiceStatus, error) {
+	return m.rollbackServiceInternal(ctx, serviceID, failedRevNum, true)
+}
+
+// RollbackService executes an automated atomic rollback for a failing upgraded container.
+// The service is restored to its prior release and marked degraded with reassurance microcopy.
 func (m *ServiceManager) RollbackService(ctx context.Context, serviceID string, failedRevNum int) (*ServiceStatus, error) {
+	return m.rollbackServiceInternal(ctx, serviceID, failedRevNum, false)
+}
+
+func (m *ServiceManager) rollbackServiceInternal(ctx context.Context, serviceID string, failedRevNum int, isManual bool) (*ServiceStatus, error) {
 	id := m.resolveID(serviceID)
 
 	m.mu.RLock()
@@ -410,14 +411,35 @@ func (m *ServiceManager) RollbackService(ctx context.Context, serviceID string, 
 		}
 	}
 
-	// 8. Update service runtime status to degraded with reassurance message:
+	// 8. Update service runtime status:
+	// For automated rollbacks, set to degraded with reassurance microcopy:
 	// "Update couldn't start properly. We've safely restored your previous working version."
+	// For manual rollbacks, probe container health; if healthy, restore green running/healthy state.
 	m.mu.Lock()
+	status := StatusDegraded
+	health := HealthDegraded
+	reassurance := ReassuranceRollbackRestored
+
+	if isManual {
+		healthy := true
+		if m.engine != nil {
+			h, probeErr := m.engine.ProbeHealth(ctx, id)
+			if probeErr == nil && !h {
+				healthy = false
+			}
+		}
+		if healthy {
+			status = StatusRunning
+			health = HealthHealthy
+			reassurance = ""
+		}
+	}
+
 	if st, exists := m.statuses[id]; exists {
-		st.Status = StatusDegraded
-		st.Health = HealthDegraded
+		st.Status = status
+		st.Health = health
 		st.Image = restoredImage
-		st.ReassuranceMessage = ReassuranceRollbackRestored
+		st.ReassuranceMessage = reassurance
 		st.UpdatedAt = m.timeNow().UTC().Format(time.RFC3339)
 	}
 	if def, exists := m.definitions[id]; exists {
@@ -434,23 +456,27 @@ func (m *ServiceManager) RollbackService(ctx context.Context, serviceID string, 
 		if failedRev != nil {
 			failedVer = failedRev.NewImage
 		}
-		_ = m.alertNotifier.SendRollbackAlert(ctx, id, serviceName, failedVer, restoredImage, "Container health verification failed (consecutive probe failures or crash loop)")
+		reason := "Container health verification failed (consecutive probe failures or crash loop)"
+		if isManual {
+			reason = "Manual rollback requested by administrator"
+		}
+		_ = m.alertNotifier.SendRollbackAlert(ctx, id, serviceName, failedVer, restoredImage, reason)
 	}
 
 	// 10. Broadcast SSE events (service.health_changed, service.status_changed)
 	if m.broadcaster != nil {
 		m.broadcaster("service.health_changed", ServiceHealthChanged{
 			ServiceID: id,
-			Status:    StatusDegraded,
-			Health:    HealthDegraded,
-			Detail:    ReassuranceRollbackRestored,
+			Status:    status,
+			Health:    health,
+			Detail:    reassurance,
 			Timestamp: m.timeNow().UTC().Format(time.RFC3339),
 		})
 		m.broadcaster("service.status_changed", map[string]any{
 			"service_id":          id,
-			"status":              StatusDegraded,
-			"health":              HealthDegraded,
-			"reassurance_message": ReassuranceRollbackRestored,
+			"status":              status,
+			"health":              health,
+			"reassurance_message": reassurance,
 			"timestamp":           m.timeNow().UTC().Format(time.RFC3339),
 		})
 	}

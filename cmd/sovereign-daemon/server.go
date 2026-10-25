@@ -1075,12 +1075,12 @@ func (s *Server) routes() {
 	// Managed Services lifecycle endpoints
 	s.router.HandleFunc("GET /api/v1/services", s.handleListServices)
 	s.router.HandleFunc("GET /api/v1/services/{id}", s.handleGetService)
-	s.router.HandleFunc("POST /api/v1/services/{id}/activate", s.handleActivateService)
-	s.router.HandleFunc("POST /api/v1/services/{id}/deactivate", s.handleDeactivateService)
+	s.router.HandleFunc("POST /api/v1/services/{id}/activate", s.requireSetupOrAdmin(s.handleActivateService))
+	s.router.HandleFunc("POST /api/v1/services/{id}/deactivate", s.requireSetupOrAdmin(s.handleDeactivateService))
 	s.router.HandleFunc("POST /api/v1/services/{id}/restart", s.requireSetupOrAdmin(s.handleRestartService))
 	s.router.HandleFunc("POST /api/v1/services/{id}/upgrade", s.requireSetupOrAdmin(s.handleUpgradeService))
 	s.router.HandleFunc("POST /api/v1/services/{id}/rollback", s.requireSetupOrAdmin(s.handleRollbackService))
-	s.router.HandleFunc("POST /api/v1/services/{id}/refresh", s.handleRefreshService)
+	s.router.HandleFunc("POST /api/v1/services/{id}/refresh", s.requireSetupOrAdmin(s.handleRefreshService))
 
 	// Media Dropzone ingestion endpoints
 	s.router.HandleFunc("POST /api/v1/drop/upload", s.handleDropUpload)
@@ -1088,16 +1088,16 @@ func (s *Server) routes() {
 
 	// Optical drive and automated disc ripping endpoints
 	s.router.HandleFunc("GET /api/v1/optical/status", s.handleOpticalStatus)
-	s.router.HandleFunc("POST /api/v1/optical/eject", s.handleOpticalEject)
+	s.router.HandleFunc("POST /api/v1/optical/eject", s.requireSetupOrAdmin(s.handleOpticalEject))
 	s.router.HandleFunc("POST /api/v1/optical/keys", s.requireSetupOrAdmin(s.handleOpticalKeys))
 
 	// Media metadata and artwork enrichment endpoints
 	s.router.HandleFunc("GET /api/v1/enrichment/status", s.handleEnrichmentStatus)
-	s.router.HandleFunc("POST /api/v1/enrichment/scan", s.handleEnrichmentScan)
+	s.router.HandleFunc("POST /api/v1/enrichment/scan", s.requireSetupOrAdmin(s.handleEnrichmentScan))
 
 	// Off-peak transcoding queue and pre-encoding endpoints
 	s.router.HandleFunc("GET /api/v1/transcode/queue", s.handleTranscodeQueue)
-	s.router.HandleFunc("POST /api/v1/transcode/queue", s.handleEnqueueTranscode)
+	s.router.HandleFunc("POST /api/v1/transcode/queue", s.requireSetupOrAdmin(s.handleEnqueueTranscode))
 	s.router.HandleFunc("POST /api/v1/transcode/mobile", s.requireSetupOrAdmin(s.handleEnqueueMobile))
 	s.router.HandleFunc("GET /api/v1/transcode/schedule", s.handleGetTranscodeSchedule)
 	s.router.HandleFunc("POST /api/v1/transcode/schedule", s.requireSetupOrAdmin(s.handleUpdateTranscodeSchedule))
@@ -1110,7 +1110,7 @@ func (s *Server) routes() {
 	s.router.HandleFunc("POST /api/v1/documents/imap/test", s.requireSetupOrAdmin(s.handleTestIMAPConnection))
 
 	// Document deadline extraction and obligation scanner endpoints
-	s.router.HandleFunc("GET /api/v1/documents/deadlines", s.handleGetDeadlines)
+	s.router.HandleFunc("GET /api/v1/documents/deadlines", s.requireSetupOrAdmin(s.handleGetDeadlines))
 	s.router.HandleFunc("POST /api/v1/documents/deadlines/{id}/dismiss", s.requireSetupOrAdmin(s.handleDismissDeadline))
 	s.router.HandleFunc("POST /api/v1/documents/deadlines/scan", s.requireSetupOrAdmin(s.handleScanDeadlines))
 
@@ -1132,12 +1132,12 @@ func (s *Server) routes() {
 	// AI Persona and Prompt Customization Endpoints
 	s.router.HandleFunc("GET /api/v1/ai/personas", s.handleListAIPersonas)
 	s.router.HandleFunc("GET /api/v1/ai/personas/{id}", s.handleGetAIPersona)
-	s.router.HandleFunc("POST /api/v1/ai/personas/active", s.handleSetActiveAIPersona)
+	s.router.HandleFunc("POST /api/v1/ai/personas/active", s.requireSetupOrAdmin(s.handleSetActiveAIPersona))
 	s.router.HandleFunc("GET /api/v1/ai/prompts", s.handleListAIPrompts)
 
 	// Single-Source-of-Truth RAG Endpoints
-	s.router.HandleFunc("POST /api/v1/ai/rag/search", s.handleRAGSearch)
-	s.router.HandleFunc("POST /api/v1/ai/rag/query", s.handleRAGQuery)
+	s.router.HandleFunc("POST /api/v1/ai/rag/search", s.requireSetupOrAdmin(s.handleRAGSearch))
+	s.router.HandleFunc("POST /api/v1/ai/rag/query", s.requireSetupOrAdmin(s.handleRAGQuery))
 
 	// AI Model and Backend Administration Endpoints
 	s.router.HandleFunc("GET /api/v1/ai/models", s.handleListAIModels)
@@ -1149,7 +1149,7 @@ func (s *Server) routes() {
 	s.router.HandleFunc("GET /api/v1/ai/settings", s.handleGetAISettings)
 	s.router.HandleFunc("POST /api/v1/ai/settings", s.requireSetupOrAdmin(s.handleUpdateAISettings))
 	s.router.HandleFunc("POST /api/v1/ai/reload", s.requireSetupOrAdmin(s.handleReloadAIEngine))
-	s.router.HandleFunc("GET /api/v1/ai/logs", s.handleGetAIInferenceLogs)
+	s.router.HandleFunc("GET /api/v1/ai/logs", s.requireSetupOrAdmin(s.handleGetAIInferenceLogs))
 }
 
 // handleAIGateway mediates /v1 inference requests to the internal llama-server spoke,
@@ -2778,7 +2778,7 @@ func (s *Server) handleRollbackService(w http.ResponseWriter, r *http.Request) {
 	rollbackCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
-	svc, err := mgr.RollbackService(rollbackCtx, id, failedRevNum)
+	svc, err := mgr.ManualRollbackService(rollbackCtx, id, failedRevNum)
 	if err != nil {
 		if errors.Is(err, supervisor.ErrServiceNotFound) {
 			s.writeProblem(w, http.StatusNotFound, "Service Not Found", fmt.Sprintf("Service '%s' is not defined", id), r.URL.Path)

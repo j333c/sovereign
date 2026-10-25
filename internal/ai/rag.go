@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -19,6 +18,35 @@ import (
 
 	_ "modernc.org/sqlite"
 )
+
+// inMemoryResponseWriter captures HTTP response headers, status code, and body in-memory.
+type inMemoryResponseWriter struct {
+	header http.Header
+	buf    bytes.Buffer
+	code   int
+}
+
+func newInMemoryResponseWriter() *inMemoryResponseWriter {
+	return &inMemoryResponseWriter{
+		header: make(http.Header),
+		code:   http.StatusOK,
+	}
+}
+
+func (w *inMemoryResponseWriter) Header() http.Header {
+	return w.header
+}
+
+func (w *inMemoryResponseWriter) Write(b []byte) (int, error) {
+	if w.code == 0 {
+		w.code = http.StatusOK
+	}
+	return w.buf.Write(b)
+}
+
+func (w *inMemoryResponseWriter) WriteHeader(statusCode int) {
+	w.code = statusCode
+}
 
 // Default context capacity and headroom buffer constants.
 const (
@@ -211,18 +239,18 @@ func (c *GatewayInferenceClient) Complete(ctx context.Context, req ChatCompletio
 	httpReq.Header.Set("X-Lane", "1")
 	httpReq.Header.Set("X-Generation-Intent", "precise")
 
-	rec := httptest.NewRecorder()
+	rec := newInMemoryResponseWriter()
 	c.gateway.ServeHTTP(rec, httpReq)
 
-	if rec.Code == http.StatusServiceUnavailable {
+	if rec.code == http.StatusServiceUnavailable {
 		return nil, ErrSafeStub
 	}
-	if rec.Code < 200 || rec.Code >= 300 {
-		return nil, fmt.Errorf("gateway inference error (status %d): %s", rec.Code, rec.Body.String())
+	if rec.code < 200 || rec.code >= 300 {
+		return nil, fmt.Errorf("gateway inference error (status %d): %s", rec.code, rec.buf.String())
 	}
 
 	var resp ChatCompletionResponse
-	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+	if err := json.Unmarshal(rec.buf.Bytes(), &resp); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal completion response: %w", err)
 	}
 	return &resp, nil
