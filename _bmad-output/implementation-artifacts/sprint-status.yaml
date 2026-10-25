@@ -29,7 +29,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 # - Retrospective appends its action items to action_items; the status view surfaces open ones
 generated: 10-15-2026 15:17
-last_updated: 10-25-2026 15:05
+last_updated: 10-25-2026 15:15
 project: sovereign
 project_key: NOKEY
 tracking_system: file-system
@@ -90,11 +90,12 @@ development_status:
   7-3-open-source-governance-bmad-attribution-license-compliance-s: done
   epic-7-retrospective: done
 
-  epic-8: backlog
+  epic-8: in-progress
   8-1-core-daemon-transaction-atomicity-wal-checkpointing-rollback-circuit-breaker: backlog
   8-2-ingestion-preflight-capacity-guards-peripheral-error-recovery: backlog
   8-3-critical-path-fault-injection-stream-verification-suite: backlog
   8-4-multilingual-modal-token-validation-hardware-calculator-baseline: backlog
+  8-5-public-github-repo-distribution-dual-remote-sync: done
   epic-8-retrospective: optional
 
   epic-9: backlog

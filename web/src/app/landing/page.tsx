@@ -19,7 +19,7 @@ export interface LandingPageProps {
 
 type FeatureTabKey = "video" | "audio" | "dms" | "ai" | "disc";
 
-const REPO_URL = process.env.NEXT_PUBLIC_REPO_URL || "https://github.com/jens/sovereign";
+const REPO_URL = process.env.NEXT_PUBLIC_REPO_URL || "https://github.com/j333c/sovereign";
 
 export default function LandingPage({
   initialLanguage,

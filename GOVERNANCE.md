@@ -26,7 +26,7 @@ The project maintainers oversee the technical direction, release management, and
 
 ## 3. Decision-Making Process
 
-- **Consensus by Default**: Architectural enhancements, API additions, and new spoke integrations are discussed openly in repository issues, discussions, and pull requests on `http://git.crins:3000/jens/sovereign` (and mirrored on GitHub).
+- **Consensus by Default**: Architectural enhancements, API additions, and new spoke integrations are discussed openly in repository issues, discussions, and pull requests on the public GitHub repository at [https://github.com/j333c/sovereign](https://github.com/j333c/sovereign) (and synchronized with internal development).
 - **Architectural Invariant Veto**: Any change that compromises zero-telemetry, mounts the Docker socket into spoke containers, breaks CGO-free portability, or drops multilingual parity cannot be merged without unanimous maintainer consensus.
 - **RFC Workflow**: Large structural changes (new spoke workloads, major database schema migrations) are proposed via an architectural RFC document detailing user intent, trade-offs, and rollback safety before implementation.
 

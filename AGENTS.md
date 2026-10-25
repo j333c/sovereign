@@ -7,8 +7,10 @@ Sovereign is a private, self-hosted home server appliance monorepo. Go superviso
 
 ## Policy
 
-- Commit and push (`git push origin main`) with clear, descriptive commit messages after every important step or completed milestone.
-- Remote repository is `http://git.crins:3000/jens/sovereign`.
+- Commit and push (`git push origin main` for internal dev, `git push github main` for public distribution) with clear, descriptive commit messages after every important step or completed milestone.
+- Dual-remote architecture:
+  - Internal development repo: `origin` (`http://git.crins:3000/jens/sovereign`)
+  - Public anonymous user repo: `github` (`https://github.com/j333c/sovereign`) — holds everything for installing, updating, and using Sovereign.
 - Do not commit personal configs (`*.user.toml`).
 - Never hand-edit `web/src/lib/api/schema.d.ts` — run `npm --prefix web run codegen` from `api/openapi.yaml`.
 - Never mount `/var/run/docker.sock` in spoke application containers; all container lifecycle operations must be mediated by the Go daemon.
@@ -44,3 +46,10 @@ Sovereign is a private, self-hosted home server appliance monorepo. Go superviso
 
 <!-- /bmad:context -->
 
+## Repository Architecture & Remotes
+
+- **Internal Development Repo**: `http://git.crins:3000/jens/sovereign` (`origin`) - authoritative internal development remote.
+- **Public Community & Distribution Repo**: `https://github.com/j333c/sovereign` (`github`) - public GitHub repository holding everything needed for installing, updating, and using Sovereign for anonymous users.
+- **Push Workflow**:
+  - Internal development: `git push origin main`
+  - Public release/distribution: `git push github main`

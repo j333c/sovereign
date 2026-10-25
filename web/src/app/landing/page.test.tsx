@@ -26,7 +26,7 @@ describe("Public Marketing Landing Website & Feature Showcase (Story 7.2)", () =
     assert.ok(html.includes('data-testid="landing-cta-github"'), "renders GitHub repo CTA button");
     assert.ok(html.includes('href="/"'), "dashboard CTA links to /");
     assert.ok(html.includes('href="/hardware"'), "hardware CTA links to /hardware");
-    assert.ok(html.includes("https://github.com/jens/sovereign"), "GitHub CTA links to repository");
+    assert.ok(html.includes("https://github.com/j333c/sovereign"), "GitHub CTA links to repository");
 
     // Trust statistics
     assert.ok(html.includes("0"), "renders 0 Cloud Pings stat");

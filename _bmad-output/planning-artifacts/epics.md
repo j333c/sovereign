@@ -138,8 +138,8 @@ The open-source user or hardware adopter can consult public hardware specificati
 **FRs covered:** FR20, FR21
 
 ### Epic 8: Operational Hardening, Edge-Case Resilience & Verification Safety Net
-The appliance administrator and developer can rely on comprehensive transaction atomicity during initial setup, safe WAL checkpointing before snapshot restoration, rollback loop circuit breakers, pre-flight disk capacity guards, graceful peripheral disconnect handling, and rigorous fault-injection and stream duration test suites.
-**FRs covered:** AR6, AR7, AR3, NFR1, NFR4 (Action Items from Epics 1–7 Retrospectives)
+The appliance administrator and developer can rely on comprehensive transaction atomicity during initial setup, safe WAL checkpointing before snapshot restoration, rollback loop circuit breakers, pre-flight disk capacity guards, graceful peripheral disconnect handling, rigorous fault-injection and stream duration test suites, and an automated dual-remote distribution pipeline to the public GitHub repository (`https://github.com/j333c/sovereign`).
+**FRs covered:** AR6, AR7, AR3, NFR1, NFR4, FR20 (Action Items from Epics 1–7 Retrospectives & Dual-Remote Architecture)
 
 ### Epic 9: Turnkey One-Line Linux Host Installer & Host Provisioning Engine
 The user can convert any compatible x86_64 or ARM64 Linux machine into a fully functional Sovereign appliance via a single console command (`curl -fsSL https://get.sovereign.local/install.sh | sudo bash`), featuring automated OS detection, Docker/Compose provisioning, `/opt/sovereign` deployment, systemd integration, and instant setup wizard handoff.
@@ -745,6 +745,24 @@ So that users across all languages and hardware tiers have an intuitive, safe, a
 **Given** the turnkey hardware specification and roadmap documentation
 **When** reviewing hardware tiers and pre-assembled appliance offerings
 **Then** clear open-source warranty boundaries and community support disclaimers are explicitly articulated.
+
+### Story 8.5: Public GitHub Repository Distribution & Dual-Remote Synchronization
+
+As an open-source user or community contributor,
+I want Sovereign to maintain a public GitHub repository at `https://github.com/j333c/sovereign` synchronized with internal development on `http://git.crins:3000/jens/sovereign`,
+So that anonymous users have access to everything required to install, update, and operate Sovereign with zero reliance on internal private infrastructure.
+
+**Acceptance Criteria:**
+
+**Given** the public GitHub repository at `https://github.com/j333c/sovereign`
+**When** accessed by anonymous users or open-source contributors
+**Then** the repository contains the complete codebase, daemon orchestrator, Next.js web application, compose templates, Caddy configurations, and public guides needed to install, update, and run Sovereign.
+**And** sensitive internal credentials, personal configuration overrides (`*.user.toml`), and private development secrets are excluded from publication.
+**Given** the local development environment
+**When** managing git remotes
+**Then** `origin` is configured to `http://git.crins:3000/jens/sovereign` as the internal development repository.
+**And** `github` is configured to `https://github.com/j333c/sovereign.git` as the public distribution repository.
+**And** project documentation (`AGENTS.md`, `README.md`, `CONTRIBUTING.md`, `GOVERNANCE.md`, and `NOTICE`) explicitly references the public repository URL.
 
 
 ## Epic 9: Turnkey One-Line Linux Host Installer & Host Provisioning Engine

@@ -27,13 +27,13 @@ All contributions must preserve Sovereign's foundational architectural guarantee
 ## Development Workflow
 
 ### Repository & Upstream Remotes
-The authoritative repository for Sovereign is hosted at:
-- **Primary Remote**: `http://git.crins:3000/jens/sovereign`
-- **Mirror**: `https://github.com/jens/sovereign`
+Sovereign maintains a dual-remote repository architecture:
+- **Public Community & Distribution Repo**: `https://github.com/j333c/sovereign` (for anonymous users, installation, documentation, issues, and public contributions)
+- **Internal Development Repo**: `http://git.crins:3000/jens/sovereign` (internal team development remote)
 
-Clone and set up your remote:
+Community contributors can clone directly from GitHub:
 ```bash
-git clone http://git.crins:3000/jens/sovereign
+git clone https://github.com/j333c/sovereign.git
 cd sovereign
 ```
 

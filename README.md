@@ -1,6 +1,7 @@
 # Sovereign: The 100% Private Self-Hosted Home Appliance
 
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+[![GitHub](https://img.shields.io/badge/GitHub-j333c%2Fsovereign-181717?logo=github)](https://github.com/j333c/sovereign)
 [![Zero Cloud Telemetry](https://img.shields.io/badge/Telemetry-0%25%20Air--Gapped-emerald.svg)](#zero-telemetry-privacy-invariants)
 [![Method](https://img.shields.io/badge/Built%20with-BMad%20Method-8A2BE2.svg)](#bmad-method-attribution)
 [![AI Assisted](https://img.shields.io/badge/Development-AI--Assisted-informational.svg)](#transparent-ai-assisted-development-notice)
@@ -87,10 +88,19 @@ Detailed guides and bill-of-materials recommendations are available in [docs/har
 
 ## Quickstart & Installation
 
-### 1. Booting the Appliance
+Sovereign is publicly available on GitHub at [https://github.com/j333c/sovereign](https://github.com/j333c/sovereign).
+
+### 1. Getting the Code
+Clone the repository to your host machine:
+```bash
+git clone https://github.com/j333c/sovereign.git
+cd sovereign
+```
+
+### 2. Booting the Appliance
 Connect your machine to power and an Ethernet cable connected to your home router. Press the power button. The appliance will initialize network services within 30 to 45 seconds.
 
-### 2. Local Network Discovery
+### 3. Local Network Discovery
 Open any browser on your home Wi-Fi and navigate to:
 ```
 http://sovereign.local
