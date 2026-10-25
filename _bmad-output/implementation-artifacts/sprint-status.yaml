@@ -29,7 +29,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 # - Retrospective appends its action items to action_items; the status view surfaces open ones
 generated: 10-15-2026 15:17
-last_updated: 10-15-2026 15:28
+last_updated: 10-25-2026 14:31
 project: sovereign
 project_key: NOKEY
 tracking_system: file-system
@@ -42,7 +42,7 @@ development_status:
   1-4-storage-pool-formatting-network-nas-mount-management: done
   1-5-five-step-first-run-setup-wizard-rbac-authentication: done
   1-6-central-admin-dashboard-real-time-sse-telemetry-stream: done
-  epic-1-retrospective: optional
+  epic-1-retrospective: done
 
 
   epic-2: done
@@ -51,21 +51,21 @@ development_status:
   2-3-in-house-video-streaming-integration-jellyfin: done
   2-4-music-audiobook-streaming-integration-navidrome-audiobookshe: done
   2-5-staged-dropzone-ingestion-pipeline-web-upload-interface: done
-  epic-2-retrospective: optional
+  epic-2-retrospective: done
 
   epic-3: done
   3-1-optical-drive-detection-automated-disc-ripping-engine: done
   3-2-automated-media-metadata-artwork-enrichment: done
   3-3-off-peak-transcoding-queue-universal-direct-play-pre-encodin: done
   3-4-mobile-offline-profile-generation-ipad-sync: done
-  epic-3-retrospective: optional
+  epic-3-retrospective: done
 
   epic-4: done
   4-1-centralized-document-management-integration-paperless-ngx: done
   4-2-multi-channel-ingestion-mobile-scanner-automated-imap-email: done
   4-3-deadline-extraction-parser-obligation-scanner: done
   4-4-home-assistant-webhook-mqtt-email-alert-dispatcher: done
-  epic-4-retrospective: optional
+  epic-4-retrospective: done
 
   epic-5: done
   5-1-managed-llama-cpp-backend-appliance-boundary-guard-suite: done
@@ -74,7 +74,7 @@ development_status:
   5-4-open-webui-chat-interface-localized-customization-prompts: done
   5-5-single-source-of-truth-rag-context-window-headroom-truncator: done
   5-6-ai-backend-model-administration-interface-in-settings: done
-  epic-5-retrospective: optional
+  epic-5-retrospective: done
 
   epic-6: done
   6-1-declarative-compose-revisioning-pre-upgrade-snapshot-engine: done
@@ -82,10 +82,153 @@ development_status:
   6-3-one-click-manual-rollback-rollback-confirmation-modal: done
   6-4-modular-central-settings-hub-destructive-protection-dialogs: done
   6-5-full-four-language-internationalization-i18n: done
-  epic-6-retrospective: optional
+  epic-6-retrospective: done
 
   epic-7: done
   7-1-minimum-hardware-specification-guides-hardware-tier-roadmap: done
   7-2-public-marketing-landing-website-feature-showcase: done
   7-3-open-source-governance-bmad-attribution-license-compliance-s: done
-  epic-7-retrospective: optional
+  epic-7-retrospective: done
+action_items:
+  - id: "epic-1-retro-item-1-sse-server-timeout"
+    epic: 1
+    action: "Adjust http.Server timeouts in main.go to support persistent SSE connections
+      and long streams"
+    owner: "Amelia (Dev)"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-1-retro-2026-10-25.md"
+  - id: "epic-1-retro-item-2-setup-tx-atomicity"
+    epic: 1
+    action: "Enforce transaction atomicity in CompleteSetup"
+    owner: "Amelia (Dev)"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-1-retro-2026-10-25.md"
+  - id: "epic-1-retro-item-3-sse-duration-test"
+    epic: 1
+    action: "Add end-to-end connection duration test for SSE stream"
+    owner: "Amelia (Dev)"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-1-retro-2026-10-25.md"
+  - id: "epic-2-retro-item-1-service-lifecycle-auth"
+    epic: 2
+    action: "Wrap service activation and deactivation endpoints with authentication
+      guard"
+    owner: "Amelia (Dev)"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-2-retro-2026-10-25.md"
+  - id: "epic-2-retro-item-2-docker-socket-telemetry"
+    epic: 2
+    action: "Add visible telemetry and log warnings when Docker socket is missing"
+    owner: "Winston (Architect)"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-2-retro-2026-10-25.md"
+  - id: "epic-2-retro-item-3-dropzone-capacity-guard"
+    epic: 2
+    action: "Add pre-flight disk capacity verification to media dropzone"
+    owner: "Amelia (Dev)"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-2-retro-2026-10-25.md"
+  - id: "epic-3-retro-item-1-optical-transcode-auth"
+    epic: 3
+    action: "Apply authentication middleware to optical eject and transcode enqueue
+      endpoints"
+    owner: "Amelia (Dev)"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-3-retro-2026-10-25.md"
+  - id: "epic-3-retro-item-2-metadata-retry-backoff"
+    epic: 3
+    action: "Add exponential backoff to metadata enrichment API failures"
+    owner: "Amelia (Dev)"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-3-retro-2026-10-25.md"
+  - id: "epic-3-retro-item-3-optical-eio-handling"
+    epic: 3
+    action: "Handle unexpected optical drive disconnection gracefully"
+    owner: "Winston (Architect)"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-3-retro-2026-10-25.md"
+  - id: "epic-4-retro-item-1-deadlines-auth-protection"
+    epic: 4
+    action: "Protect deadline queries with administrative authentication"
+    owner: "Amelia (Dev)"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-4-retro-2026-10-25.md"
+  - id: "epic-4-retro-item-2-imap-tls-options"
+    epic: 4
+    action: "Support custom or self-signed TLS certificates in IMAP configuration"
+    owner: "Winston (Architect)"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-4-retro-2026-10-25.md"
+  - id: "epic-4-retro-item-3-alert-dispatch-retry-test"
+    epic: 4
+    action: "Add persistent retry queue test for failed SMTP / Webhook alert dispatches"
+    owner: "Amelia (Dev)"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-4-retro-2026-10-25.md"
+  - id: "epic-5-retro-item-1-remove-production-httptest"
+    epic: 5
+    action: "Eliminate net/http/httptest import from production rag.go"
+    owner: "Amelia (Dev)"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-5-retro-2026-10-25.md"
+  - id: "epic-5-retro-item-2-rag-logs-auth"
+    epic: 5
+    action: "Protect AI RAG search/query and inference log endpoints with authentication"
+    owner: "Amelia (Dev)"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-5-retro-2026-10-25.md"
+  - id: "epic-5-retro-item-3-warmup-timeout-alignment"
+    epic: 5
+    action: "Align main.go HTTP timeouts with Story 5.3 >=60s warm-up buffer"
+    owner: "Amelia (Dev)"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-5-retro-2026-10-25.md"
+  - id: "epic-5-retro-item-4-model-storage-reserve-test"
+    epic: 5
+    action: "Add test coverage for 5GB model storage reservation guard"
+    owner: "Amelia (Dev)"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-5-retro-2026-10-25.md"
+  - id: "epic-6-retro-item-1-manual-rollback-green-status"
+    epic: 6
+    action: "Restore feature card to Green / Healthy status after successful manual
+      rollback"
+    owner: "Amelia (Dev)"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-6-retro-2026-10-25.md"
+  - id: "epic-6-retro-item-2-wal-checkpoint-pre-restore"
+    epic: 6
+    action: "Enforce database WAL checkpointing before database file snapshot restoration"
+    owner: "Winston (Architect)"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-6-retro-2026-10-25.md"
+  - id: "epic-6-retro-item-3-rollback-circuit-breaker"
+    epic: 6
+    action: "Add circuit breaker to rollback execution loop"
+    owner: "Winston (Architect)"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-6-retro-2026-10-25.md"
+  - id: "epic-6-retro-item-4-i18n-destructive-modal-tokens"
+    epic: 6
+    action: "Verify multilingual confirmation token matching in DestructiveModal"
+    owner: "Sally (UX)"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-6-retro-2026-10-25.md"
+  - id: "epic-7-retro-item-1-refresh-agents-md"
+    epic: 7
+    action: "Refresh repository agent instructions with bmad-project-context"
+    owner: "Winston (Architect)"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-7-retro-2026-10-25.md"
+  - id: "epic-7-retro-item-2-hardware-warranty-disclaimer"
+    epic: 7
+    action: "Add warranty and support disclaimer to turnkey hardware roadmap"
+    owner: "John (PM)"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-7-retro-2026-10-25.md"
+  - id: "epic-7-retro-item-3-hardware-calculator-baseline"
+    epic: 7
+    action: "Provide Light Tier baseline fallback in hardware calculator UI"
+    owner: "Sally (UX)"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-7-retro-2026-10-25.md"
