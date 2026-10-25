@@ -2,7 +2,7 @@
 title: 'Story 8.1: Core Daemon Transaction Atomicity, WAL Restoration Checkpointing & Rollback Circuit Breaker'
 type: 'feature'
 created: '2026-10-25'
-status: 'in-review'
+status: 'done'
 baseline_commit: '8943d107e134743043b57a3ef7b3694b26c9be0c'
 route: 'dispatch'
 review_loop_iteration: 0
