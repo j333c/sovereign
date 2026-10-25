@@ -90,30 +90,56 @@ Detailed guides and bill-of-materials recommendations are available in [docs/har
 
 Sovereign is publicly available on GitHub at [https://github.com/j333c/sovereign](https://github.com/j333c/sovereign).
 
-### 1. Getting the Code
-Clone the repository to your host machine:
+### 🚀 Turnkey One-Line Linux Installation (Recommended)
+
+To install Sovereign on any clean Linux machine (Ubuntu, Debian, Fedora, or Arch on x86_64 or ARM64), paste this single line into your terminal:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/j333c/sovereign/main/install.sh | sudo bash
+```
+
+**What the installer does automatically:**
+1. Validates system requirements (architecture, OS, $\ge 4\text{ GB}$ RAM, $\ge 20\text{ GB}$ storage).
+2. Provisions official Docker Engine & Docker Compose v2 if not already present.
+3. Deploys the Sovereign release from GitHub to `/opt/sovereign`.
+4. Initializes persistent partitioned storage under `/data`.
+5. Enables and starts the `sovereign.service` systemd unit for automatic startup on machine boot.
+6. Opens required firewall ports (`80/tcp`, `443/tcp`, `5353/udp`).
+7. Displays your local access URL (`http://sovereign.local` or direct LAN IP).
+
+*To run unattended without confirmation prompts, pass `-y`:*
+```bash
+curl -fsSL https://raw.githubusercontent.com/j333c/sovereign/main/install.sh | sudo bash -s -- --yes
+```
+
+---
+
+### 🛠️ Alternative: Manual Git Clone & Development Setup
+
+Developers or users configuring custom environments can clone the repository directly:
+
 ```bash
 git clone https://github.com/j333c/sovereign.git
 cd sovereign
+docker compose up -d
 ```
 
-### 2. Booting the Appliance
-Connect your machine to power and an Ethernet cable connected to your home router. Press the power button. The appliance will initialize network services within 30 to 45 seconds.
+---
 
-### 3. Local Network Discovery
-Open any browser on your home Wi-Fi and navigate to:
-```
-http://sovereign.local
-```
-*(If your network does not resolve mDNS, check your router's DHCP client list for the IP address assigned to `sovereign` and browse to `http://<ip-address>`)*.
+### 🌐 Local Network Discovery & First-Run Setup Wizard
 
-### 3. First-Run Setup Wizard
-On initial visit, the 5-step onboarding wizard guides you through:
-1. **Language Selection**: English, German, Spanish, or French.
-2. **Network Verification**: Local hostname confirmation and mDNS validation.
-3. **Storage Configuration**: Local disk pool formatting or household NAS mount (SMB/NFS).
-4. **Feature Activation**: Enable desired spokes (Streaming, Audio, OCR, Private AI, Disc Ingestion).
-5. **Master Admin Credentials**: Set your appliance administrative password.
+Once installed and running:
+1. Open any browser on your home Wi-Fi and navigate to:
+   ```
+   http://sovereign.local
+   ```
+   *(If your network does not resolve mDNS, check your router's DHCP client list for the IP address assigned to `sovereign` and browse to `http://<ip-address>`)*.
+2. Complete the 5-step onboarding wizard:
+   - **Language Selection**: English, German, Spanish, or French.
+   - **Network Verification**: Local hostname confirmation and mDNS validation.
+   - **Storage Configuration**: Local disk pool formatting or household NAS mount (SMB/NFS).
+   - **Feature Activation**: Enable desired spokes (Streaming, Audio, OCR, Private AI, Disc Ingestion).
+   - **Master Admin Credentials**: Set your appliance administrative password.
 
 ---
 

@@ -1,6 +1,7 @@
 # Sovereign Home Appliance Guides (English)
 
 ## 1. Quickstart & Setup
+- **One-Line Turnkey Installer:** On any clean Linux machine, run `curl -fsSL https://raw.githubusercontent.com/j333c/sovereign/main/install.sh | sudo bash` to automatically provision Docker, deploy `/opt/sovereign`, and start the appliance.
 - **Hardware Connections:** Connect your Sovereign server to AC power and plug an Ethernet cable directly into your home router. Press the power button.
 - **Local Network Discovery:** Open `http://sovereign.local` on any device connected to your Wi-Fi. If your router blocks mDNS multicast, access the router's DHCP list and enter the IP assigned to `sovereign` (e.g. `http://192.168.1.50`).
 - **First-Run Wizard:** Complete the 5-step wizard to select your language, check network connectivity, initialize storage, pick initial services, and set your master administrator password.

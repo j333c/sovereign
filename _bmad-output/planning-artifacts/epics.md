@@ -45,7 +45,7 @@ FR18: Active GPU & VRAM Arbitration & Day/Night Scheduling — The system dynami
 FR19: Multi-Language UI & Documentation — The system displays all admin interfaces, setup wizards, and user documentation in four primary launch languages (English, German, Spanish, French) with an instant language switcher and browser language autodetection.
 FR20: Project Marketing Site & GitHub Presence — The project maintains a public marketing website and open-source GitHub repository detailing project architecture, BMad Method attribution, transparent AI-assistance notes, and FOSS license compliance.
 FR21: Minimum Hardware Specification Guidance & Future Hardware Roadmap — The platform publishes concrete minimum hardware profiles across three tiers (Light Tier, Media Tier, AI & Power Tier) and reserves architectural hooks for turnkey hardware appliance sales.
-FR22: Turnkey One-Line Linux Host Installer — The user can provision a standard Linux machine (Debian/Ubuntu, Fedora, Arch) into a fully operational Sovereign home server appliance by pasting a single shell command (`curl -fsSL https://get.sovereign.local/install.sh | sudo bash`), executing automated OS pre-flight validation, official Docker CE / Compose substrate installation, `/opt/sovereign` binary and asset deployment, partitioned `/data` hierarchy creation, systemd service registration, and instant browser setup handoff.
+FR22: Turnkey One-Line Linux Host Installer — The user can provision a standard Linux machine (Debian/Ubuntu, Fedora, Arch) into a fully operational Sovereign home server appliance by pasting a single shell command (`curl -fsSL https://raw.githubusercontent.com/j333c/sovereign/main/install.sh | sudo bash`), executing automated OS pre-flight validation, official Docker CE / Compose substrate installation, repository acquisition from `https://github.com/j333c/sovereign.git` into `/opt/sovereign`, partitioned `/data` hierarchy creation, systemd service registration, and instant browser setup handoff.
 
 ### NonFunctional Requirements
 
@@ -142,7 +142,7 @@ The appliance administrator and developer can rely on comprehensive transaction 
 **FRs covered:** AR6, AR7, AR3, NFR1, NFR4, FR20 (Action Items from Epics 1–7 Retrospectives & Dual-Remote Architecture)
 
 ### Epic 9: Turnkey One-Line Linux Host Installer & Host Provisioning Engine
-The user can convert any compatible x86_64 or ARM64 Linux machine into a fully functional Sovereign appliance via a single console command (`curl -fsSL https://get.sovereign.local/install.sh | sudo bash`), featuring automated OS detection, Docker/Compose provisioning, `/opt/sovereign` deployment, systemd integration, and instant setup wizard handoff.
+The user can convert any compatible x86_64 or ARM64 Linux machine into a fully functional Sovereign appliance via a single console command (`curl -fsSL https://raw.githubusercontent.com/j333c/sovereign/main/install.sh | sudo bash`), featuring automated OS detection, Docker/Compose provisioning, repository deployment from `https://github.com/j333c/sovereign.git` into `/opt/sovereign`, systemd integration, and instant setup wizard handoff.
 **FRs covered:** FR22
 
 
@@ -767,12 +767,12 @@ So that anonymous users have access to everything required to install, update, a
 
 ## Epic 9: Turnkey One-Line Linux Host Installer & Host Provisioning Engine
 
-The user can convert any compatible x86_64 or ARM64 Linux machine into a fully functional Sovereign appliance via a single console command (`curl -fsSL https://get.sovereign.local/install.sh | sudo bash`), featuring automated OS detection, Docker/Compose provisioning, `/opt/sovereign` deployment, systemd integration, and instant setup wizard handoff.
+The user can convert any compatible x86_64 or ARM64 Linux machine into a fully functional Sovereign appliance via a single console command (`curl -fsSL https://raw.githubusercontent.com/j333c/sovereign/main/install.sh | sudo bash`), featuring automated OS detection, Docker/Compose provisioning, repository deployment from `https://github.com/j333c/sovereign.git` into `/opt/sovereign`, systemd integration, and instant setup wizard handoff.
 
 ### Story 9.1: One-Line Installer Shell Script & Host Environment Validation Engine
 
 As a home server adopter,
-I want to paste a single command into my Linux console (`curl -fsSL https://get.sovereign.local/install.sh | sudo bash`) that checks my hardware and operating system compatibility,
+I want to paste a single command into my Linux console (`curl -fsSL https://raw.githubusercontent.com/j333c/sovereign/main/install.sh | sudo bash`) that checks my hardware and operating system compatibility,
 So that I can verify my machine meets all requirements before any system modifications occur.
 
 **Acceptance Criteria:**
@@ -804,14 +804,14 @@ So that the host has a fully certified container substrate ready for Sovereign's
 ### Story 9.3: Appliance Filesystem Layout, Service Configuration & Systemd Integration
 
 As an appliance administrator,
-I want the installer to deploy the Sovereign supervisor daemon, Caddy ingress gateway, and web assets to `/opt/sovereign`, initialize `/data`, and register a persistent `sovereign.service` systemd unit,
+I want the installer to deploy the Sovereign supervisor daemon, Caddy ingress gateway, and web assets to `/opt/sovereign` from `https://github.com/j333c/sovereign.git`, initialize `/data`, and register a persistent `sovereign.service` systemd unit,
 So that Sovereign boots automatically on machine startup and recovers gracefully from system reboots.
 
 **Acceptance Criteria:**
 
 **Given** valid installation dependencies on the host
 **When** the installer deploys the appliance
-**Then** the Sovereign daemon binary, web static build, initial `Caddyfile`, and compose templates are installed into `/opt/sovereign` with appropriate permissions.
+**Then** the repository is fetched or updated from `https://github.com/j333c/sovereign.git` into `/opt/sovereign` with appropriate permissions.
 **And** the structured `/data` hierarchy is initialized (`/data/state`, `/data/media`, `/data/documents`, `/data/models`, `/data/drop`) with ownership set to the `sovereign` service user.
 **And** a `sovereign.service` systemd unit is installed to `/etc/systemd/system/sovereign.service`, enabled for automatic startup at boot (`multi-user.target`), and started immediately.
 **And** the systemd unit enforces restart-on-failure with backoff and clean graceful shutdown forwarding `SIGTERM` to the daemon.
@@ -834,5 +834,5 @@ So that I know exactly how to open the Setup Wizard in my browser and have a saf
 **Then** the script stops and disables `sovereign.service`, stops and removes Sovereign managed containers, and prompts the user whether to preserve or purge `/data` storage to prevent accidental data loss.
 **Given** an administrator updating the appliance host installer
 **When** running `install.sh --upgrade`
-**Then** the installer pulls the latest daemon release and updates systemd units without destroying persistent configuration or database state.
+**Then** the installer pulls the latest release from `https://github.com/j333c/sovereign.git` and updates systemd units without destroying persistent configuration or database state.
 

@@ -1,6 +1,7 @@
 # Guías del electrodoméstico Sovereign (Español)
 
 ## 1. Inicio rápido y configuración
+- **Instalador de una sola línea:** En cualquier máquina Linux limpia, ejecute `curl -fsSL https://raw.githubusercontent.com/j333c/sovereign/main/install.sh | sudo bash` para instalar Docker automáticamente, desplegar `/opt/sovereign` e iniciar el servidor.
 - **Conexiones físicas:** Conecte el cable de alimentación y enchufe el cable de red Ethernet directamente a su rúter. Presione el botón de encendido.
 - **Acceso en red local:** Abra `http://sovereign.local` en cualquier dispositivo conectado a su red Wi-Fi. Si su rúter no admite mDNS, consulte la IP asignada en la tabla DHCP de su rúter (ej. `http://192.168.1.50`).
 - **Asistente inicial:** Complete los 5 pasos para seleccionar su idioma, verificar la red, inicializar el almacenamiento, activar servicios y definir su contraseña de administrador.

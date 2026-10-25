@@ -1,6 +1,7 @@
 # Sovereign-Heimserver Anleitungen (Deutsch)
 
 ## 1. Schnellstart & Einrichtung
+- **Ein-Zeilen-Installer:** Führen Sie auf jedem Linux-System `curl -fsSL https://raw.githubusercontent.com/j333c/sovereign/main/install.sh | sudo bash` aus, um Docker automatisch einzurichten, `/opt/sovereign` bereitzustellen und den Server zu starten.
 - **Hardware anschließen:** Verbinden Sie das Stromkabel und schließen Sie den Gigabit-Ethernet-Port direkt an Ihren Internet-Router an. Schalten Sie das Gerät ein.
 - **Server im Heimnetzwerk aufrufen:** Öffnen Sie `http://sovereign.local` in einem beliebigen Browser im selben WLAN. Falls Ihr Router kein mDNS unterstützt, suchen Sie in der DHCP-Tabelle Ihres Routers nach `sovereign` und rufen Sie die IP auf (z. B. `http://192.168.1.50`).
 - **Einrichtungsassistent:** Der 5-stufige Assistent leitet Sie durch Sprachauswahl, Netzwerkprüfung, Speicherinitialisierung, Dienstauswahl und die Vergabe des Administratorpassworts.

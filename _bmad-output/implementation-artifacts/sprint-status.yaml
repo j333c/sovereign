@@ -29,7 +29,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 # - Retrospective appends its action items to action_items; the status view surfaces open ones
 generated: 10-15-2026 15:17
-last_updated: 10-25-2026 15:15
+last_updated: 10-25-2026 15:22
 project: sovereign
 project_key: NOKEY
 tracking_system: file-system
@@ -98,11 +98,11 @@ development_status:
   8-5-public-github-repo-distribution-dual-remote-sync: done
   epic-8-retrospective: optional
 
-  epic-9: backlog
-  9-1-one-line-installer-script-host-environment-validation: backlog
-  9-2-automated-dependency-provisioning-docker-substrate-setup: backlog
-  9-3-appliance-filesystem-layout-service-config-systemd-integration: backlog
-  9-4-setup-handoff-uninstaller-maintenance-utilities: backlog
+  epic-9: done
+  9-1-one-line-installer-script-host-environment-validation: done
+  9-2-automated-dependency-provisioning-docker-substrate-setup: done
+  9-3-appliance-filesystem-layout-service-config-systemd-integration: done
+  9-4-setup-handoff-uninstaller-maintenance-utilities: done
   epic-9-retrospective: optional
 action_items:
   - id: "epic-1-retro-item-1-sse-server-timeout"

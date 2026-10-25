@@ -1,6 +1,7 @@
 # Guides de l'appareil Sovereign (Français)
 
 ## 1. Démarrage rapide & Configuration
+- **Installateur en une seule ligne :** Sur n'importe quelle machine Linux propre, exécutez `curl -fsSL https://raw.githubusercontent.com/j333c/sovereign/main/install.sh | sudo bash` pour installer Docker automatiquement, déployer `/opt/sovereign` et démarrer le serveur.
 - **Branchements matériels :** Raccordez le câble d'alimentation et branchez le câble réseau Ethernet directement à votre box Internet. Allumez le serveur.
 - **Accès sur le réseau local :** Rendez-vous sur `http://sovereign.local` depuis n'importe quel appareil sur votre Wi-Fi. Si votre box ne gère pas le mDNS, cherchez l'IP de `sovereign` dans la liste DHCP de votre box (ex. `http://192.168.1.50`).
 - **Assistant de premier lancement :** Suivez les 5 étapes pour choisir votre langue, tester la connexion réseau, initialiser le stockage, activer vos modules et choisir le mot de passe administrateur.
