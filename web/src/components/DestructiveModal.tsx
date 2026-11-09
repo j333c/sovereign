@@ -3,6 +3,21 @@ import { translations, type Language } from "@/lib/i18n";
 
 export type DestructiveActionType = "reboot" | "factory-reset" | "deactivate";
 
+export const LOCALIZED_RESET_TOKENS: Record<Language, string[]> = {
+  en: ["reset", "delete"],
+  de: ["reset", "delete", "löschen", "loeschen", "zurücksetzen", "zuruecksetzen"],
+  es: ["reset", "delete", "eliminar", "restablecer"],
+  fr: ["reset", "delete", "supprimer", "réinitialiser", "reinitialiser"],
+};
+
+export function isValidConfirmationToken(input: string | null | undefined, lang: Language): boolean {
+  if (!input || typeof input !== "string") return false;
+  const normalized = input.normalize("NFC").trim().toLowerCase();
+  if (!normalized) return false;
+  const allowed = LOCALIZED_RESET_TOKENS[lang] || LOCALIZED_RESET_TOKENS.en;
+  return allowed.some((token) => token.normalize("NFC") === normalized);
+}
+
 export interface DestructiveModalProps {
   isOpen: boolean;
   actionType: DestructiveActionType;
@@ -12,6 +27,7 @@ export interface DestructiveModalProps {
   onConfirm: () => Promise<void> | void;
   onClose: () => void;
   currentLanguage: Language;
+  initialResetInput?: string;
 }
 
 export function DestructiveModal({
@@ -23,9 +39,10 @@ export function DestructiveModal({
   onConfirm,
   onClose,
   currentLanguage,
+  initialResetInput = "",
 }: DestructiveModalProps) {
   const t = translations[currentLanguage];
-  const [resetInput, setResetInput] = useState("");
+  const [resetInput, setResetInput] = useState(initialResetInput);
   const dialogRef = useRef<HTMLDivElement>(null);
   const cancelButtonRef = useRef<HTMLButtonElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -39,9 +56,9 @@ export function DestructiveModal({
   // Reset state when opening/closing
   useEffect(() => {
     if (isOpen) {
-      setResetInput("");
+      setResetInput(initialResetInput);
     }
-  }, [isOpen, actionType]);
+  }, [isOpen, actionType, initialResetInput]);
 
   // Focus management: focus on open and restore on unmount/close
   useEffect(() => {
@@ -110,7 +127,7 @@ export function DestructiveModal({
     return null;
   }
 
-  const isResetValid = actionType !== "factory-reset" || resetInput.trim() === "RESET";
+  const isResetValid = actionType !== "factory-reset" || isValidConfirmationToken(resetInput, currentLanguage);
 
   // Derive title, description, and button text based on actionType
   let title = t.rebootTitle;
@@ -183,8 +200,9 @@ export function DestructiveModal({
                   void onConfirm();
                 }
               }}
-              placeholder="RESET"
+              placeholder={t.resetInputPlaceholder}
               disabled={isProcessing}
+              aria-invalid={actionType === "factory-reset" && resetInput.length > 0 && !isResetValid}
               className="w-full min-h-[44px] rounded-lg border border-[#CBD5E1] px-3.5 py-2 text-sm font-mono tracking-wider text-[#0F172A] placeholder-[#94A3B8] focus:border-rose-500 focus:outline-none focus:ring-2 focus:ring-rose-200"
               autoComplete="off"
               data-testid="factory-reset-input"

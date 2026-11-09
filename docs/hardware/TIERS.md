@@ -82,3 +82,14 @@ The **AI & Power Tier** transforms Sovereign into a comprehensive private househ
 ## Architectural Hooks: Turnkey Pre-Assembled Hardware
 
 For users who prefer a plug-and-play appliance rather than DIY PC building, Sovereign reserves architectural interfaces for factory-assembled turnkey appliances. Consult [ROADMAP.md](./ROADMAP.md) for pre-order announcements and hardware release phases.
+
+---
+
+## Open-Source Warranty & Support Boundaries
+
+Sovereign is an independent, community-driven open-source project licensed under the [Apache License, Version 2.0](../../LICENSE).
+
+- **Hardware Recommendations Disclaimer**: Hardware tier specifications (Light, Media, AI & Power) and component recommendations in this document are published for educational and informational purposes. Builders are responsible for verifying component compatibility, power supplies, cooling clearance, and local electrical compliance.
+- **Software Warranty Disclaimer**: In accordance with Apache 2.0 Sections 7 and 8, the software is provided "AS IS", without warranties of any kind. Maintainers and contributors disclaim all liability for hardware wear, data loss, or system interruption.
+- **Turnkey Appliance Warranty**: For official pre-assembled appliance hardware warranties and manufacturing partner boundaries, refer to [ROADMAP.md](./ROADMAP.md#warranty--support-disclaimers).
+

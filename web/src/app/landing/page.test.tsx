@@ -8,7 +8,7 @@ import HardwarePage from "@/app/hardware/page";
 import { translations } from "@/lib/i18n";
 
 function escapeHtml(s: string): string {
-  return s.replace(/&/g, "&amp;");
+  return s.replace(/&/g, "&amp;").replace(/'/g, "&#x27;");
 }
 
 describe("Public Marketing Landing Website & Feature Showcase (Story 7.2)", () => {
@@ -136,6 +136,53 @@ describe("Public Marketing Landing Website & Feature Showcase (Story 7.2)", () =
     assert.ok(aiHtml.includes(escapeHtml(translations.en.tierAIRam)), "renders AI Tier RAM");
     assert.ok(aiHtml.includes(escapeHtml(translations.en.tierAIStorage)), "renders AI Tier Storage");
     assert.ok(aiHtml.includes(escapeHtml(translations.en.tierAIPower)), "renders AI Tier Power");
+
+    // 4. Baseline Fallback (all features deselected) (Story 8.4)
+    // English (EN)
+    const baselineHtmlEn = renderToStaticMarkup(
+      <LandingPage
+        initialLanguage="en"
+        initialFeatures={{ dms: false, audio: false, video: false, disc: false, ai: false }}
+      />
+    );
+    assert.ok(baselineHtmlEn.includes('data-testid="calc-baseline-notice"'), "renders baseline notice badge in landing");
+    assert.ok(baselineHtmlEn.includes(escapeHtml(translations.en.calcBaselineBadge)), "displays English Baseline Profile label in landing");
+    assert.ok(baselineHtmlEn.includes(escapeHtml(translations.en.tierLightTitle)), "displays Light Tier title in landing");
+    assert.ok(baselineHtmlEn.includes(escapeHtml(translations.en.tierLightCpu)), "displays Light Tier CPU in landing");
+    assert.ok(baselineHtmlEn.includes(escapeHtml(translations.en.tierLightRam)), "displays Light Tier RAM in landing");
+    assert.ok(baselineHtmlEn.includes(escapeHtml(translations.en.tierLightStorage)), "displays Light Tier Storage in landing");
+    assert.ok(baselineHtmlEn.includes(escapeHtml(translations.en.tierLightPower)), "displays Light Tier Power in landing");
+    assert.ok(baselineHtmlEn.includes(escapeHtml(translations.en.calcBaselineDesc)), "displays localized English baseline copy in landing");
+
+    // German (DE)
+    const baselineHtmlDe = renderToStaticMarkup(
+      <LandingPage
+        initialLanguage="de"
+        initialFeatures={{ dms: false, audio: false, video: false, disc: false, ai: false }}
+      />
+    );
+    assert.ok(baselineHtmlDe.includes(escapeHtml(translations.de.calcBaselineBadge)), "displays German Basis-Profil label in landing");
+    assert.ok(baselineHtmlDe.includes(escapeHtml(translations.de.calcBaselineDesc)), "displays German baseline copy in landing");
+
+    // Spanish (ES)
+    const baselineHtmlEs = renderToStaticMarkup(
+      <LandingPage
+        initialLanguage="es"
+        initialFeatures={{ dms: false, audio: false, video: false, disc: false, ai: false }}
+      />
+    );
+    assert.ok(baselineHtmlEs.includes(escapeHtml(translations.es.calcBaselineBadge)), "displays Spanish Perfil básico label in landing");
+    assert.ok(baselineHtmlEs.includes(escapeHtml(translations.es.calcBaselineDesc)), "displays Spanish baseline copy in landing");
+
+    // French (FR)
+    const baselineHtmlFr = renderToStaticMarkup(
+      <LandingPage
+        initialLanguage="fr"
+        initialFeatures={{ dms: false, audio: false, video: false, disc: false, ai: false }}
+      />
+    );
+    assert.ok(baselineHtmlFr.includes(escapeHtml(translations.fr.calcBaselineBadge)), "displays French Profil de base label in landing");
+    assert.ok(baselineHtmlFr.includes(escapeHtml(translations.fr.calcBaselineDesc)), "displays French baseline copy in landing");
   });
 
   it("renders localized marketing content in German, Spanish, and French", () => {

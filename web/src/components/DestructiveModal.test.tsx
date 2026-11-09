@@ -2,7 +2,7 @@ import React from "react";
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { renderToStaticMarkup } from "react-dom/server";
-import { DestructiveModal } from "./DestructiveModal";
+import { DestructiveModal, isValidConfirmationToken } from "./DestructiveModal";
 import { translations, Language } from "@/lib/i18n";
 
 describe("DestructiveModal Component (Story 6.4)", () => {
@@ -257,5 +257,231 @@ describe("DestructiveModal Component (Story 6.4)", () => {
     assert.equal(confirmBtn.props.disabled, true);
     confirmBtn.props.onClick();
     assert.equal(confirmed, false, "onConfirm must not be called when reset confirmation is invalid");
+  });
+
+  it("validates localized confirmation tokens case-insensitively across EN, DE, ES, and FR (Story 8.4)", () => {
+    // 1. English (EN): RESET, DELETE
+    assert.equal(isValidConfirmationToken("RESET", "en"), true);
+    assert.equal(isValidConfirmationToken("reset", "en"), true);
+    assert.equal(isValidConfirmationToken("Reset", "en"), true);
+    assert.equal(isValidConfirmationToken("DELETE", "en"), true);
+    assert.equal(isValidConfirmationToken("delete", "en"), true);
+    assert.equal(isValidConfirmationToken("  reset  ", "en"), true);
+    assert.equal(isValidConfirmationToken("invalid", "en"), false);
+    assert.equal(isValidConfirmationToken("", "en"), false);
+
+    // 2. German (DE): LÖSCHEN, ZURÜCKSETZEN, RESET, DELETE
+    assert.equal(isValidConfirmationToken("LÖSCHEN", "de"), true);
+    assert.equal(isValidConfirmationToken("löschen", "de"), true);
+    assert.equal(isValidConfirmationToken("Löschen", "de"), true);
+    assert.equal(isValidConfirmationToken("loeschen", "de"), true);
+    assert.equal(isValidConfirmationToken("ZURÜCKSETZEN", "de"), true);
+    assert.equal(isValidConfirmationToken("zurücksetzen", "de"), true);
+    assert.equal(isValidConfirmationToken("zuruecksetzen", "de"), true);
+    assert.equal(isValidConfirmationToken("RESET", "de"), true);
+    assert.equal(isValidConfirmationToken("reset", "de"), true);
+    assert.equal(isValidConfirmationToken("DELETE", "de"), true);
+    assert.equal(isValidConfirmationToken("falsch", "de"), false);
+
+    // 3. Spanish (ES): ELIMINAR, RESTABLECER, RESET, DELETE
+    assert.equal(isValidConfirmationToken("ELIMINAR", "es"), true);
+    assert.equal(isValidConfirmationToken("eliminar", "es"), true);
+    assert.equal(isValidConfirmationToken("Eliminar", "es"), true);
+    assert.equal(isValidConfirmationToken("RESTABLECER", "es"), true);
+    assert.equal(isValidConfirmationToken("restablecer", "es"), true);
+    assert.equal(isValidConfirmationToken("RESET", "es"), true);
+    assert.equal(isValidConfirmationToken("DELETE", "es"), true);
+    assert.equal(isValidConfirmationToken("incorrecto", "es"), false);
+
+    // 4. French (FR): SUPPRIMER, RÉINITIALISER, REINITIALISER, RESET, DELETE
+    assert.equal(isValidConfirmationToken("SUPPRIMER", "fr"), true);
+    assert.equal(isValidConfirmationToken("supprimer", "fr"), true);
+    assert.equal(isValidConfirmationToken("Supprimer", "fr"), true);
+    assert.equal(isValidConfirmationToken("RÉINITIALISER", "fr"), true);
+    assert.equal(isValidConfirmationToken("réinitialiser", "fr"), true);
+    assert.equal(isValidConfirmationToken("reinitialiser", "fr"), true);
+    assert.equal(isValidConfirmationToken("RESET", "fr"), true);
+    assert.equal(isValidConfirmationToken("DELETE", "fr"), true);
+    assert.equal(isValidConfirmationToken("faux", "fr"), false);
+
+    // 5. Unicode NFD decomposed combining characters (macOS/iOS keyboards)
+    assert.equal(isValidConfirmationToken("lo\u0308schen", "de"), true, "matches NFD decomposed German umlaut");
+    assert.equal(isValidConfirmationToken("zuru\u0308cksetzen", "de"), true, "matches NFD decomposed German ü");
+    assert.equal(isValidConfirmationToken("re\u0301initialiser", "fr"), true, "matches NFD decomposed French é");
+
+    // 6. Runtime null/undefined/non-string type guards
+    assert.equal(isValidConfirmationToken(null, "en"), false);
+    assert.equal(isValidConfirmationToken(undefined, "de"), false);
+    assert.equal(isValidConfirmationToken(123 as any, "es"), false);
+  });
+
+  it("renders localized placeholders and aria-invalid attributes in factory-reset input (Story 8.4)", () => {
+    const htmlEn = renderToStaticMarkup(
+      <DestructiveModal
+        isOpen={true}
+        actionType="factory-reset"
+        onConfirm={() => {}}
+        onClose={() => {}}
+        currentLanguage="en"
+      />
+    );
+    assert.ok(htmlEn.includes('placeholder="RESET"'), "renders English placeholder");
+
+    const htmlDe = renderToStaticMarkup(
+      <DestructiveModal
+        isOpen={true}
+        actionType="factory-reset"
+        onConfirm={() => {}}
+        onClose={() => {}}
+        currentLanguage="de"
+      />
+    );
+    assert.ok(htmlDe.includes('placeholder="RESET / LÖSCHEN"'), "renders German placeholder");
+
+    const htmlEs = renderToStaticMarkup(
+      <DestructiveModal
+        isOpen={true}
+        actionType="factory-reset"
+        onConfirm={() => {}}
+        onClose={() => {}}
+        currentLanguage="es"
+      />
+    );
+    assert.ok(htmlEs.includes('placeholder="RESET / ELIMINAR"'), "renders Spanish placeholder");
+
+    const htmlFr = renderToStaticMarkup(
+      <DestructiveModal
+        isOpen={true}
+        actionType="factory-reset"
+        onConfirm={() => {}}
+        onClose={() => {}}
+        currentLanguage="fr"
+      />
+    );
+    assert.ok(htmlFr.includes('placeholder="RESET / SUPPRIMER"'), "renders French placeholder");
+
+    // aria-invalid validation test
+    const htmlInvalid = renderToStaticMarkup(
+      <DestructiveModal
+        isOpen={true}
+        actionType="factory-reset"
+        onConfirm={() => {}}
+        onClose={() => {}}
+        currentLanguage="en"
+        initialResetInput="wrong"
+      />
+    );
+    assert.ok(htmlInvalid.includes('aria-invalid="true"'), "sets aria-invalid=true on invalid non-empty input");
+
+    const htmlValid = renderToStaticMarkup(
+      <DestructiveModal
+        isOpen={true}
+        actionType="factory-reset"
+        onConfirm={() => {}}
+        onClose={() => {}}
+        currentLanguage="de"
+        initialResetInput="löschen"
+      />
+    );
+    assert.ok(!htmlValid.includes('aria-invalid="true"'), "does not set aria-invalid on valid input");
+  });
+
+  it("enables confirm button and invokes onConfirm at component layer with localized tokens (Story 8.4)", () => {
+    function findBtn(node: any, testId: string): any {
+      if (!node) return null;
+      if (node.props?.["data-testid"] === testId) return node;
+      if (node.props?.children) {
+        const children = Array.isArray(node.props.children) ? node.props.children : [node.props.children];
+        for (const child of children) {
+          const found = findBtn(child, testId);
+          if (found) return found;
+        }
+      }
+      return null;
+    }
+
+    // 1. German localized token "LÖSCHEN" enables confirm button
+    let deConfirmed = false;
+    let deResult: any = null;
+    function DeWrapper() {
+      deResult = DestructiveModal({
+        isOpen: true,
+        actionType: "factory-reset",
+        onConfirm: () => { deConfirmed = true; },
+        onClose: () => {},
+        currentLanguage: "de",
+        initialResetInput: "LÖSCHEN",
+      });
+      return null;
+    }
+    renderToStaticMarkup(React.createElement(DeWrapper));
+    const deConfirmBtn = findBtn(deResult, "destructive-confirm-button");
+    assert.ok(deConfirmBtn, "Confirm button must exist in DE mode");
+    assert.equal(deConfirmBtn.props.disabled, false, "Confirm button must be enabled with LÖSCHEN");
+    deConfirmBtn.props.onClick();
+    assert.equal(deConfirmed, true, "onConfirm must be invoked on click with LÖSCHEN");
+
+    // 2. Spanish localized token "eliminar" enables confirm button
+    let esConfirmed = false;
+    let esResult: any = null;
+    function EsWrapper() {
+      esResult = DestructiveModal({
+        isOpen: true,
+        actionType: "factory-reset",
+        onConfirm: () => { esConfirmed = true; },
+        onClose: () => {},
+        currentLanguage: "es",
+        initialResetInput: "eliminar",
+      });
+      return null;
+    }
+    renderToStaticMarkup(React.createElement(EsWrapper));
+    const esConfirmBtn = findBtn(esResult, "destructive-confirm-button");
+    assert.ok(esConfirmBtn, "Confirm button must exist in ES mode");
+    assert.equal(esConfirmBtn.props.disabled, false, "Confirm button must be enabled with eliminar");
+    esConfirmBtn.props.onClick();
+    assert.equal(esConfirmed, true, "onConfirm must be invoked on click with eliminar");
+
+    // 3. French localized token "supprimer" enables confirm button
+    let frConfirmed = false;
+    let frResult: any = null;
+    function FrWrapper() {
+      frResult = DestructiveModal({
+        isOpen: true,
+        actionType: "factory-reset",
+        onConfirm: () => { frConfirmed = true; },
+        onClose: () => {},
+        currentLanguage: "fr",
+        initialResetInput: "supprimer",
+      });
+      return null;
+    }
+    renderToStaticMarkup(React.createElement(FrWrapper));
+    const frConfirmBtn = findBtn(frResult, "destructive-confirm-button");
+    assert.ok(frConfirmBtn, "Confirm button must exist in FR mode");
+    assert.equal(frConfirmBtn.props.disabled, false, "Confirm button must be enabled with supprimer");
+    frConfirmBtn.props.onClick();
+    assert.equal(frConfirmed, true, "onConfirm must be invoked on click with supprimer");
+
+    // 4. Invalid input keeps confirm button disabled
+    let invalidConfirmed = false;
+    let invalidResult: any = null;
+    function InvalidWrapper() {
+      invalidResult = DestructiveModal({
+        isOpen: true,
+        actionType: "factory-reset",
+        onConfirm: () => { invalidConfirmed = true; },
+        onClose: () => {},
+        currentLanguage: "de",
+        initialResetInput: "falsch",
+      });
+      return null;
+    }
+    renderToStaticMarkup(React.createElement(InvalidWrapper));
+    const invalidBtn = findBtn(invalidResult, "destructive-confirm-button");
+    assert.ok(invalidBtn, "Confirm button must exist");
+    assert.equal(invalidBtn.props.disabled, true, "Confirm button must be disabled with invalid token");
+    invalidBtn.props.onClick();
+    assert.equal(invalidConfirmed, false, "onConfirm must not be called with invalid token");
   });
 });

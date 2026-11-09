@@ -5,6 +5,10 @@ import { renderToStaticMarkup } from "react-dom/server";
 import HardwarePage, { calculateHardwareTier, HardwareCalculatorState } from "./page";
 import { translations } from "@/lib/i18n";
 
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/'/g, "&#x27;");
+}
+
 describe("Hardware Tier Calculator & Profiles (Story 7.1)", () => {
   it("calculateHardwareTier correctly classifies feature sets into Light, Media, and AI Tiers", () => {
     // 1. Light Tier: DMS and/or Audio only
@@ -98,6 +102,53 @@ describe("Hardware Tier Calculator & Profiles (Story 7.1)", () => {
     assert.ok(html.includes('data-testid="calc-target-power"'), "renders recommended Power spec badge");
   });
 
+  it("renders Light Tier baseline when all feature checkboxes are deselected (Story 8.4)", () => {
+    // English (EN)
+    const htmlEn = renderToStaticMarkup(
+      <HardwarePage
+        initialLanguage="en"
+        initialFeatures={{ dms: false, audio: false, video: false, disc: false, ai: false }}
+      />
+    );
+    assert.ok(htmlEn.includes('data-testid="calc-baseline-notice"'), "renders baseline notice badge");
+    assert.ok(htmlEn.includes(escapeHtml(translations.en.calcBaselineBadge)), "displays English Baseline Profile label");
+    assert.ok(htmlEn.includes(escapeHtml(translations.en.tierLightTitle)), "displays Light Tier title in result box");
+    assert.ok(htmlEn.includes("Dual-core x86 or 64-bit ARM"), "displays Light Tier CPU baseline");
+    assert.ok(htmlEn.includes("4 GB DDR4 / DDR5"), "displays Light Tier RAM baseline");
+    assert.ok(htmlEn.includes("64 GB SSD"), "displays Light Tier storage baseline");
+    assert.ok(htmlEn.includes(escapeHtml(translations.en.calcBaselineDesc)), "displays localized English baseline copy");
+
+    // German (DE)
+    const htmlDe = renderToStaticMarkup(
+      <HardwarePage
+        initialLanguage="de"
+        initialFeatures={{ dms: false, audio: false, video: false, disc: false, ai: false }}
+      />
+    );
+    assert.ok(htmlDe.includes(escapeHtml(translations.de.calcBaselineBadge)), "displays German Basis-Profil label");
+    assert.ok(htmlDe.includes(escapeHtml(translations.de.calcBaselineDesc)), "displays German baseline copy");
+
+    // Spanish (ES)
+    const htmlEs = renderToStaticMarkup(
+      <HardwarePage
+        initialLanguage="es"
+        initialFeatures={{ dms: false, audio: false, video: false, disc: false, ai: false }}
+      />
+    );
+    assert.ok(htmlEs.includes(escapeHtml(translations.es.calcBaselineBadge)), "displays Spanish Perfil básico label");
+    assert.ok(htmlEs.includes(escapeHtml(translations.es.calcBaselineDesc)), "displays Spanish baseline copy");
+
+    // French (FR)
+    const htmlFr = renderToStaticMarkup(
+      <HardwarePage
+        initialLanguage="fr"
+        initialFeatures={{ dms: false, audio: false, video: false, disc: false, ai: false }}
+      />
+    );
+    assert.ok(htmlFr.includes(escapeHtml(translations.fr.calcBaselineBadge)), "displays French Profil de base label");
+    assert.ok(htmlFr.includes(escapeHtml(translations.fr.calcBaselineDesc)), "displays French baseline copy");
+  });
+
   it("renders turnkey pre-assembled hardware roadmap and reservation buttons", () => {
     const html = renderToStaticMarkup(<HardwarePage initialLanguage="en" />);
 
@@ -111,7 +162,7 @@ describe("Hardware Tier Calculator & Profiles (Story 7.1)", () => {
     assert.ok(html.includes('data-testid="reserve-btn-studio"'), "renders studio reserve button");
   });
 
-  it("renders preorder reservation dialog with model indicator, email input, and submit button", () => {
+  it("renders preorder reservation dialog with model indicator, email input, disclaimer, and submit button", () => {
     const html = renderToStaticMarkup(
       <HardwarePage
         initialLanguage="en"
@@ -125,6 +176,8 @@ describe("Hardware Tier Calculator & Profiles (Story 7.1)", () => {
     assert.ok(html.includes('data-testid="modal-selected-model"'), "renders selected model badge");
     assert.ok(html.includes("Sovereign Home (Phase 2)"), "displays Sovereign Home model name");
     assert.ok(html.includes('data-testid="preorder-email-input"'), "renders email input");
+    assert.ok(html.includes('data-testid="preorder-disclaimer"'), "renders open-source warranty disclaimer note");
+    assert.ok(html.includes(escapeHtml(translations.en.turnkeyModalDisclaimer)), "displays turnkey modal disclaimer text");
     assert.ok(html.includes('data-testid="preorder-submit-btn"'), "renders submit reservation button");
   });
 
@@ -144,27 +197,25 @@ describe("Hardware Tier Calculator & Profiles (Story 7.1)", () => {
   });
 
   it("renders localized hardware guidance in German, Spanish, and French", () => {
-    const escape = (s: string) => s.replace(/&/g, "&amp;");
-
     // German (DE)
     const deHtml = renderToStaticMarkup(<HardwarePage initialLanguage="de" />);
-    assert.ok(deHtml.includes(escape(translations.de.hardwareTitle)), "renders German title");
-    assert.ok(deHtml.includes(escape(translations.de.tierLightTitle)), "renders German Light Tier title");
-    assert.ok(deHtml.includes(escape(translations.de.tierMediaTitle)), "renders German Media Tier title");
-    assert.ok(deHtml.includes(escape(translations.de.tierAITitle)), "renders German AI Tier title");
-    assert.ok(deHtml.includes(escape(translations.de.calcTitle)), "renders German calculator title");
+    assert.ok(deHtml.includes(escapeHtml(translations.de.hardwareTitle)), "renders German title");
+    assert.ok(deHtml.includes(escapeHtml(translations.de.tierLightTitle)), "renders German Light Tier title");
+    assert.ok(deHtml.includes(escapeHtml(translations.de.tierMediaTitle)), "renders German Media Tier title");
+    assert.ok(deHtml.includes(escapeHtml(translations.de.tierAITitle)), "renders German AI Tier title");
+    assert.ok(deHtml.includes(escapeHtml(translations.de.calcTitle)), "renders German calculator title");
 
     // Spanish (ES)
     const esHtml = renderToStaticMarkup(<HardwarePage initialLanguage="es" />);
-    assert.ok(esHtml.includes(escape(translations.es.hardwareTitle)), "renders Spanish title");
-    assert.ok(esHtml.includes(escape(translations.es.tierLightTitle)), "renders Spanish Light Tier title");
-    assert.ok(esHtml.includes(escape(translations.es.calcTitle)), "renders Spanish calculator title");
+    assert.ok(esHtml.includes(escapeHtml(translations.es.hardwareTitle)), "renders Spanish title");
+    assert.ok(esHtml.includes(escapeHtml(translations.es.tierLightTitle)), "renders Spanish Light Tier title");
+    assert.ok(esHtml.includes(escapeHtml(translations.es.calcTitle)), "renders Spanish calculator title");
 
     // French (FR)
     const frHtml = renderToStaticMarkup(<HardwarePage initialLanguage="fr" />);
-    assert.ok(frHtml.includes(escape(translations.fr.hardwareTitle)), "renders French title");
-    assert.ok(frHtml.includes(escape(translations.fr.tierLightTitle)), "renders French Light Tier title");
-    assert.ok(frHtml.includes(escape(translations.fr.calcTitle)), "renders French calculator title");
+    assert.ok(frHtml.includes(escapeHtml(translations.fr.hardwareTitle)), "renders French title");
+    assert.ok(frHtml.includes(escapeHtml(translations.fr.tierLightTitle)), "renders French Light Tier title");
+    assert.ok(frHtml.includes(escapeHtml(translations.fr.calcTitle)), "renders French calculator title");
   });
 
   it("complies with WCAG AA accessibility with 44px minimum touch targets and focus rings", () => {

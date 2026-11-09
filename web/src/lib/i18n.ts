@@ -222,6 +222,7 @@ export interface DashboardTranslations {
   deactivateConfirmButton: string;
   deactivatingState: string;
   typeResetToConfirm: string;
+  resetInputPlaceholder: string;
 
   // Bundled Guides & Help
   guidesTitle: string;
@@ -290,6 +291,8 @@ export interface DashboardTranslations {
   featureDiscLabel: string;
   featureAILabel: string;
   recommendedTierLabel: string;
+  calcBaselineBadge: string;
+  calcBaselineDesc: string;
   turnkeyTitle: string;
   turnkeySubtitle: string;
   turnkeyPreorderBtn: string;
@@ -297,6 +300,7 @@ export interface DashboardTranslations {
   turnkeyModalTitle: string;
   turnkeyEmailLabel: string;
   turnkeySubmitBtn: string;
+  turnkeyModalDisclaimer: string;
 
   // Landing Marketing & Showcase (Story 7.2)
   landingTitle: string;
@@ -568,6 +572,7 @@ export const translations: Record<Language, DashboardTranslations> = {
     deactivateConfirmButton: "Deactivate Service",
     deactivatingState: "Deactivating...",
     typeResetToConfirm: "Type RESET to confirm",
+    resetInputPlaceholder: "RESET",
     guidesTitle: "Appliance Guides & Help",
     guidesSubtitle: "Step-by-step documentation for setting up, managing, and maintaining your Sovereign home server.",
     guideQuickstart: "Quickstart & Setup",
@@ -628,6 +633,8 @@ export const translations: Record<Language, DashboardTranslations> = {
     featureDiscLabel: "Automatic Optical Disc Ripping (ARM)",
     featureAILabel: "Local Private AI Chat & Document RAG (llama.cpp)",
     recommendedTierLabel: "Recommended Profile",
+    calcBaselineBadge: "Baseline Profile",
+    calcBaselineDesc: "Base appliance requirement: Even with zero active workloads selected, Sovereign foundational operations (supervisor daemon, storage pool, Caddy ingress, security) run on the Light Tier specification.",
     turnkeyTitle: "Turnkey Pre-Assembled Sovereign Appliances",
     turnkeySubtitle: "Prefer an elegant, silent plug-and-play appliance? Reserve priority manufacturing slots for official factory-built editions.",
     turnkeyPreorderBtn: "Reserve Turnkey Appliance",
@@ -635,6 +642,7 @@ export const translations: Record<Language, DashboardTranslations> = {
     turnkeyModalTitle: "Priority Hardware Reservation",
     turnkeyEmailLabel: "Email for notification",
     turnkeySubmitBtn: "Confirm Priority Reservation",
+    turnkeyModalDisclaimer: "All software is 100% open source under Apache 2.0. Hardware components are backed by statutory manufacturer warranties.",
     landingTitle: "Sovereign — Private Home Server",
     landingHeroHeadline: "Your Personal Digital Sanctuary",
     landingHeroSubheadline: "100% private, zero-telemetry home server appliance. Stream 4K media, archive documents with OCR, run local AI, and ingest optical discs on hardware you own.",
@@ -893,15 +901,16 @@ export const translations: Record<Language, DashboardTranslations> = {
     rebootConfirmButton: "Server neu starten",
     rebootingState: "Wird neu gestartet...",
     factoryResetTitle: "Auf Werkseinstellungen zurücksetzen",
-    factoryResetDesc: "Dadurch werden alle Geräteeinstellungen gelöscht und das System in den Einrichtungszustand zurückversetzt. Bitte tippen Sie zur Bestätigung RESET ein.",
-    factoryResetPrompt: "Tippen Sie RESET zur Bestätigung ein",
+    factoryResetDesc: "Dadurch werden alle Geräteeinstellungen gelöscht und das System in den Einrichtungszustand zurückversetzt. Bitte tippen Sie unten RESET oder LÖSCHEN zur Bestätigung ein.",
+    factoryResetPrompt: "Tippen Sie RESET oder LÖSCHEN zur Bestätigung ein",
     factoryResetConfirmButton: "Auf Werkseinstellungen zurücksetzen",
     factoryResettingState: "Wird zurückgesetzt...",
     deactivateTitle: "Dienst deaktivieren",
     deactivateDesc: "Durch das Deaktivieren werden Hintergrundprozesse gestoppt. Ihre Dateien, Medien und Dokumente unter /data/ bleiben vollständig und sicher erhalten.",
     deactivateConfirmButton: "Dienst deaktivieren",
     deactivatingState: "Wird deaktiviert...",
-    typeResetToConfirm: "Tippen Sie RESET zur Bestätigung ein",
+    typeResetToConfirm: "Tippen Sie RESET oder LÖSCHEN zur Bestätigung ein",
+    resetInputPlaceholder: "RESET / LÖSCHEN",
     guidesTitle: "Anleitungen & Hilfe",
     guidesSubtitle: "Schritt-für-Schritt-Anleitungen zur Einrichtung, Verwaltung und Wartung Ihres Sovereign-Heimservers.",
     guideQuickstart: "Schnellstart & Einrichtung",
@@ -962,6 +971,8 @@ export const translations: Record<Language, DashboardTranslations> = {
     featureDiscLabel: "Automatisches Einlesen von CDs/DVDs/Blu-rays (ARM)",
     featureAILabel: "Lokaler privater KI-Chat & Dokumenten-RAG (llama.cpp)",
     recommendedTierLabel: "Empfohlenes Profil",
+    calcBaselineBadge: "Basis-Profil",
+    calcBaselineDesc: "Grundlegende Systemanforderung: Selbst wenn keine aktiven Dienste ausgewählt sind, laufen Sovereign-Basisfunktionen (Supervisor-Daemon, Speicherpool, Caddy-Ingress, Sicherheit) auf der Light-Tier-Spezifikation.",
     turnkeyTitle: "Vorkonfigurierte Sovereign-Komplettgeräte",
     turnkeySubtitle: "Bevorzugen Sie ein elegantes, geräuschloses Plug-and-Play-Gerät? Reservieren Sie Prioritäts-Fertigungsplätze für offizielle Editionen.",
     turnkeyPreorderBtn: "Komplettgerät reservieren",
@@ -969,6 +980,7 @@ export const translations: Record<Language, DashboardTranslations> = {
     turnkeyModalTitle: "Prioritäre Hardware-Reservierung",
     turnkeyEmailLabel: "E-Mail für Benachrichtigung",
     turnkeySubmitBtn: "Prioritäts-Reservierung bestätigen",
+    turnkeyModalDisclaimer: "Die gesamte Software ist zu 100 % Open-Source unter Apache 2.0. Hardwarekomponenten sind durch gesetzliche Herstellergarantien abgedeckt.",
     landingTitle: "Sovereign — Privater Heimserver",
     landingHeroHeadline: "Ihr persönlicher digitaler Zufluchtsort",
     landingHeroSubheadline: "100 % private, telemetriefreie Heimserver-Appliance. Streamen Sie 4K-Medien, archivieren Sie Dokumente mit OCR, nutzen Sie lokale KI und lesen Sie optische Discs ein – auf Hardware, die Ihnen gehört.",
@@ -1227,15 +1239,16 @@ export const translations: Record<Language, DashboardTranslations> = {
     rebootConfirmButton: "Reiniciar electrodoméstico",
     rebootingState: "Reiniciando...",
     factoryResetTitle: "Restablecimiento de fábrica",
-    factoryResetDesc: "Esto borrará todas las configuraciones del electrodoméstico y devolverá el sistema a la configuración inicial. Escriba RESET a continuación para confirmar.",
-    factoryResetPrompt: "Escriba RESET para confirmar",
+    factoryResetDesc: "Esto borrará todas las configuraciones del electrodoméstico y devolverá el sistema a la configuración inicial. Escriba RESET o ELIMINAR a continuación para confirmar.",
+    factoryResetPrompt: "Escriba RESET o ELIMINAR para confirmar",
     factoryResetConfirmButton: "Restablecer a valores de fábrica",
     factoryResettingState: "Restableciendo...",
     deactivateTitle: "Desactivar servicio",
     deactivateDesc: "Desactivar este servicio detendrá sus procesos en segundo plano. Sus archivos, medios y datos en /data/ están completamente seguros y conservados.",
     deactivateConfirmButton: "Desactivar servicio",
     deactivatingState: "Desactivando...",
-    typeResetToConfirm: "Escriba RESET para confirmar",
+    typeResetToConfirm: "Escriba RESET o ELIMINAR para confirmar",
+    resetInputPlaceholder: "RESET / ELIMINAR",
     guidesTitle: "Guías de ayuda del electrodoméstico",
     guidesSubtitle: "Documentación paso a paso para configurar, gestionar y mantener su servidor doméstico Sovereign.",
     guideQuickstart: "Inicio rápido y configuración",
@@ -1296,6 +1309,8 @@ export const translations: Record<Language, DashboardTranslations> = {
     featureDiscLabel: "Extracción automática de discos ópticos (ARM)",
     featureAILabel: "Chat de IA privada local y RAG de documentos (llama.cpp)",
     recommendedTierLabel: "Perfil recomendado",
+    calcBaselineBadge: "Perfil básico",
+    calcBaselineDesc: "Requisito básico del electrodoméstico: Incluso sin cargas de trabajo activas seleccionadas, las operaciones fundamentales de Sovereign (demonio supervisor, pool de almacenamiento, ingreso Caddy, seguridad) se ejecutan según la especificación Light Tier.",
     turnkeyTitle: "Dispositivos Sovereign preensamblados listos para usar",
     turnkeySubtitle: "¿Prefiere un dispositivo elegante y silencioso listo para conectar? Reserve puestos prioritarios de fabricación para las ediciones oficiales.",
     turnkeyPreorderBtn: "Reservar dispositivo listo para usar",
@@ -1303,6 +1318,7 @@ export const translations: Record<Language, DashboardTranslations> = {
     turnkeyModalTitle: "Reserva prioritaria de hardware",
     turnkeyEmailLabel: "Correo para notificación",
     turnkeySubmitBtn: "Confirmar reserva prioritaria",
+    turnkeyModalDisclaimer: "Todo el software es 100% de código abierto bajo Apache 2.0. Los componentes de hardware están respaldados por garantías legales del fabricante.",
     landingTitle: "Sovereign — Servidor doméstico privado",
     landingHeroHeadline: "Su santuario digital personal",
     landingHeroSubheadline: "Dispositivo de servidor doméstico 100% privado y sin telemetría. Transmita medios en 4K, archive documentos con OCR, ejecute IA local y extraiga discos ópticos en hardware de su propiedad.",
@@ -1561,15 +1577,16 @@ export const translations: Record<Language, DashboardTranslations> = {
     rebootConfirmButton: "Redémarrer l'appareil",
     rebootingState: "Redémarrage en cours...",
     factoryResetTitle: "Restauration d'usine",
-    factoryResetDesc: "Cette action effacera tous les paramètres de l'appareil et réinitialisera le système à la configuration initiale. Veuillez taper RESET ci-dessous pour confirmer.",
-    factoryResetPrompt: "Tapez RESET pour confirmer",
+    factoryResetDesc: "Cette action effacera tous les paramètres de l'appareil et réinitialisera le système à la configuration initiale. Veuillez taper RESET ou SUPPRIMER ci-dessous pour confirmer.",
+    factoryResetPrompt: "Tapez RESET ou SUPPRIMER pour confirmer",
     factoryResetConfirmButton: "Effectuer la restauration d'usine",
     factoryResettingState: "Réinitialisation...",
     deactivateTitle: "Désactiver le service",
     deactivateDesc: "La désactivation de ce service arrêtera ses processus d'arrière-plan. Vos fichiers, médias et données dans /data/ sont totalement sécurisés et préservés.",
     deactivateConfirmButton: "Désactiver le service",
     deactivatingState: "Désactivation...",
-    typeResetToConfirm: "Tapez RESET pour confirmer",
+    typeResetToConfirm: "Tapez RESET ou SUPPRIMER pour confirmer",
+    resetInputPlaceholder: "RESET / SUPPRIMER",
     guidesTitle: "Guides et aide de l'appareil",
     guidesSubtitle: "Documentation pas à pas pour configurer, gérer et maintenir votre serveur domestique Sovereign.",
     guideQuickstart: "Démarrage rapide & Configuration",
@@ -1630,6 +1647,8 @@ export const translations: Record<Language, DashboardTranslations> = {
     featureDiscLabel: "Numérisation automatique de disques optiques (ARM)",
     featureAILabel: "Chat IA privée locale et RAG de documents (llama.cpp)",
     recommendedTierLabel: "Profil recommandé",
+    calcBaselineBadge: "Profil de base",
+    calcBaselineDesc: "Exigence de base de l'appareil : Même sans charges de travail actives sélectionnées, les opérations fondamentales de Sovereign (démon superviseur, pool de stockage, passerelle Caddy, sécurité) fonctionnent selon les spécifications Light Tier.",
     turnkeyTitle: "Appareils Sovereign préassemblés prêts à l'emploi",
     turnkeySubtitle: "Vous préférez un appareil élégant et silencieux prêt à brancher ? Réservez des créneaux prioritaires pour les éditions d'usine officielles.",
     turnkeyPreorderBtn: "Réserver un appareil prêt à l'emploi",
@@ -1637,6 +1656,7 @@ export const translations: Record<Language, DashboardTranslations> = {
     turnkeyModalTitle: "Réservation matérielle prioritaire",
     turnkeyEmailLabel: "E-mail pour notification",
     turnkeySubmitBtn: "Confirmer la réservation prioritaire",
+    turnkeyModalDisclaimer: "Tous les logiciels sont 100% open source sous licence Apache 2.0. Les composants matériels sont couverts par les garanties légales du fabricant.",
     landingTitle: "Sovereign — Serveur domestique privé",
     landingHeroHeadline: "Votre sanctuaire numérique personnel",
     landingHeroSubheadline: "Appareil serveur domestique 100 % privé et sans télémétrie. Diffusez des médias 4K, archivez des documents avec OCR, utilisez une IA locale et extrayez des disques optiques sur votre propre matériel.",

@@ -10,6 +10,7 @@ export interface HardwarePageProps {
   initialPreorderModalOpen?: boolean;
   initialSelectedModel?: "mini" | "home" | "studio";
   initialReservationToken?: string | null;
+  initialFeatures?: HardwareCalculatorState;
 }
 
 export type HardwareTier = "light" | "media" | "ai";
@@ -40,6 +41,7 @@ export default function HardwarePage({
   initialPreorderModalOpen = false,
   initialSelectedModel = "mini",
   initialReservationToken = null,
+  initialFeatures,
 }: HardwarePageProps = {}) {
   const [lang, setLang] = useState<Language>(() => getInitialLanguage(initialLanguage));
   const t = translations[lang];
@@ -49,14 +51,18 @@ export default function HardwarePage({
     persistLanguage(newLang);
   };
 
-  const [features, setFeatures] = useState<HardwareCalculatorState>({
-    dms: true,
-    audio: true,
-    video: false,
-    disc: false,
-    ai: false,
-  });
+  const [features, setFeatures] = useState<HardwareCalculatorState>(
+    () =>
+      initialFeatures ?? {
+        dms: true,
+        audio: true,
+        video: false,
+        disc: false,
+        ai: false,
+      }
+  );
 
+  const hasActiveFeatures = Object.values(features).some(Boolean);
   const recommendedTier = calculateHardwareTier(features);
 
   // Turnkey preorder reservation modal state
@@ -420,10 +426,20 @@ export default function HardwarePage({
             data-testid="calc-result"
           >
             <div className="space-y-1.5">
-              <span className="text-xs font-semibold uppercase tracking-wider text-blue-700">
-                {t.recommendedTierLabel}
-              </span>
-              <h3 className="text-lg font-bold text-[#0F172A]">
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-semibold uppercase tracking-wider text-blue-700">
+                  {t.recommendedTierLabel}
+                </span>
+                {!hasActiveFeatures && (
+                  <span
+                    className="inline-flex items-center rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-semibold text-blue-800"
+                    data-testid="calc-baseline-notice"
+                  >
+                    {t.calcBaselineBadge}
+                  </span>
+                )}
+              </div>
+              <h3 className="text-lg font-bold text-[#0F172A]" data-testid="calc-tier-title">
                 {recommendedTier === "light"
                   ? t.tierLightTitle
                   : recommendedTier === "media"
@@ -431,7 +447,9 @@ export default function HardwarePage({
                   : t.tierAITitle}
               </h3>
               <p className="text-xs text-[#64748B]">
-                {recommendedTier === "light"
+                {!hasActiveFeatures
+                  ? t.calcBaselineDesc
+                  : recommendedTier === "light"
                   ? t.tierLightDesc
                   : recommendedTier === "media"
                   ? t.tierMediaDesc
@@ -658,6 +676,10 @@ export default function HardwarePage({
                     data-testid="preorder-email-input"
                   />
                 </div>
+
+                <p className="text-[11px] text-[#64748B] leading-relaxed" data-testid="preorder-disclaimer">
+                  🛡️ {t.turnkeyModalDisclaimer}
+                </p>
 
                 <div className="pt-2 flex justify-end gap-3">
                   <button
