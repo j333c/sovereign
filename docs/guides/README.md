@@ -13,3 +13,4 @@ Each language folder contains:
 3. **Media Ingestion & Dropzone**: Adding videos, music, and books via browser drop, network share (`\\sovereign\drop`), or optical discs.
 4. **Private Local AI & Document OCR**: 100% on-device AI assistant, zero-telemetry boundary, and Paperless-ngx document parsing.
 5. **Power Resilience & Rollback Safety**: Sudden power loss survival with SQLite WAL, and 180-second automatic rollback safety.
+6. **Red Hat & Fedora SELinux Configuration**: Container volume mount permissions under `/data/`, `container_file_t` contexts, and persistent SELinux policies.

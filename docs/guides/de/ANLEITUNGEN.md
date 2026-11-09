@@ -25,3 +25,38 @@
 - **Schutz bei Stromausfall:** Der SQLite-WAL schützt Datenbanken vor Beschädigung bei abruptem Stromausfall. Nach Neustart führt das System automatische Integritätsprüfungen durch.
 - **Automatisches 180s-Rollback:** Updates werden 180 Sekunden lang auf Stabilität überwacht. Bei Fehlern setzt sich das System selbstständig auf den vorherigen Schnappschuss zurück.
 - **Manuelles Ein-Klick-Rollback:** In `Einstellungen > Dienste` können Sie jederzeit manuell auf frühere Versionen zurückspringen. Ihre Dateien und Dokumente unter `/data/` bleiben dabei unberührt.
+
+## 6. SELinux-Konfiguration für Red Hat & Fedora
+- **Container-Volume-Kontexte (`container_file_t`):** Unter Fedora, Red Hat Enterprise Linux, CentOS Stream, AlmaLinux und Rocky Linux läuft SELinux standardmäßig im Enforcing-Modus. Host-Verzeichnisse, die per Bind-Mount in Docker-Container eingebunden werden (wie `/data/` und `/opt/sovereign`), benötigen den SELinux-Kontext `container_file_t` für Lese- und Schreibzugriff.
+- **Automatische Erkennung im Installer:** Das Sovereign-Installationsskript erkennt aktive SELinux-Systeme automatisch, registriert dauerhafte `semanage fcontext`-Richtlinien (oder `chcon`-Laufzeitlabels) und bewahrt Kontextkonsistenz bei Upgrades.
+- **Sofortige Kontextzuweisung:** Um den Container-Kontext manuell auf alle Datenverzeichnisse anzuwenden:
+  ```bash
+  sudo chcon -Rt container_file_t /data /opt/sovereign
+  ```
+- **Dauerhafte Konfiguration über Reboots und Relabels hinweg:** Um sicherzustellen, dass die Richtlinie auch nach System-Updates oder automatischen Dateisystem-Relabels erhalten bleibt, hinterlegen Sie die Regel mit `semanage` (`policycoreutils-python-utils`):
+  ```bash
+  sudo semanage fcontext -a -t container_file_t "/data(/.*)?"
+  sudo semanage fcontext -a -t container_file_t "/opt/sovereign(/.*)?"
+  sudo restorecon -Rv /data /opt/sovereign
+  ```
+- **Docker-Compose-Volume-Flags (`:z` vs. `:Z`):** Bei benutzerdefinierten Diensten, die Unterverzeichnisse von `/data` einbinden, verwenden Sie stets das `:z`-Flag (geteiltes Volume) statt `:Z`. Da mehrere Sovereign-Dienste (Jellyfin, Navidrome, Paperless) gleichzeitig auf `/data` zugreifen, würde `:Z` den Zugriff exklusiv an einen einzelnen Container binden und alle anderen Dienste blockieren.
+- **Externes NAS einbinden (NFS / SMB):** Netzwerk-Dateisysteme unterstützen keine regulären SELinux-Attribute (`security.selinux`), weshalb `chcon` fehlschlägt. Beim Einbinden von NAS-Freigaben unter `/data` oder `/mnt/nas`:
+  - Binden Sie die Freigabe mit expliziter SELinux-Kontextoption in `/etc/fstab` oder per Mount-Befehl ein:
+    ```bash
+    mount -t nfs -o context="system_u:object_r:container_file_t:s0" nas.local:/volume1/media /mnt/nas
+    ```
+  - Aktivieren Sie bei Bedarf die SELinux-Booleans für Netzwerkfreigaben:
+    ```bash
+    sudo setsebool -P virt_use_nfs 1
+    sudo setsebool -P virt_use_samba 1
+    ```
+- **Fehlerdiagnose bei Zugriffsverweigerung:** Sollte ein Dienst beim Zugriff auf `/data` einen Fehler `Permission denied` melden, prüfen Sie das SELinux-Audit-Protokoll auf AVC-Verweigerungen:
+  ```bash
+  sudo ausearch -m avc -ts recent
+  ```
+  oder über das System-Journal und Audit-Log:
+  ```bash
+  sudo journalctl -g AVC
+  sudo grep AVC /var/log/audit/audit.log
+  ```
+

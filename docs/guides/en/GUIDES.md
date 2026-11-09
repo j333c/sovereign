@@ -25,3 +25,38 @@
 - **Power Cut Protection:** SQLite WAL journaling guarantees database consistency even after an abrupt power outage. System diagnostics run automatically on boot.
 - **Automated 180s Rollback:** Every update is monitored for 180 seconds. If any container crashes or fails health verification, the appliance automatically rolls back to the previous snapshot.
 - **One-Click Manual Restore:** Administrators can revert any individual service to its previous stable revision at any time in `Settings > Services`. User data under `/data/` is strictly preserved.
+
+## 6. Red Hat & Fedora SELinux Configuration
+- **Container Volume Contexts (`container_file_t`):** On Fedora, Red Hat Enterprise Linux, CentOS Stream, AlmaLinux, and Rocky Linux, SELinux operates in Enforcing mode by default. Host directories bind-mounted into Docker containers (such as `/data/` and `/opt/sovereign`) require the `container_file_t` context to grant container processes read and write permissions.
+- **Automated Installer Handling:** The Sovereign installer automatically detects active SELinux environments, enables permanent `semanage fcontext` policies (or `chcon` runtime labeling), and maintains context integrity across upgrades.
+- **Immediate Context Application:** To apply the container label manually to all persistent directories:
+  ```bash
+  sudo chcon -Rt container_file_t /data /opt/sovereign
+  ```
+- **Persistent Policy Across Reboots & Relabels:** To ensure the context survives system updates and filesystem relabels, register the rule with `semanage` (`policycoreutils-python-utils`):
+  ```bash
+  sudo semanage fcontext -a -t container_file_t "/data(/.*)?"
+  sudo semanage fcontext -a -t container_file_t "/opt/sovereign(/.*)?"
+  sudo restorecon -Rv /data /opt/sovereign
+  ```
+- **Docker Compose Volume Flags (`:z` vs `:Z`):** When configuring custom compose services that bind-mount directories under `/data`, always append the `:z` flag (shared container volume) rather than `:Z`. Because multiple Sovereign services (Jellyfin, Navidrome, Paperless) share access to `/data`, the `:Z` flag must be avoided as it grants exclusive access to a single container and denies access to all other services.
+- **External NAS Mounts (NFS / SMB):** Network filesystems do not support standard SELinux extended attributes (`security.selinux`), causing `chcon` to fail. When mounting external NAS shares under `/data` or `/mnt/nas`:
+  - Mount with an explicit SELinux context option in `/etc/fstab` or manual mount commands:
+    ```bash
+    mount -t nfs -o context="system_u:object_r:container_file_t:s0" nas.local:/volume1/media /mnt/nas
+    ```
+  - Enable SELinux container network storage booleans if needed:
+    ```bash
+    sudo setsebool -P virt_use_nfs 1
+    sudo setsebool -P virt_use_samba 1
+    ```
+- **Diagnosing Permission Denials:** If any service reports `Permission denied` when accessing files in `/data`, inspect the SELinux audit log for Access Vector Cache (AVC) rejections:
+  ```bash
+  sudo ausearch -m avc -ts recent
+  ```
+  or check the system journal and audit logs:
+  ```bash
+  sudo journalctl -g AVC
+  sudo grep AVC /var/log/audit/audit.log
+  ```
+

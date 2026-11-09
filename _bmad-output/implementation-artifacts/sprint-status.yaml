@@ -270,5 +270,5 @@ action_items:
     epic: 9
     action: "Document SELinux context configuration for Red Hat / Fedora distributions"
     owner: "Winston (Architect)"
-    status: open
+    status: done
     ref: "_bmad-output/implementation-artifacts/epic-9-retro-2026-11-09.md"

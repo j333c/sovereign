@@ -182,7 +182,55 @@ EOF
   done
 }
 
-# Test 12: Containerized matrix (runs live containers when Docker daemon is accessible)
+# Test 12: SELinux detection handling
+test_selinux_detection() {
+  local mock_bin="$TEST_TMP/mock_bin"
+  mkdir -p "$mock_bin"
+
+  # Case 1: SELinux active with getenforce Enforcing
+  cat << 'EOF' > "$mock_bin/selinuxenabled"
+#!/usr/bin/env bash
+exit 0
+EOF
+  cat << 'EOF' > "$mock_bin/getenforce"
+#!/usr/bin/env bash
+echo "Enforcing"
+EOF
+  chmod +x "$mock_bin/selinuxenabled" "$mock_bin/getenforce"
+
+  local output
+  output="$(PATH="$mock_bin:$PATH" bash "$INSTALLER" --dry-run 2>&1)"
+  if ! echo "$output" | grep -q "SELinux: Enforcing mode detected"; then
+    echo "Expected SELinux enforcing detection output, got: $output" >&2
+    return 1
+  fi
+
+  # Case 2: SELinux active in Permissive mode
+  cat << 'EOF' > "$mock_bin/getenforce"
+#!/usr/bin/env bash
+echo "Permissive"
+EOF
+  chmod +x "$mock_bin/getenforce"
+  output="$(PATH="$mock_bin:$PATH" bash "$INSTALLER" --dry-run 2>&1)"
+  if ! echo "$output" | grep -q "SELinux: Permissive mode detected"; then
+    echo "Expected SELinux permissive detection output, got: $output" >&2
+    return 1
+  fi
+
+  # Case 3: SELinux disabled
+  cat << 'EOF' > "$mock_bin/selinuxenabled"
+#!/usr/bin/env bash
+exit 1
+EOF
+  chmod +x "$mock_bin/selinuxenabled"
+  output="$(PATH="$mock_bin:$PATH" bash "$INSTALLER" --dry-run 2>&1)"
+  if echo "$output" | grep -q "SELinux:"; then
+    echo "Unexpected SELinux detection when disabled, got: $output" >&2
+    return 1
+  fi
+}
+
+# Test 13: Containerized matrix (runs live containers when Docker daemon is accessible)
 test_containerized_matrix() {
   if ! command -v docker >/dev/null 2>&1 || ! docker info >/dev/null 2>&1; then
     echo "SKIP: Docker daemon not running or socket unavailable"
@@ -212,6 +260,7 @@ run_test "Uninstallation dry-run simulation" test_uninstall_dry_run
 run_test "Uninstallation with purge dry-run simulation" test_uninstall_purge_dry_run
 run_test "Upgrade dry-run simulation" test_upgrade_dry_run
 run_test "Mock OS distribution matrix (Ubuntu/Debian/Fedora/Arch)" test_mock_os_matrix
+run_test "SELinux detection handling" test_selinux_detection
 run_test "Containerized live matrix test" test_containerized_matrix
 
 echo "---"

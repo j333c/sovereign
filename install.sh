@@ -164,6 +164,15 @@ validate_environment() {
     log_ok "Systemd init system detected."
   fi
 
+  # SELinux detection
+  if command -v selinuxenabled >/dev/null 2>&1 && selinuxenabled; then
+    local se_mode="active"
+    if command -v getenforce >/dev/null 2>&1; then
+      se_mode="$(getenforce 2>/dev/null || echo 'active')"
+    fi
+    log_info "SELinux: ${se_mode} mode detected. Persistent storage (/data) will be labeled with container_file_t."
+  fi
+
   # RAM verification (target >= 4GB, minimum 2GB)
   if [ -f /proc/meminfo ]; then
     local total_ram_kb
@@ -203,7 +212,7 @@ install_dependencies() {
     apt-get update -qq
     apt-get install -y -qq git curl tar ca-certificates
   elif command -v dnf >/dev/null 2>&1; then
-    dnf install -y -q git curl tar ca-certificates
+    dnf install -y -q git curl tar ca-certificates policycoreutils
   elif command -v pacman >/dev/null 2>&1; then
     pacman -Sy --noconfirm git curl tar ca-certificates
   elif command -v apk >/dev/null 2>&1; then
@@ -276,6 +285,26 @@ deploy_sovereign() {
   mkdir -p "${DATA_DIR}/caddy/config"
 
   chmod -R 775 "${DATA_DIR}" || true
+
+  # Configure SELinux contexts for container volume mounts on RHEL/Fedora
+  if command -v selinuxenabled >/dev/null 2>&1 && selinuxenabled; then
+    log_info "Applying SELinux container_file_t context to ${DATA_DIR} and ${INSTALL_DIR}..."
+    if command -v semanage >/dev/null 2>&1 && command -v restorecon >/dev/null 2>&1; then
+      semanage fcontext -a -t container_file_t "${DATA_DIR}(/.*)?" 2>/dev/null || true
+      semanage fcontext -a -t container_file_t "${INSTALL_DIR}(/.*)?" 2>/dev/null || true
+      restorecon -Rv "${DATA_DIR}" "${INSTALL_DIR}" >/dev/null 2>&1 || true
+      log_ok "Permanent SELinux fcontext rules registered and applied."
+    elif command -v chcon >/dev/null 2>&1; then
+      if chcon -Rt container_file_t "${DATA_DIR}" "${INSTALL_DIR}" 2>/dev/null; then
+        log_ok "SELinux container_file_t context applied successfully via chcon."
+      else
+        log_warn "Failed to apply SELinux context with chcon. Please check filesystem permissions."
+      fi
+    else
+      log_warn "Neither semanage nor chcon found. Install policycoreutils to configure SELinux contexts."
+    fi
+  fi
+
   log_ok "Persistent storage directory hierarchy initialized."
 }
 
@@ -447,6 +476,13 @@ upgrade_sovereign() {
   git -C "${INSTALL_DIR}" fetch origin
   git -C "${INSTALL_DIR}" checkout main
   git -C "${INSTALL_DIR}" pull origin main
+
+  # Re-apply SELinux context if SELinux is active
+  if command -v selinuxenabled >/dev/null 2>&1 && selinuxenabled; then
+    if command -v chcon >/dev/null 2>&1; then
+      chcon -Rt container_file_t "${INSTALL_DIR}" 2>/dev/null || true
+    fi
+  fi
 
   log_info "Rebuilding and restarting updated containers..."
   docker compose -f "${INSTALL_DIR}/docker-compose.yml" up -d --build
