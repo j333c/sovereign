@@ -350,6 +350,69 @@ func TestClient_RateLimit_Backoff(t *testing.T) {
 		}
 	})
 
+	t.Run("Transient connection reset retries and succeeds", func(t *testing.T) {
+		var reqCount int
+		var mu sync.Mutex
+
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			mu.Lock()
+			reqCount++
+			count := reqCount
+			mu.Unlock()
+
+			if count <= 2 {
+				// Simulate abrupt connection drop
+				hj, ok := w.(http.Hijacker)
+				if ok {
+					conn, _, _ := hj.Hijack()
+					_ = conn.Close()
+					return
+				}
+				http.Error(w, "connection reset", http.StatusBadGateway)
+				return
+			}
+
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"results": []map[string]any{
+					{
+						"title":        "The Matrix",
+						"release_date": "1999-03-31",
+					},
+				},
+			})
+		}))
+		defer server.Close()
+
+		client := NewHTTPMetadataClient(HTTPMetadataConfig{
+			TMDbAPIKey:  "test-api-key",
+			TMDbBaseURL: server.URL,
+		})
+
+		client.SetBackoff(BackoffConfig{
+			BaseDelay:  5 * time.Millisecond,
+			Factor:     2,
+			MaxRetries: 3,
+			Jitter:     1 * time.Millisecond,
+		})
+
+		meta, err := client.FetchMovieMetadata(context.Background(), "The Matrix", 1999)
+		if err != nil {
+			t.Fatalf("expected successful retry after connection drop, got: %v", err)
+		}
+		if meta.Title != "The Matrix" {
+			t.Errorf("expected 'The Matrix', got %q", meta.Title)
+		}
+
+		mu.Lock()
+		finalCount := reqCount
+		mu.Unlock()
+
+		if finalCount != 3 {
+			t.Errorf("expected 3 attempts (2 failed network drops + 1 success), got %d", finalCount)
+		}
+	})
+
 	t.Run("EnrichmentEngine defers disc with cooldown upon rate limit", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		stagingDir := filepath.Join(tmpDir, "media", "staging", "discs")

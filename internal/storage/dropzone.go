@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -506,6 +507,10 @@ func (e *DropzoneEngine) SetDiskFree(fn DiskFreeFunc) {
 // CheckCapacity verifies that target storage has at least requiredBytes + DropzoneSafetyBufferBytes available.
 // If available space is insufficient, returns ErrInsufficientStorage.
 func (e *DropzoneEngine) CheckCapacity(requiredBytes int64) error {
+	if requiredBytes < 0 || requiredBytes > math.MaxInt64-DropzoneSafetyBufferBytes {
+		return ErrInsufficientStorage
+	}
+
 	e.diskFreeMu.RLock()
 	freeFn := e.diskFree
 	e.diskFreeMu.RUnlock()
@@ -593,6 +598,9 @@ func (e *DropzoneEngine) HandleUploadStream(ctx context.Context, category, filen
 	if copyErr != nil {
 		if errors.Is(copyErr, context.Canceled) || errors.Is(ctx.Err(), context.Canceled) {
 			return nil, context.Canceled
+		}
+		if errors.Is(copyErr, syscall.ENOSPC) {
+			return nil, ErrInsufficientStorage
 		}
 		return nil, fmt.Errorf("%w: %v", ErrStagingAborted, copyErr)
 	}

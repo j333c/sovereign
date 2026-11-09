@@ -662,10 +662,7 @@ func isDriveDisconnectError(err error) bool {
 	}
 	var pathErr *os.PathError
 	if errors.As(err, &pathErr) {
-		if errors.Is(pathErr.Err, syscall.EIO) || errors.Is(pathErr.Err, syscall.ENODEV) {
-			return true
-		}
-		if strings.Contains(pathErr.Path, "/dev/sr") {
+		if errors.Is(pathErr.Err, syscall.EIO) || errors.Is(pathErr.Err, syscall.ENODEV) || errors.Is(pathErr.Err, syscall.ENOENT) || os.IsNotExist(pathErr.Err) {
 			return true
 		}
 	}

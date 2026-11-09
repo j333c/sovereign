@@ -316,13 +316,10 @@ func (c *HTTPMetadataClient) calculateBackoffDelay(attempt int) time.Duration {
 	if jitter > 0 {
 		var b [8]byte
 		_, _ = rand.Read(b[:])
-		n := int64(binary.LittleEndian.Uint64(b[:]))
-		if n < 0 {
-			n = -n
-		}
-		jitterRange := int64(jitter * 2)
+		u := binary.LittleEndian.Uint64(b[:])
+		jitterRange := uint64(jitter * 2)
 		if jitterRange > 0 {
-			offset := (n % jitterRange) - int64(jitter)
+			offset := int64(u%jitterRange) - int64(jitter)
 			delay += time.Duration(offset)
 		}
 	}
@@ -630,7 +627,12 @@ func (c *HTTPMetadataClient) FetchMusicMetadata(ctx context.Context, query strin
 		if detailReq, err := http.NewRequestWithContext(ctx, http.MethodGet, relDetailURL, nil); err == nil {
 			detailReq.Header.Set("User-Agent", c.cfg.UserAgent)
 			detailReq.Header.Set("Accept", "application/json")
-			if detailResp, err := c.doRequestWithBackoff(detailReq); err == nil {
+			detailResp, err := c.doRequestWithBackoff(detailReq)
+			if err != nil {
+				if errors.Is(err, ErrRateLimited) {
+					return nil, ErrRateLimited
+				}
+			} else {
 				defer detailResp.Body.Close()
 				if detailResp.StatusCode == http.StatusOK {
 					var detailResult struct {

@@ -7051,6 +7051,7 @@ func TestDropUpload_InsufficientStorage(t *testing.T) {
 	}
 	req2 := httptest.NewRequest(http.MethodPost, "/api/v1/drop/upload", body2)
 	req2.Header.Set("Content-Type", contentType2)
+	req2.ContentLength = -1 // Streaming upload without Content-Length: tests HandleUploadStream runtime capacity check
 	w2 := httptest.NewRecorder()
 	srv.router.ServeHTTP(w2, req2)
 

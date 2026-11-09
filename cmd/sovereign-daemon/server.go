@@ -2989,6 +2989,9 @@ func (s *Server) handleDropUpload(w http.ResponseWriter, r *http.Request) {
 				s.writeProblemWithType(w, "https://sovereign.local/errors/insufficient-storage", http.StatusInsufficientStorage, "Insufficient Storage", "Target storage pool has insufficient space for this upload (1.0 GB safety buffer required).", r.URL.Path)
 				return
 			}
+			s.logger.Error("failed to check dropzone storage capacity", "error", err)
+			s.writeProblem(w, http.StatusInternalServerError, "Storage Check Failed", "Failed to check available storage capacity.", r.URL.Path)
+			return
 		}
 	}
 

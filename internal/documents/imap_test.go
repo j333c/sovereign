@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/base64"
 	"fmt"
 	"io"
@@ -631,5 +632,110 @@ func TestExtractAttachments_SinglePartImage(t *testing.T) {
 	}
 	if attachments[0].ContentType != "image/png" {
 		t.Errorf("expected ContentType 'image/png', got %q", attachments[0].ContentType)
+	}
+}
+
+func startMockTLSIMAPServer(t *testing.T, authFail bool, unseenCount int, tlsCert tls.Certificate) *mockIMAPServer {
+	ln, err := tls.Listen("tcp", "127.0.0.1:0", &tls.Config{
+		Certificates: []tls.Certificate{tlsCert},
+	})
+	if err != nil {
+		t.Fatalf("failed to start mock imap tls listener: %v", err)
+	}
+
+	pdfData := MakeSamplePDF("Test TLS Invoice Content #5678")
+
+	srv := &mockIMAPServer{
+		listener:    ln,
+		addr:        ln.Addr().String(),
+		authFail:    authFail,
+		unseenCount: unseenCount,
+		pdfPayload:  pdfData,
+		stopChan:    make(chan struct{}),
+	}
+
+	go srv.serve()
+	return srv
+}
+
+func TestPoller_PollOnce_CustomTLS(t *testing.T) {
+	tempDir := t.TempDir()
+
+	dbPath := filepath.Join(tempDir, "test.db")
+	db, err := store.Open(dbPath)
+	if err != nil {
+		t.Fatalf("failed to open database: %v", err)
+	}
+	defer db.Close()
+
+	imapStore, err := store.NewIMAPStore(db, []byte("32-byte-secret-key-for-test-here"))
+	if err != nil {
+		t.Fatalf("NewIMAPStore failed: %v", err)
+	}
+
+	certPEM, _, tlsCert := generateSelfSignedCert(t, "127.0.0.1")
+	caPath := filepath.Join(tempDir, "server-ca.crt")
+	if err := os.WriteFile(caPath, certPEM, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	srv := startMockTLSIMAPServer(t, false, 1, tlsCert)
+	defer srv.close()
+
+	host, portStr, _ := net.SplitHostPort(srv.addr)
+	var port int
+	fmt.Sscanf(portStr, "%d", &port)
+
+	ctx := context.Background()
+
+	// 1. Test polling with custom CA certificate
+	cfgCA := &store.IMAPConfig{
+		Host:               host,
+		Port:               port,
+		Username:           "archivist@home.arpa",
+		Password:           "secret",
+		Folder:             "INBOX",
+		SSLEnabled:         true,
+		InsecureSkipVerify: false,
+		CACertPath:         caPath,
+		Enabled:            true,
+	}
+	if err := imapStore.Save(ctx, cfgCA); err != nil {
+		t.Fatalf("imapStore.Save failed: %v", err)
+	}
+
+	consumeDir := filepath.Join(tempDir, "consume")
+	_ = os.MkdirAll(consumeDir, 0755)
+
+	poller, err := NewPoller(PollerConfig{
+		Store:      imapStore,
+		ConsumeDir: consumeDir,
+	})
+	if err != nil {
+		t.Fatalf("NewPoller failed: %v", err)
+	}
+
+	if err := poller.PollOnce(ctx); err != nil {
+		t.Fatalf("PollOnce with custom CA failed: %v", err)
+	}
+
+	// 2. Test polling with InsecureSkipVerify
+	cfgInsecure := &store.IMAPConfig{
+		Host:               host,
+		Port:               port,
+		Username:           "archivist@home.arpa",
+		Password:           "secret",
+		Folder:             "INBOX",
+		SSLEnabled:         true,
+		InsecureSkipVerify: true,
+		CACertPath:         "",
+		Enabled:            true,
+	}
+	if err := imapStore.Save(ctx, cfgInsecure); err != nil {
+		t.Fatalf("imapStore.Save failed: %v", err)
+	}
+
+	if err := poller.PollOnce(ctx); err != nil {
+		t.Fatalf("PollOnce with InsecureSkipVerify failed: %v", err)
 	}
 }

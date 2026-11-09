@@ -2,7 +2,7 @@
 title: 'Story 8.2: Ingestion Pre-Flight Capacity Guards & Peripheral Error Recovery'
 type: 'feature'
 created: '2026-11-09'
-status: 'completed'
+status: 'done'
 baseline_commit: 'ef5f4db96f8a26f9738e8cc09bc0c5aa1a9a08b7'
 route: 'dispatch'
 review_loop_iteration: 0
@@ -94,6 +94,19 @@ context:
 ## Spec Change Log
 
 ## Review Triage Log
+
+| Finding | Verdict | Evidence & Routing |
+|---|---|---|
+| `internal/storage/dropzone.go`: integer overflow in `CheckCapacity` | `medium` | If `requiredBytes < 0` or exceeds `math.MaxInt64 - DropzoneSafetyBufferBytes`, integer addition wraps around and bypasses capacity check. Route: `patch`. |
+| `cmd/sovereign-daemon/server.go`: unhandled non-507 error in `handleDropUpload` | `medium` | Filesystem inspection errors (e.g. permission/statfs) returned by `engine.CheckCapacity` were silently ignored instead of returning 500. Route: `patch`. |
+| `internal/documents/tls.go`: system root CAs dropped when `caCertPath` set | `medium` | `BuildTLSConfig` created an empty cert pool with `x509.NewCertPool()`, dropping system trusted CAs. Must load `x509.SystemCertPool()`. Route: `patch`. |
+| `internal/enrichment/client.go`: jitter integer negation overflow on `math.MinInt64` | `low` | Negating `int64(binary.LittleEndian.Uint64(...))` on `math.MinInt64` results in negative value. Must use unsigned modulo. Route: `patch`. |
+| `internal/enrichment/client.go`: MusicBrainz recording tracks rate limit propagation | `low` | Detail recordings sub-query swallowed `ErrRateLimited`, returning partial metadata instead of triggering deferral cooldown. Route: `patch`. |
+| `cmd/sovereign-daemon/server_test.go`: `TestDropUpload_InsufficientStorage` runtime bypass | `medium` | Pre-flight check intercepted request before `HandleUploadStream` because `httptest.NewRequest` populates ContentLength. Set `ContentLength = -1` to test runtime check. Route: `patch`. |
+| `internal/enrichment/client_test.go`: missing transient network error retry test | `medium` | Verified gap: `TestClient_RateLimit_Backoff` only tested HTTP 429, not transient network drops. Route: `patch`. |
+| `internal/documents/imap_test.go`: missing `Poller.PollOnce` with custom TLS test | `medium` | Verified gap: `PollOnce` with custom TLS against mock server was not tested. Route: `patch`. |
+| `internal/optical/ripper.go`: over-broad `/dev/sr` path error match in `isDriveDisconnectError` | `low` | Path error on `/dev/sr` matched any error instead of checking underlying `EIO`/`ENODEV`/`ENOENT`/not-exist. Route: `patch`. |
+
 
 ## Design Notes
 

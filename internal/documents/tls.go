@@ -21,7 +21,10 @@ func BuildTLSConfig(host string, insecureSkipVerify bool, caCertPath string) (*t
 			return nil, fmt.Errorf("failed to read CA certificate at %q: %w", caCertPath, err)
 		}
 
-		pool := x509.NewCertPool()
+		pool, err := x509.SystemCertPool()
+		if err != nil || pool == nil {
+			pool = x509.NewCertPool()
+		}
 		if ok := pool.AppendCertsFromPEM(certBytes); !ok {
 			return nil, fmt.Errorf("failed to parse CA certificate from PEM at %q", caCertPath)
 		}
