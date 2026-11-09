@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -29,12 +30,14 @@ const (
 	StatusTextDetected     = "Disc detected"
 	StatusTextAutoEjecting = "Auto-ejecting disc"
 	StatusTextStorageLow   = "Storage low: Imports paused"
-	StatusTextKeysRequired = "Decryption keys required"
-	StatusTextReadError    = "Disc read error"
+	StatusTextKeysRequired       = "Decryption keys required"
+	StatusTextReadError          = "Disc read error"
+	StatusTextDriveDisconnected  = "Drive disconnected"
 
-	NoticeMissingKeys = "This Blu-ray disc requires decryption keys to read. Please upload your key file in Settings, or use an unencrypted disc."
-	NoticeReadFailed  = "Disc reading failed after multiple attempts. The disc has been safely ejected."
-	NoticeStorageLow  = "Optical ripping paused: storage capacity is below 10%. Please free up space to continue."
+	NoticeMissingKeys         = "This Blu-ray disc requires decryption keys to read. Please upload your key file in Settings, or use an unencrypted disc."
+	NoticeReadFailed          = "Disc reading failed after multiple attempts. The disc has been safely ejected."
+	NoticeStorageLow          = "Optical ripping paused: storage capacity is below 10%. Please free up space to continue."
+	NoticeDriveDisconnected   = "Optical drive was disconnected during ripping. Please reconnect the drive to continue."
 )
 
 // OpticalStatus represents the public state of the optical ripper engine.
@@ -476,6 +479,12 @@ func (r *OpticalRipper) handleDiscInsertion(ctx context.Context, disc DiscInfo) 
 			break
 		}
 
+		// Abort retry loop immediately if drive disconnect error is detected
+		if isDriveDisconnectError(ripErr) {
+			r.logger.Warn("optical drive disconnected during active rip, aborting retries", "error", ripErr)
+			break
+		}
+
 		r.logger.Warn("read error during disc ripping, retrying", "attempt", attempt, "max", 3, "error", ripErr)
 		if attempt < 3 {
 			select {
@@ -489,11 +498,40 @@ func (r *OpticalRipper) handleDiscInsertion(ctx context.Context, disc DiscInfo) 
 
 	// Step 6: Handle read failure or rip completion
 	if ripErr != nil {
-		// Clean up partial staging directory on failure
+		// Clean up partial staging directory on failure immediately
 		_ = os.RemoveAll(stagingTarget)
 
 		if errors.Is(ripErr, context.Canceled) {
 			r.setStatus(StateIdle, StatusTextIdle, DiscInfo{Inserted: false, DiscType: DiscTypeNone}, 0.0, "", "")
+			return
+		}
+
+		// Handle peripheral disconnection (EIO, ENODEV)
+		if isDriveDisconnectError(ripErr) {
+			r.logger.Warn("optical drive disconnected during ripping, aborting cleanly", "disc_id", discID, "error", ripErr)
+			r.setStatus(StateError, StatusTextDriveDisconnected, disc, 0.0, ripErr.Error(), NoticeDriveDisconnected)
+			r.mu.Lock()
+			r.status.DriveReady = false
+			r.lastProcessedDisc = ""
+			r.mu.Unlock()
+
+			r.broadcast("optical.read_failed", map[string]any{
+				"disc_id": discID,
+				"error":   ripErr.Error(),
+				"notice":  NoticeDriveDisconnected,
+				"reason":  "drive_disconnected",
+			})
+			r.broadcast("optical.alert", map[string]any{
+				"type":    "drive_disconnected",
+				"error":   ripErr.Error(),
+				"notice":  NoticeDriveDisconnected,
+				"disc_id": discID,
+			})
+
+			// Attempt tray eject catching failure without blocking daemon threads
+			if ejectErr := r.driver.Eject(ctx); ejectErr != nil {
+				r.logger.Warn("optical tray eject failed after drive disconnect", "error", ejectErr)
+			}
 			return
 		}
 
@@ -511,7 +549,9 @@ func (r *OpticalRipper) handleDiscInsertion(ctx context.Context, disc DiscInfo) 
 			"disc_id": discID,
 		})
 
-		_ = r.driver.Eject(ctx)
+		if ejectErr := r.driver.Eject(ctx); ejectErr != nil {
+			r.logger.Warn("optical tray eject failed after read error", "error", ejectErr)
+		}
 		r.broadcast("optical.disc_ejected", map[string]any{
 			"disc_id": discID,
 			"reason":  "read_failed",
@@ -542,7 +582,9 @@ func (r *OpticalRipper) handleDiscInsertion(ctx context.Context, disc DiscInfo) 
 
 	// Transition to auto-ejecting
 	r.setStatus(StateEjecting, StatusTextAutoEjecting, disc, 100.0, "", "")
-	_ = r.driver.Eject(ctx)
+	if ejectErr := r.driver.Eject(ctx); ejectErr != nil {
+		r.logger.Warn("optical tray eject failed after rip completion", "error", ejectErr)
+	}
 	r.broadcast("optical.disc_ejected", map[string]any{
 		"disc_id":      discID,
 		"staging_path": stagingTarget,
@@ -608,4 +650,42 @@ func defaultHeadroomChecker(path string) (float64, error) {
 	}
 
 	return float64(stat.Bavail) / float64(stat.Blocks), nil
+}
+
+// isDriveDisconnectError tests whether an error is caused by optical hardware disconnection (EIO, ENODEV, or missing device).
+func isDriveDisconnectError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, syscall.EIO) || errors.Is(err, syscall.ENODEV) {
+		return true
+	}
+	var pathErr *os.PathError
+	if errors.As(err, &pathErr) {
+		if errors.Is(pathErr.Err, syscall.EIO) || errors.Is(pathErr.Err, syscall.ENODEV) {
+			return true
+		}
+		if strings.Contains(pathErr.Path, "/dev/sr") {
+			return true
+		}
+	}
+	var sysErr syscall.Errno
+	if errors.As(err, &sysErr) {
+		if sysErr == syscall.EIO || sysErr == syscall.ENODEV {
+			return true
+		}
+	}
+	lower := strings.ToLower(err.Error())
+	if strings.Contains(lower, "input/output error") ||
+		strings.Contains(lower, "no such device") ||
+		strings.Contains(lower, "drive disconnected") ||
+		strings.Contains(lower, "device not configured") {
+		return true
+	}
+	return false
+}
+
+// IsDriveDisconnectError is the exported variant of isDriveDisconnectError.
+func IsDriveDisconnectError(err error) bool {
+	return isDriveDisconnectError(err)
 }

@@ -91,13 +91,15 @@ func TestIMAPStore_CRUD(t *testing.T) {
 
 	// Save new config
 	cfg := &IMAPConfig{
-		Host:       "imap.example.com",
-		Port:       993,
-		Username:   "alex@family.net",
-		Password:   "VerySecretPassword99!",
-		Folder:     "INBOX",
-		SSLEnabled: true,
-		Enabled:    true,
+		Host:               "imap.example.com",
+		Port:               993,
+		Username:           "alex@family.net",
+		Password:           "VerySecretPassword99!",
+		Folder:             "INBOX",
+		SSLEnabled:         true,
+		InsecureSkipVerify: true,
+		CACertPath:         "/etc/ssl/certs/custom-ca.pem",
+		Enabled:            true,
 	}
 
 	err = store.Save(ctx, cfg)
@@ -131,6 +133,9 @@ func TestIMAPStore_CRUD(t *testing.T) {
 	}
 	if fetched.Host != "imap.example.com" || fetched.Port != 993 || fetched.Username != "alex@family.net" {
 		t.Fatalf("unexpected fields in fetched config: %+v", fetched)
+	}
+	if !fetched.InsecureSkipVerify || fetched.CACertPath != "/etc/ssl/certs/custom-ca.pem" {
+		t.Fatalf("expected InsecureSkipVerify=true, CACertPath=/etc/ssl/certs/custom-ca.pem, got %+v", fetched)
 	}
 
 	// Fetch via GetActive

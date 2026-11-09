@@ -783,3 +783,90 @@ func TestSanitizePathSegment(t *testing.T) {
 	}
 }
 
+func TestEnrichmentEngine_RateLimitDeferral(t *testing.T) {
+	tmpDir := t.TempDir()
+	stagingDir := filepath.Join(tmpDir, "staging")
+	moviesDir := filepath.Join(tmpDir, "movies")
+
+	stagedMovie := filepath.Join(stagingDir, "THE_MATRIX_1999")
+	if err := os.MkdirAll(stagedMovie, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(stagedMovie, "disc.iso"), []byte("matrix-iso"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	mockClient := NewMockMetadataClient()
+	mockClient.MovieErr = ErrRateLimited
+
+	refresher := &testRefresher{}
+
+	engine, err := NewEnrichmentEngine(EngineConfig{
+		DataDir:    tmpDir,
+		StagingDir: stagingDir,
+		MoviesDir:  moviesDir,
+		Client:     mockClient,
+		Refresher:  refresher,
+		HeadroomChecker: func(path string) (float64, error) {
+			return 0.50, nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// First scan: should encounter ErrRateLimited and defer disc
+	processed, err := engine.Scan(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected Scan error: %v", err)
+	}
+	if processed != 0 {
+		t.Errorf("expected 0 processed discs on rate limit deferral, got %d", processed)
+	}
+
+	if !engine.IsDiscDeferred(stagedMovie) {
+		t.Errorf("expected disc %q to be marked deferred", stagedMovie)
+	}
+
+	// Verify staging folder was preserved
+	if _, err := os.Stat(stagedMovie); os.IsNotExist(err) {
+		t.Errorf("expected staged folder to remain untouched during deferral")
+	}
+
+	// Second scan immediately: should skip deferred disc
+	processed, err = engine.Scan(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected Scan error: %v", err)
+	}
+	if processed != 0 {
+		t.Errorf("expected 0 processed discs while deferred, got %d", processed)
+	}
+
+	// Fast-forward cooldown: expire deferral and fix rate limit
+	engine.DeferDisc(stagedMovie, -1*time.Minute)
+	if engine.IsDiscDeferred(stagedMovie) {
+		t.Errorf("expected disc deferral to be expired")
+	}
+
+	mockClient.MovieErr = nil
+	mockClient.MockMovie = &MovieMetadata{
+		Title: "The Matrix",
+		Year:  1999,
+	}
+
+	// Third scan: deferral expired, API recovered -> promotion succeeds
+	processed, err = engine.Scan(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected Scan error: %v", err)
+	}
+	if processed != 1 {
+		t.Errorf("expected 1 processed disc after deferral expiration, got %d", processed)
+	}
+
+	expectedTarget := filepath.Join(moviesDir, "The Matrix (1999)", "disc.iso")
+	if _, err := os.Stat(expectedTarget); err != nil {
+		t.Errorf("expected promoted disc at %q: %v", expectedTarget, err)
+	}
+}
+
+

@@ -3,7 +3,6 @@ package documents
 import (
 	"context"
 	"crypto/rand"
-	"crypto/tls"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -164,8 +163,13 @@ func (p *Poller) PollOnce(ctx context.Context) error {
 	}()
 
 	addr := fmt.Sprintf("%s:%d", cfg.Host, cfg.Port)
-	tlsConfig := &tls.Config{
-		ServerName: cfg.Host,
+	tlsConfig, err := BuildTLSConfig(cfg.Host, cfg.InsecureSkipVerify, cfg.CACertPath)
+	if err != nil {
+		p.handlePollFailure(ctx, cfg, fmt.Errorf("tls configuration failed: %w", err))
+		return err
+	}
+	if cfg.InsecureSkipVerify {
+		p.logger.Warn("IMAP insecure TLS mode enabled (insecure_skip_verify=true)", "host", cfg.Host)
 	}
 
 	// 1. Connect

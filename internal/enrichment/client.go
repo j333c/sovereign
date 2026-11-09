@@ -2,13 +2,17 @@ package enrichment
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -17,6 +21,7 @@ var (
 	ErrMetadataNotFound = errors.New("metadata not found")
 	ErrAPIUnavailable   = errors.New("metadata API unavailable or network offline")
 	ErrNoAPIKey         = errors.New("no API key configured")
+	ErrRateLimited      = errors.New("metadata API rate limit exceeded (HTTP 429)")
 )
 
 // Standard TMDb Genre ID to name mappings
@@ -205,6 +210,24 @@ func (m *MockMetadataClient) DownloadArtwork(ctx context.Context, artworkURL str
 	return []byte{0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 0x4A, 0x46, 0x49, 0x46, 0x00, 0x01, 0xFF, 0xD9}, nil
 }
 
+// BackoffConfig configures jittered exponential backoff parameters for external APIs.
+type BackoffConfig struct {
+	BaseDelay  time.Duration
+	Factor     int
+	MaxRetries int
+	Jitter     time.Duration
+}
+
+// DefaultBackoffConfig returns the standard parameters: 1s base delay, factor 2, 3 max retries, 250ms jitter.
+func DefaultBackoffConfig() BackoffConfig {
+	return BackoffConfig{
+		BaseDelay:  1 * time.Second,
+		Factor:     2,
+		MaxRetries: 3,
+		Jitter:     250 * time.Millisecond,
+	}
+}
+
 // HTTPMetadataConfig holds configuration for the real third-party API client.
 type HTTPMetadataConfig struct {
 	TMDbAPIKey         string
@@ -213,12 +236,15 @@ type HTTPMetadataConfig struct {
 	CoverArtBaseURL    string
 	UserAgent          string
 	Timeout            time.Duration
+	Backoff            *BackoffConfig
 }
 
 // HTTPMetadataClient connects to TMDb and MusicBrainz external databases.
 type HTTPMetadataClient struct {
 	cfg        HTTPMetadataConfig
 	httpClient *http.Client
+	backoffMu  sync.RWMutex
+	backoff    BackoffConfig
 	mbMu       sync.Mutex
 	lastMBReq  time.Time
 }
@@ -242,12 +268,139 @@ func NewHTTPMetadataClient(cfg HTTPMetadataConfig) *HTTPMetadataClient {
 		cfg.UserAgent = "Sovereign/0.1.0 ( support@sovereign.local )"
 	}
 
+	bo := DefaultBackoffConfig()
+	if cfg.Backoff != nil {
+		bo = *cfg.Backoff
+	}
+
 	return &HTTPMetadataClient{
 		cfg: cfg,
 		httpClient: &http.Client{
 			Timeout: timeout,
 		},
+		backoff: bo,
 	}
+}
+
+// SetBackoff overrides the backoff configuration (used for testing).
+func (c *HTTPMetadataClient) SetBackoff(b BackoffConfig) {
+	c.backoffMu.Lock()
+	defer c.backoffMu.Unlock()
+	c.backoff = b
+}
+
+func (c *HTTPMetadataClient) getBackoff() BackoffConfig {
+	c.backoffMu.RLock()
+	defer c.backoffMu.RUnlock()
+	return c.backoff
+}
+
+func (c *HTTPMetadataClient) calculateBackoffDelay(attempt int) time.Duration {
+	bo := c.getBackoff()
+	base := bo.BaseDelay
+	if base <= 0 {
+		base = 1 * time.Second
+	}
+	factor := bo.Factor
+	if factor <= 0 {
+		factor = 2
+	}
+
+	mult := 1
+	for i := 0; i < attempt; i++ {
+		mult *= factor
+	}
+	delay := base * time.Duration(mult)
+
+	jitter := bo.Jitter
+	if jitter > 0 {
+		var b [8]byte
+		_, _ = rand.Read(b[:])
+		n := int64(binary.LittleEndian.Uint64(b[:]))
+		if n < 0 {
+			n = -n
+		}
+		jitterRange := int64(jitter * 2)
+		if jitterRange > 0 {
+			offset := (n % jitterRange) - int64(jitter)
+			delay += time.Duration(offset)
+		}
+	}
+	if delay < 0 {
+		delay = 0
+	}
+	return delay
+}
+
+func isRetryableNetworkError(err error) bool {
+	if err == nil {
+		return false
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) {
+		return true
+	}
+	var opErr *net.OpError
+	if errors.As(err, &opErr) {
+		return true
+	}
+	lower := strings.ToLower(err.Error())
+	if strings.Contains(lower, "connection refused") ||
+		strings.Contains(lower, "connection reset") ||
+		strings.Contains(lower, "timeout") ||
+		strings.Contains(lower, "network is unreachable") ||
+		strings.Contains(lower, "no route to host") ||
+		strings.Contains(lower, "eof") {
+		return true
+	}
+	return false
+}
+
+func (c *HTTPMetadataClient) doRequestWithBackoff(req *http.Request) (*http.Response, error) {
+	bo := c.getBackoff()
+	maxRetries := bo.MaxRetries
+	if maxRetries <= 0 {
+		maxRetries = 3
+	}
+
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		reqClone := req.Clone(req.Context())
+		resp, err := c.httpClient.Do(reqClone)
+
+		if err != nil {
+			if errors.Is(err, context.Canceled) || errors.Is(req.Context().Err(), context.Canceled) {
+				return nil, err
+			}
+			if isRetryableNetworkError(err) && attempt < maxRetries {
+				delay := c.calculateBackoffDelay(attempt)
+				select {
+				case <-req.Context().Done():
+					return nil, req.Context().Err()
+				case <-time.After(delay):
+					continue
+				}
+			}
+			return nil, fmt.Errorf("%w: %v", ErrAPIUnavailable, err)
+		}
+
+		if resp.StatusCode == http.StatusTooManyRequests {
+			_ = resp.Body.Close()
+			if attempt < maxRetries {
+				delay := c.calculateBackoffDelay(attempt)
+				select {
+				case <-req.Context().Done():
+					return nil, req.Context().Err()
+				case <-time.After(delay):
+					continue
+				}
+			}
+			return nil, ErrRateLimited
+		}
+
+		return resp, nil
+	}
+
+	return nil, ErrRateLimited
 }
 
 // FetchMovieMetadata queries TMDb for movie metadata and poster artwork.
@@ -268,8 +421,11 @@ func (c *HTTPMetadataClient) FetchMovieMetadata(ctx context.Context, query strin
 	req.Header.Set("User-Agent", c.cfg.UserAgent)
 	req.Header.Set("Accept", "application/json")
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.doRequestWithBackoff(req)
 	if err != nil {
+		if errors.Is(err, ErrRateLimited) {
+			return nil, ErrRateLimited
+		}
 		return nil, fmt.Errorf("%w: TMDb request error: %v", ErrAPIUnavailable, err)
 	}
 	defer resp.Body.Close()
@@ -333,8 +489,11 @@ func (c *HTTPMetadataClient) FetchTVMetadata(ctx context.Context, query string, 
 	req.Header.Set("User-Agent", c.cfg.UserAgent)
 	req.Header.Set("Accept", "application/json")
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.doRequestWithBackoff(req)
 	if err != nil {
+		if errors.Is(err, ErrRateLimited) {
+			return nil, ErrRateLimited
+		}
 		return nil, fmt.Errorf("%w: TMDb request error: %v", ErrAPIUnavailable, err)
 	}
 	defer resp.Body.Close()
@@ -421,8 +580,11 @@ func (c *HTTPMetadataClient) FetchMusicMetadata(ctx context.Context, query strin
 	req.Header.Set("User-Agent", c.cfg.UserAgent)
 	req.Header.Set("Accept", "application/json")
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.doRequestWithBackoff(req)
 	if err != nil {
+		if errors.Is(err, ErrRateLimited) {
+			return nil, ErrRateLimited
+		}
 		return nil, fmt.Errorf("%w: MusicBrainz request error: %v", ErrAPIUnavailable, err)
 	}
 	defer resp.Body.Close()
@@ -468,7 +630,7 @@ func (c *HTTPMetadataClient) FetchMusicMetadata(ctx context.Context, query strin
 		if detailReq, err := http.NewRequestWithContext(ctx, http.MethodGet, relDetailURL, nil); err == nil {
 			detailReq.Header.Set("User-Agent", c.cfg.UserAgent)
 			detailReq.Header.Set("Accept", "application/json")
-			if detailResp, err := c.httpClient.Do(detailReq); err == nil {
+			if detailResp, err := c.doRequestWithBackoff(detailReq); err == nil {
 				defer detailResp.Body.Close()
 				if detailResp.StatusCode == http.StatusOK {
 					var detailResult struct {
@@ -520,8 +682,11 @@ func (c *HTTPMetadataClient) DownloadArtwork(ctx context.Context, artworkURL str
 	}
 	req.Header.Set("User-Agent", c.cfg.UserAgent)
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.doRequestWithBackoff(req)
 	if err != nil {
+		if errors.Is(err, ErrRateLimited) {
+			return nil, ErrRateLimited
+		}
 		return nil, fmt.Errorf("%w: artwork download failed: %v", ErrAPIUnavailable, err)
 	}
 	defer resp.Body.Close()

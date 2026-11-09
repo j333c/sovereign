@@ -2275,6 +2275,10 @@ export interface components {
             folder?: string;
             /** @example true */
             ssl_enabled?: boolean;
+            /** @example false */
+            insecure_skip_verify?: boolean;
+            /** @example /etc/ssl/certs/custom-ca.crt */
+            ca_cert_path?: string;
             /** @example true */
             enabled?: boolean;
         };
@@ -2296,6 +2300,10 @@ export interface components {
             folder: string;
             /** @example true */
             ssl_enabled: boolean;
+            /** @example false */
+            insecure_skip_verify: boolean;
+            /** @example /etc/ssl/certs/custom-ca.crt */
+            ca_cert_path: string;
             /** @example true */
             enabled: boolean;
             /** @example true */
@@ -2318,6 +2326,10 @@ export interface components {
             folder?: string;
             /** @example true */
             ssl_enabled?: boolean;
+            /** @example false */
+            insecure_skip_verify?: boolean;
+            /** @example /etc/ssl/certs/custom-ca.crt */
+            ca_cert_path?: string;
         };
         IMAPTestResponse: {
             /** @example true */
@@ -4143,6 +4155,15 @@ export interface operations {
             };
             /** @description Internal supervisor error processing upload. */
             500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Insufficient storage capacity in target storage pool. */
+            507: {
                 headers: {
                     [name: string]: unknown;
                 };

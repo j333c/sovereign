@@ -82,11 +82,13 @@ type EnrichmentEngine struct {
 	pollInterval         time.Duration
 	logger               *slog.Logger
 
-	mu        sync.RWMutex
-	scanMu    sync.Mutex
-	status    EngineStatus
-	stopChan  chan struct{}
-	closeOnce sync.Once
+	mu              sync.RWMutex
+	scanMu          sync.Mutex
+	deferredDiscsMu sync.RWMutex
+	deferredDiscs   map[string]time.Time
+	status          EngineStatus
+	stopChan        chan struct{}
+	closeOnce       sync.Once
 }
 
 // NewEnrichmentEngine initializes and returns an EnrichmentEngine.
@@ -159,6 +161,7 @@ func NewEnrichmentEngine(cfg EngineConfig) (*EnrichmentEngine, error) {
 		writeStabilityWindow: stability,
 		pollInterval:         pollInterval,
 		logger:               cfg.Logger,
+		deferredDiscs:        make(map[string]time.Time),
 		stopChan:             make(chan struct{}),
 		status: EngineStatus{
 			State:      StateIdle,
@@ -226,6 +229,32 @@ func (e *EnrichmentEngine) IsEnriching() bool {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 	return e.status.State == StateEnriching
+}
+
+// GetDeferredDiscs returns a snapshot of currently deferred discs and their cooldown expirations.
+func (e *EnrichmentEngine) GetDeferredDiscs() map[string]time.Time {
+	e.deferredDiscsMu.RLock()
+	defer e.deferredDiscsMu.RUnlock()
+	res := make(map[string]time.Time, len(e.deferredDiscs))
+	for k, v := range e.deferredDiscs {
+		res[k] = v
+	}
+	return res
+}
+
+// IsDiscDeferred checks whether a disc directory path is currently under rate-limit or network cooldown.
+func (e *EnrichmentEngine) IsDiscDeferred(discDirPath string) bool {
+	e.deferredDiscsMu.RLock()
+	defer e.deferredDiscsMu.RUnlock()
+	until, ok := e.deferredDiscs[discDirPath]
+	return ok && time.Now().Before(until)
+}
+
+// DeferDisc explicitly marks a disc directory as deferred until now + duration.
+func (e *EnrichmentEngine) DeferDisc(discDirPath string, duration time.Duration) {
+	e.deferredDiscsMu.Lock()
+	defer e.deferredDiscsMu.Unlock()
+	e.deferredDiscs[discDirPath] = time.Now().Add(duration)
 }
 
 func (e *EnrichmentEngine) setStatus(state, statusText, currentDisc string, progress float64, lastErr string) {
@@ -329,6 +358,21 @@ func (e *EnrichmentEngine) Scan(ctx context.Context) (int, error) {
 
 		discDirPath := filepath.Join(e.stagingDir, entry.Name())
 
+		// Deferral Cooldown Guard: Skip discs currently under API rate limit or network cooldown
+		e.deferredDiscsMu.RLock()
+		cooldownUntil, isDeferred := e.deferredDiscs[discDirPath]
+		e.deferredDiscsMu.RUnlock()
+
+		if isDeferred {
+			if time.Now().Before(cooldownUntil) {
+				e.logger.Info("skipping staged disc: metadata enrichment deferred under cooldown", "dir", discDirPath, "cooldown_until", cooldownUntil)
+				continue
+			}
+			e.deferredDiscsMu.Lock()
+			delete(e.deferredDiscs, discDirPath)
+			e.deferredDiscsMu.Unlock()
+		}
+
 		// Active Rip In-Progress Guard
 		e.mu.RLock()
 		ripGuard := e.activeRipGuard
@@ -414,6 +458,13 @@ func (e *EnrichmentEngine) enrichDisc(ctx context.Context, discDirPath string) e
 	case MediaTypeTV:
 		tvMeta, err = e.client.FetchTVMetadata(metaCtx, parsed.Title, parsed.Season)
 		if err != nil {
+			if errors.Is(err, ErrRateLimited) {
+				e.logger.Warn("metadata API rate limited; deferring TV disc with cooldown", "dir", discDirPath, "error", err)
+				e.deferredDiscsMu.Lock()
+				e.deferredDiscs[discDirPath] = time.Now().Add(5 * time.Minute)
+				e.deferredDiscsMu.Unlock()
+				return fmt.Errorf("metadata enrichment deferred: %w", err)
+			}
 			e.logger.Warn("TV metadata query failed; using offline label fallback", "error", err, "title", parsed.Title)
 			tvMeta = &TVMetadata{
 				Title:    parsed.Title,
@@ -431,6 +482,13 @@ func (e *EnrichmentEngine) enrichDisc(ctx context.Context, discDirPath string) e
 	case MediaTypeMusic:
 		musicMeta, err = e.client.FetchMusicMetadata(metaCtx, parsed.Title, "")
 		if err != nil {
+			if errors.Is(err, ErrRateLimited) {
+				e.logger.Warn("metadata API rate limited; deferring music disc with cooldown", "dir", discDirPath, "error", err)
+				e.deferredDiscsMu.Lock()
+				e.deferredDiscs[discDirPath] = time.Now().Add(5 * time.Minute)
+				e.deferredDiscsMu.Unlock()
+				return fmt.Errorf("metadata enrichment deferred: %w", err)
+			}
 			e.logger.Warn("music metadata query failed; using offline label fallback", "error", err, "title", parsed.Title)
 			artist := parsed.Artist
 			if artist == "" {
@@ -452,6 +510,13 @@ func (e *EnrichmentEngine) enrichDisc(ctx context.Context, discDirPath string) e
 	default: // Movie
 		movieMeta, err = e.client.FetchMovieMetadata(metaCtx, parsed.Title, parsed.Year)
 		if err != nil {
+			if errors.Is(err, ErrRateLimited) {
+				e.logger.Warn("metadata API rate limited; deferring movie disc with cooldown", "dir", discDirPath, "error", err)
+				e.deferredDiscsMu.Lock()
+				e.deferredDiscs[discDirPath] = time.Now().Add(5 * time.Minute)
+				e.deferredDiscsMu.Unlock()
+				return fmt.Errorf("metadata enrichment deferred: %w", err)
+			}
 			e.logger.Warn("movie metadata query failed; using offline label fallback", "error", err, "title", parsed.Title)
 			movieMeta = &MovieMetadata{
 				Title:    parsed.Title,

@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -674,4 +675,121 @@ func TestDefaultHeadroomChecker(t *testing.T) {
 		t.Errorf("expected headroom ratio between 0 and 1, got %f", ratio)
 	}
 }
+
+// TestRipper_DriveDisconnection verifies that hardware disconnection (EIO / ENODEV)
+// during active ripping terminates cleanly without daemon hang, purges staging,
+// updates DriveReady to false, and handles eject failure gracefully.
+func TestRipper_DriveDisconnection(t *testing.T) {
+	t.Run("EIO disconnect terminates cleanly and purges staging directory", func(t *testing.T) {
+		ripper, driver, _, dataDir := setupTestRipper(t)
+
+		var ripAttempts int
+		var alertReceived bool
+		var alertNotice string
+
+		ripper.SetEventBroadcaster(func(event string, data any) {
+			if event == "optical.alert" {
+				if m, ok := data.(map[string]any); ok {
+					if m["type"] == "drive_disconnected" {
+						alertReceived = true
+						alertNotice = fmt.Sprintf("%v", m["notice"])
+					}
+				}
+			}
+		})
+
+		driver.SetOnRip(func(ctx context.Context, disc DiscInfo, destDir string, progressCb func(percent float64)) error {
+			ripAttempts++
+			// Create a partial file in staging
+			_ = os.MkdirAll(destDir, 0755)
+			_ = os.WriteFile(filepath.Join(destDir, "partial.iso"), []byte("partial content"), 0644)
+			// Return EIO disconnect error
+			return syscall.EIO
+		})
+
+		// Make tray eject also fail to verify graceful hardware failure handling
+		driver.SetOnEject(func(ctx context.Context) error {
+			return errors.New("hardware tray mechanical jam / disconnect")
+		})
+
+		disc := DiscInfo{
+			DiscType:  DiscTypeDVD,
+			Label:     "DISCONNECT_MOVIE",
+			ID:        "disconnect_movie_1",
+			Encrypted: false,
+		}
+
+		driver.InsertDisc(disc)
+
+		// Execute poll cycle
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+
+		done := make(chan struct{})
+		go func() {
+			ripper.PollOnce(ctx)
+			close(done)
+		}()
+
+		select {
+		case <-done:
+			// Terminated cleanly
+		case <-time.After(2 * time.Second):
+			t.Fatalf("PollOnce hung / deadlocked on drive disconnection")
+		}
+
+		// Verify it did not enter a 3-attempt retry loop on disconnect
+		if ripAttempts != 1 {
+			t.Errorf("expected exactly 1 attempt on disconnect before aborting, got %d", ripAttempts)
+		}
+
+		// Verify staging directory was purged
+		stagingTarget := filepath.Join(dataDir, "media", "staging", "discs", disc.ID)
+		if _, err := os.Stat(stagingTarget); !os.IsNotExist(err) {
+			t.Errorf("staging folder %s was not purged on drive disconnect", stagingTarget)
+		}
+
+		// Verify status: StateError, StatusTextDriveDisconnected, DriveReady false
+		st := ripper.GetStatus()
+		if st.State != StateError {
+			t.Errorf("expected state %q, got %q", StateError, st.State)
+		}
+		if st.StatusText != StatusTextDriveDisconnected {
+			t.Errorf("expected status text %q, got %q", StatusTextDriveDisconnected, st.StatusText)
+		}
+		if st.DriveReady {
+			t.Errorf("expected DriveReady to be false after disconnect")
+		}
+
+		// Verify alert event
+		if !alertReceived {
+			t.Errorf("expected optical.alert event with type drive_disconnected")
+		}
+		if alertNotice != NoticeDriveDisconnected {
+			t.Errorf("expected alert notice %q, got %q", NoticeDriveDisconnected, alertNotice)
+		}
+	})
+
+	t.Run("ENODEV and device path error helper detection", func(t *testing.T) {
+		if !IsDriveDisconnectError(syscall.EIO) {
+			t.Errorf("expected EIO to be recognized as disconnect")
+		}
+		if !IsDriveDisconnectError(syscall.ENODEV) {
+			t.Errorf("expected ENODEV to be recognized as disconnect")
+		}
+		if !IsDriveDisconnectError(&os.PathError{Path: "/dev/sr0", Err: syscall.EIO}) {
+			t.Errorf("expected PathError on /dev/sr0 to be recognized as disconnect")
+		}
+		if !IsDriveDisconnectError(errors.New("read /dev/sr0: input/output error")) {
+			t.Errorf("expected string error containing input/output error to be recognized")
+		}
+		if IsDriveDisconnectError(errors.New("unrelated scratch error")) {
+			t.Errorf("expected unrelated error not to be recognized as disconnect")
+		}
+		if IsDriveDisconnectError(nil) {
+			t.Errorf("nil error should not be recognized as disconnect")
+		}
+	})
+}
+
 

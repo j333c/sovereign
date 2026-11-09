@@ -69,6 +69,8 @@ CREATE TABLE IF NOT EXISTS imap_configs (
     password_encrypted BLOB NOT NULL,
     folder TEXT NOT NULL DEFAULT 'INBOX',
     ssl_enabled BOOLEAN NOT NULL DEFAULT 1,
+    insecure_skip_verify BOOLEAN NOT NULL DEFAULT 0,
+    ca_cert_path TEXT DEFAULT '',
     enabled BOOLEAN NOT NULL DEFAULT 1,
     last_polled_at TIMESTAMP NULL,
     last_error TEXT DEFAULT '',

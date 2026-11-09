@@ -24,19 +24,21 @@ var (
 
 // IMAPConfig represents a mailbox polling configuration.
 type IMAPConfig struct {
-	ID                string     `json:"id"`
-	Host              string     `json:"host"`
-	Port              int        `json:"port"`
-	Username          string     `json:"username"`
-	Password          string     `json:"password,omitempty"`
-	PasswordEncrypted []byte     `json:"-"`
-	Folder            string     `json:"folder"`
-	SSLEnabled        bool       `json:"ssl_enabled"`
-	Enabled           bool       `json:"enabled"`
-	LastPolledAt      *time.Time `json:"last_polled_at,omitempty"`
-	LastError         string     `json:"last_error"`
-	CreatedAt         time.Time  `json:"created_at"`
-	UpdatedAt         time.Time  `json:"updated_at"`
+	ID                 string     `json:"id"`
+	Host               string     `json:"host"`
+	Port               int        `json:"port"`
+	Username           string     `json:"username"`
+	Password           string     `json:"password,omitempty"`
+	PasswordEncrypted  []byte     `json:"-"`
+	Folder             string     `json:"folder"`
+	SSLEnabled         bool       `json:"ssl_enabled"`
+	InsecureSkipVerify bool       `json:"insecure_skip_verify"`
+	CACertPath         string     `json:"ca_cert_path"`
+	Enabled            bool       `json:"enabled"`
+	LastPolledAt       *time.Time `json:"last_polled_at,omitempty"`
+	LastError          string     `json:"last_error"`
+	CreatedAt          time.Time  `json:"created_at"`
+	UpdatedAt          time.Time  `json:"updated_at"`
 }
 
 // DeriveKey ensures the encryption key is exactly 32 bytes (for AES-256).
@@ -219,6 +221,10 @@ func (s *IMAPStore) Save(ctx context.Context, cfg *IMAPConfig) error {
 	if cfg.SSLEnabled {
 		sslEnabledInt = 1
 	}
+	insecureSkipVerifyInt := 0
+	if cfg.InsecureSkipVerify {
+		insecureSkipVerifyInt = 1
+	}
 	enabledInt := 0
 	if cfg.Enabled {
 		enabledInt = 1
@@ -231,8 +237,8 @@ func (s *IMAPStore) Save(ctx context.Context, cfg *IMAPConfig) error {
 
 	query := `
 		INSERT INTO imap_configs (
-			id, host, port, username, password_encrypted, folder, ssl_enabled, enabled, last_polled_at, last_error, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+			id, host, port, username, password_encrypted, folder, ssl_enabled, insecure_skip_verify, ca_cert_path, enabled, last_polled_at, last_error, updated_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
 		ON CONFLICT(id) DO UPDATE SET
 			host = excluded.host,
 			port = excluded.port,
@@ -240,6 +246,8 @@ func (s *IMAPStore) Save(ctx context.Context, cfg *IMAPConfig) error {
 			password_encrypted = excluded.password_encrypted,
 			folder = excluded.folder,
 			ssl_enabled = excluded.ssl_enabled,
+			insecure_skip_verify = excluded.insecure_skip_verify,
+			ca_cert_path = excluded.ca_cert_path,
 			enabled = excluded.enabled,
 			last_polled_at = excluded.last_polled_at,
 			last_error = excluded.last_error,
@@ -254,6 +262,8 @@ func (s *IMAPStore) Save(ctx context.Context, cfg *IMAPConfig) error {
 		cfg.PasswordEncrypted,
 		cfg.Folder,
 		sslEnabledInt,
+		insecureSkipVerifyInt,
+		cfg.CACertPath,
 		enabledInt,
 		lastPolledAtVal,
 		cfg.LastError,
@@ -268,7 +278,7 @@ func (s *IMAPStore) Save(ctx context.Context, cfg *IMAPConfig) error {
 // Get retrieves an IMAPConfig by ID and decrypts its password.
 func (s *IMAPStore) Get(ctx context.Context, id string) (*IMAPConfig, error) {
 	row := s.db.QueryRowContext(ctx, `
-		SELECT id, host, port, username, password_encrypted, folder, ssl_enabled, enabled, last_polled_at, last_error, created_at, updated_at
+		SELECT id, host, port, username, password_encrypted, folder, ssl_enabled, insecure_skip_verify, ca_cert_path, enabled, last_polled_at, last_error, created_at, updated_at
 		FROM imap_configs
 		WHERE id = ?
 	`, id)
@@ -287,7 +297,7 @@ func (s *IMAPStore) Get(ctx context.Context, id string) (*IMAPConfig, error) {
 // GetActive returns the first active (enabled) IMAPConfig, ordered by updated_at DESC.
 func (s *IMAPStore) GetActive(ctx context.Context) (*IMAPConfig, error) {
 	row := s.db.QueryRowContext(ctx, `
-		SELECT id, host, port, username, password_encrypted, folder, ssl_enabled, enabled, last_polled_at, last_error, created_at, updated_at
+		SELECT id, host, port, username, password_encrypted, folder, ssl_enabled, insecure_skip_verify, ca_cert_path, enabled, last_polled_at, last_error, created_at, updated_at
 		FROM imap_configs
 		WHERE enabled = 1
 		ORDER BY updated_at DESC
@@ -308,7 +318,7 @@ func (s *IMAPStore) GetActive(ctx context.Context) (*IMAPConfig, error) {
 // GetFirst returns the most recently updated IMAPConfig, regardless of whether it is enabled.
 func (s *IMAPStore) GetFirst(ctx context.Context) (*IMAPConfig, error) {
 	row := s.db.QueryRowContext(ctx, `
-		SELECT id, host, port, username, password_encrypted, folder, ssl_enabled, enabled, last_polled_at, last_error, created_at, updated_at
+		SELECT id, host, port, username, password_encrypted, folder, ssl_enabled, insecure_skip_verify, ca_cert_path, enabled, last_polled_at, last_error, created_at, updated_at
 		FROM imap_configs
 		ORDER BY updated_at DESC
 		LIMIT 1
@@ -328,7 +338,7 @@ func (s *IMAPStore) GetFirst(ctx context.Context) (*IMAPConfig, error) {
 // List returns all IMAP configurations.
 func (s *IMAPStore) List(ctx context.Context) ([]*IMAPConfig, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, host, port, username, password_encrypted, folder, ssl_enabled, enabled, last_polled_at, last_error, created_at, updated_at
+		SELECT id, host, port, username, password_encrypted, folder, ssl_enabled, insecure_skip_verify, ca_cert_path, enabled, last_polled_at, last_error, created_at, updated_at
 		FROM imap_configs
 		ORDER BY created_at ASC
 	`)
@@ -359,7 +369,8 @@ type rowScanner interface {
 
 func (s *IMAPStore) scanConfig(scanner rowScanner) (*IMAPConfig, error) {
 	var cfg IMAPConfig
-	var sslInt, enabledInt int
+	var sslInt, insecureSkipVerifyInt, enabledInt int
+	var caCertPath sql.NullString
 	var lastPolledStr sql.NullString
 	var createdAtStr, updatedAtStr string
 
@@ -371,6 +382,8 @@ func (s *IMAPStore) scanConfig(scanner rowScanner) (*IMAPConfig, error) {
 		&cfg.PasswordEncrypted,
 		&cfg.Folder,
 		&sslInt,
+		&insecureSkipVerifyInt,
+		&caCertPath,
 		&enabledInt,
 		&lastPolledStr,
 		&cfg.LastError,
@@ -382,6 +395,10 @@ func (s *IMAPStore) scanConfig(scanner rowScanner) (*IMAPConfig, error) {
 	}
 
 	cfg.SSLEnabled = sslInt != 0
+	cfg.InsecureSkipVerify = insecureSkipVerifyInt != 0
+	if caCertPath.Valid {
+		cfg.CACertPath = caCertPath.String
+	}
 	cfg.Enabled = enabledInt != 0
 
 	if lastPolledStr.Valid && lastPolledStr.String != "" {

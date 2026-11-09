@@ -38,13 +38,17 @@ var ValidCategories = []string{
 	CategoryDocuments,
 }
 
+// Safety buffer required for ingestion operations (1.0 GB).
+const DropzoneSafetyBufferBytes int64 = 1 * 1024 * 1024 * 1024
+
 // Sentinel dropzone errors.
 var (
-	ErrInvalidCategory  = errors.New("invalid media category")
-	ErrInvalidMedia     = errors.New("only media files are accepted")
-	ErrCategoryMismatch = errors.New("uploaded media format does not match selected category")
-	ErrEmptyFile        = errors.New("file is empty")
-	ErrStagingAborted   = errors.New("upload stream was aborted")
+	ErrInvalidCategory     = errors.New("invalid media category")
+	ErrInvalidMedia        = errors.New("only media files are accepted")
+	ErrCategoryMismatch    = errors.New("uploaded media format does not match selected category")
+	ErrEmptyFile           = errors.New("file is empty")
+	ErrStagingAborted      = errors.New("upload stream was aborted")
+	ErrInsufficientStorage = errors.New("insufficient storage space")
 )
 
 // IsValidCategory checks whether a string is one of the valid media categories.
@@ -383,6 +387,31 @@ type LibraryRefresher interface {
 	RefreshService(ctx context.Context, serviceID string) error
 }
 
+// DiskFreeFunc returns available bytes for a filesystem path.
+type DiskFreeFunc func(path string) (int64, error)
+
+func defaultDiskFree(path string) (int64, error) {
+	checkPath := path
+	for checkPath != "/" && checkPath != "." {
+		if _, err := os.Stat(checkPath); err == nil {
+			break
+		}
+		parent := filepath.Dir(checkPath)
+		if parent == checkPath {
+			break
+		}
+		checkPath = parent
+	}
+
+	var stat syscall.Statfs_t
+	if err := syscall.Statfs(checkPath, &stat); err != nil {
+		return 0, fmt.Errorf("statfs failed for %q: %w", checkPath, err)
+	}
+
+	freeBytes := int64(stat.Bavail) * int64(stat.Bsize)
+	return freeBytes, nil
+}
+
 // DropzoneConfig configures the DropzoneEngine.
 type DropzoneConfig struct {
 	DataDir         string
@@ -390,6 +419,7 @@ type DropzoneConfig struct {
 	Refresher       LibraryRefresher
 	ScanInterval    time.Duration
 	StabilityWindow time.Duration
+	DiskFree        DiskFreeFunc
 }
 
 type fileStability struct {
@@ -412,6 +442,8 @@ type DropzoneEngine struct {
 	scannerMu        sync.Mutex
 	promotionMu      sync.Mutex
 	stabilityTracker map[string]fileStability
+	diskFreeMu       sync.RWMutex
+	diskFree         DiskFreeFunc
 	stopChan         chan struct{}
 	wg               sync.WaitGroup
 	closeOnce        sync.Once
@@ -439,6 +471,11 @@ func NewDropzoneEngine(cfg DropzoneConfig) (*DropzoneEngine, error) {
 
 	_ = CleanOrphanedStagingFiles(cfg.DataDir)
 
+	diskFree := cfg.DiskFree
+	if diskFree == nil {
+		diskFree = defaultDiskFree
+	}
+
 	engine := &DropzoneEngine{
 		dataDir:          cfg.DataDir,
 		logger:           cfg.Logger,
@@ -447,6 +484,7 @@ func NewDropzoneEngine(cfg DropzoneConfig) (*DropzoneEngine, error) {
 		stabilityWindow:  cfg.StabilityWindow,
 		history:          make([]DropHistoryItem, 0, 100),
 		stabilityTracker: make(map[string]fileStability),
+		diskFree:         diskFree,
 		stopChan:         make(chan struct{}),
 	}
 
@@ -456,6 +494,36 @@ func NewDropzoneEngine(cfg DropzoneConfig) (*DropzoneEngine, error) {
 // SetRefresher sets or updates the LibraryRefresher.
 func (e *DropzoneEngine) SetRefresher(r LibraryRefresher) {
 	e.refresher = r
+}
+
+// SetDiskFree configures or overrides the free disk space inspection function.
+func (e *DropzoneEngine) SetDiskFree(fn DiskFreeFunc) {
+	e.diskFreeMu.Lock()
+	defer e.diskFreeMu.Unlock()
+	e.diskFree = fn
+}
+
+// CheckCapacity verifies that target storage has at least requiredBytes + DropzoneSafetyBufferBytes available.
+// If available space is insufficient, returns ErrInsufficientStorage.
+func (e *DropzoneEngine) CheckCapacity(requiredBytes int64) error {
+	e.diskFreeMu.RLock()
+	freeFn := e.diskFree
+	e.diskFreeMu.RUnlock()
+
+	if freeFn == nil {
+		freeFn = defaultDiskFree
+	}
+
+	avail, err := freeFn(e.dataDir)
+	if err != nil {
+		return fmt.Errorf("failed to check available storage: %w", err)
+	}
+
+	if avail < requiredBytes+DropzoneSafetyBufferBytes {
+		return ErrInsufficientStorage
+	}
+
+	return nil
 }
 
 func generateUUID() string {
@@ -491,6 +559,11 @@ func (e *DropzoneEngine) HandleUploadStream(ctx context.Context, category, filen
 	cleanFilename := filepath.Base(filepath.Clean(filename))
 	if cleanFilename == "." || cleanFilename == "/" || cleanFilename == "" {
 		cleanFilename = "uploaded_media"
+	}
+
+	// Pre-flight capacity check: ensure target storage has at least the safety buffer available
+	if err := e.CheckCapacity(0); err != nil {
+		return nil, err
 	}
 
 	uploadUUID := generateUUID()
@@ -846,6 +919,13 @@ func (e *DropzoneEngine) ScanOnce(ctx context.Context) ([]DropHistoryItem, error
 				}
 				contentType = ct
 				format = fmtSlug
+			}
+
+			// Pre-flight capacity check: verify target storage has size + 1.0 GB safety buffer
+			if capErr := e.CheckCapacity(size); capErr != nil {
+				e.logger.Warn("insufficient storage to promote dropped file; preserving file in incoming drop until space is freed",
+					"path", filePath, "category", category, "size", size)
+				continue
 			}
 
 			// Valid media: promote atomically with collision resolution & mutex

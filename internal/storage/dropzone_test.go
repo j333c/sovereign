@@ -769,3 +769,140 @@ func TestDropzone_Start_BackgroundScanner(t *testing.T) {
 	}
 }
 
+func TestDropzone_CapacityGuard(t *testing.T) {
+	t.Run("CheckCapacity verifies required bytes + 1GB safety buffer", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		engine, err := NewDropzoneEngine(DropzoneConfig{
+			DataDir: tmpDir,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer engine.Close()
+
+		// Mock 5 GB free disk space
+		const mockFreeBytes int64 = 5 * 1024 * 1024 * 1024
+		engine.SetDiskFree(func(path string) (int64, error) {
+			return mockFreeBytes, nil
+		})
+
+		// 3 GB file requires 3 GB + 1 GB buffer = 4 GB <= 5 GB -> OK
+		if err := engine.CheckCapacity(3 * 1024 * 1024 * 1024); err != nil {
+			t.Errorf("expected 3GB upload to pass capacity check, got error: %v", err)
+		}
+
+		// 4.5 GB file requires 4.5 GB + 1 GB buffer = 5.5 GB > 5 GB -> ErrInsufficientStorage
+		if err := engine.CheckCapacity(int64(4.5 * 1024 * 1024 * 1024)); !errors.Is(err, ErrInsufficientStorage) {
+			t.Errorf("expected ErrInsufficientStorage for 4.5GB upload, got: %v", err)
+		}
+
+		// 10 GB file -> ErrInsufficientStorage
+		if err := engine.CheckCapacity(10 * 1024 * 1024 * 1024); !errors.Is(err, ErrInsufficientStorage) {
+			t.Errorf("expected ErrInsufficientStorage for 10GB upload, got: %v", err)
+		}
+	})
+
+	t.Run("HandleUploadStream rejects upload when storage is below buffer", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		engine, err := NewDropzoneEngine(DropzoneConfig{
+			DataDir: tmpDir,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer engine.Close()
+
+		// Mock only 500 MB free (< 1.0 GB safety buffer)
+		engine.SetDiskFree(func(path string) (int64, error) {
+			return 500 * 1024 * 1024, nil
+		})
+
+		payload := append([]byte("\x00\x00\x00\x20ftypisom\x00\x00\x02\x00isomiso2mp41"), bytes.Repeat([]byte{0x00}, 512)...)
+		_, err = engine.HandleUploadStream(context.Background(), CategoryMovies, "movie.mp4", bytes.NewReader(payload))
+		if !errors.Is(err, ErrInsufficientStorage) {
+			t.Errorf("expected ErrInsufficientStorage, got: %v", err)
+		}
+
+		// Verify 0 staging files created
+		stagingDir := filepath.Join(tmpDir, "drop", "incoming", CategoryMovies)
+		entries, _ := os.ReadDir(stagingDir)
+		for _, e := range entries {
+			t.Errorf("unexpected staging file found: %s", e.Name())
+		}
+	})
+
+	t.Run("SMB drop folder skips promotion and preserves file when storage is insufficient", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		refresher := &mockRefresher{}
+		engine, err := NewDropzoneEngine(DropzoneConfig{
+			DataDir:         tmpDir,
+			Refresher:       refresher,
+			StabilityWindow: 10 * time.Millisecond,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer engine.Close()
+
+		// Place a valid movie file into incoming drop folder
+		movieData := append([]byte("\x00\x00\x00\x20ftypisom\x00\x00\x02\x00isomiso2mp41"), bytes.Repeat([]byte{0x42}, 1024)...)
+		dropFile := filepath.Join(tmpDir, "drop", "incoming", CategoryMovies, "test_movie.mp4")
+		if err := os.WriteFile(dropFile, movieData, 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		// Mock insufficient storage: available is only 500 MB (< 1GB buffer)
+		var freeBytes int64 = 500 * 1024 * 1024
+		var freeMu sync.RWMutex
+		engine.SetDiskFree(func(path string) (int64, error) {
+			freeMu.RLock()
+			defer freeMu.RUnlock()
+			return freeBytes, nil
+		})
+
+		// Pass 1: initial discovery snapshot
+		_, _ = engine.ScanOnce(context.Background())
+		time.Sleep(20 * time.Millisecond)
+
+		// Pass 2: stable file evaluated, should skip promotion due to insufficient capacity
+		promoted, err := engine.ScanOnce(context.Background())
+		if err != nil {
+			t.Fatalf("ScanOnce returned error: %v", err)
+		}
+		if len(promoted) != 0 {
+			t.Errorf("expected 0 promoted items, got %d", len(promoted))
+		}
+
+		// Ensure file was NOT unlinked / preserved in incoming folder
+		if _, err := os.Stat(dropFile); os.IsNotExist(err) {
+			t.Fatalf("incoming file was unlinked despite insufficient storage!")
+		}
+
+		// Free up space (mock 100 GB available)
+		freeMu.Lock()
+		freeBytes = 100 * 1024 * 1024 * 1024
+		freeMu.Unlock()
+
+		// Pass 3: space now available -> file should be promoted!
+		promoted, err = engine.ScanOnce(context.Background())
+		if err != nil {
+			t.Fatalf("ScanOnce returned error on pass 3: %v", err)
+		}
+		if len(promoted) != 1 {
+			t.Errorf("expected 1 promoted item after space freed, got %d", len(promoted))
+		}
+
+		// Verify promoted file exists in media destination
+		destFile := filepath.Join(tmpDir, "media", CategoryMovies, "test_movie.mp4")
+		if _, err := os.Stat(destFile); err != nil {
+			t.Errorf("expected promoted media file at %s: %v", destFile, err)
+		}
+
+		// Verify incoming file was cleanly moved
+		if _, err := os.Stat(dropFile); !os.IsNotExist(err) {
+			t.Errorf("expected incoming file to be moved, but it still exists at %s", dropFile)
+		}
+	})
+}
+
+

@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"crypto/tls"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -1886,17 +1885,25 @@ func (s *Server) writeJSON(w http.ResponseWriter, status int, data any) {
 	_ = json.NewEncoder(w).Encode(data)
 }
 
-func (s *Server) writeProblem(w http.ResponseWriter, status int, title, detail, instance string) {
+func (s *Server) writeProblemWithType(w http.ResponseWriter, problemType string, status int, title, detail, instance string) {
 	w.Header().Set("Content-Type", "application/problem+json")
 	w.WriteHeader(status)
 	prob := ProblemDetails{
-		Type:     fmt.Sprintf("https://sovereign.local/errors/http-%d", status),
+		Type:     problemType,
 		Title:    title,
 		Status:   status,
 		Detail:   detail,
 		Instance: instance,
 	}
 	_ = json.NewEncoder(w).Encode(prob)
+}
+
+func (s *Server) writeProblem(w http.ResponseWriter, status int, title, detail, instance string) {
+	problemType := fmt.Sprintf("https://sovereign.local/errors/http-%d", status)
+	if status == http.StatusInsufficientStorage {
+		problemType = "https://sovereign.local/errors/insufficient-storage"
+	}
+	s.writeProblemWithType(w, problemType, status, title, detail, instance)
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
@@ -2975,6 +2982,16 @@ func (s *Server) handleDropUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Pre-flight Content-Length inspection: verify available capacity (upload size + 1.0 GB safety buffer)
+	if r.ContentLength > 0 {
+		if err := engine.CheckCapacity(r.ContentLength); err != nil {
+			if errors.Is(err, storage.ErrInsufficientStorage) {
+				s.writeProblemWithType(w, "https://sovereign.local/errors/insufficient-storage", http.StatusInsufficientStorage, "Insufficient Storage", "Target storage pool has insufficient space for this upload (1.0 GB safety buffer required).", r.URL.Path)
+				return
+			}
+		}
+	}
+
 	mr, err := r.MultipartReader()
 	if err != nil {
 		s.writeProblem(w, http.StatusBadRequest, "Invalid Request", "Failed to parse multipart/form-data upload: "+err.Error(), r.URL.Path)
@@ -3034,6 +3051,10 @@ func (s *Server) handleDropUpload(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if uploadErr != nil {
+		if errors.Is(uploadErr, storage.ErrInsufficientStorage) {
+			s.writeProblemWithType(w, "https://sovereign.local/errors/insufficient-storage", http.StatusInsufficientStorage, "Insufficient Storage", "Target storage pool has insufficient space for this upload (1.0 GB safety buffer required).", r.URL.Path)
+			return
+		}
 		if errors.Is(uploadErr, storage.ErrInvalidCategory) {
 			s.writeProblem(w, http.StatusBadRequest, "Invalid Category", "Category must be one of: movies, tv, music, audiobooks, documents", r.URL.Path)
 			return
@@ -3552,39 +3573,45 @@ func (s *Server) handleTranscodeOverride(w http.ResponseWriter, r *http.Request)
 
 // IMAPConfigResponse matches the OpenAPI 3.1 contract.
 type IMAPConfigResponse struct {
-	ID           string `json:"id"`
-	Host         string `json:"host"`
-	Port         int    `json:"port"`
-	Username     string `json:"username"`
-	Password     string `json:"password"`
-	Folder       string `json:"folder"`
-	SSLEnabled   bool   `json:"ssl_enabled"`
-	Enabled      bool   `json:"enabled"`
-	Connected    bool   `json:"connected"`
-	LastPolledAt string `json:"last_polled_at,omitempty"`
-	LastError    string `json:"last_error"`
+	ID                 string `json:"id"`
+	Host               string `json:"host"`
+	Port               int    `json:"port"`
+	Username           string `json:"username"`
+	Password           string `json:"password"`
+	Folder             string `json:"folder"`
+	SSLEnabled         bool   `json:"ssl_enabled"`
+	InsecureSkipVerify bool   `json:"insecure_skip_verify"`
+	CACertPath         string `json:"ca_cert_path"`
+	Enabled            bool   `json:"enabled"`
+	Connected          bool   `json:"connected"`
+	LastPolledAt       string `json:"last_polled_at,omitempty"`
+	LastError          string `json:"last_error"`
 }
 
 // IMAPConfigSaveRequest matches the OpenAPI 3.1 contract.
 type IMAPConfigSaveRequest struct {
-	ID         string `json:"id,omitempty"`
-	Host       string `json:"host"`
-	Port       int    `json:"port"`
-	Username   string `json:"username"`
-	Password   string `json:"password"`
-	Folder     string `json:"folder"`
-	SSLEnabled *bool  `json:"ssl_enabled,omitempty"`
-	Enabled    *bool  `json:"enabled,omitempty"`
+	ID                 string `json:"id,omitempty"`
+	Host               string `json:"host"`
+	Port               int    `json:"port"`
+	Username           string `json:"username"`
+	Password           string `json:"password"`
+	Folder             string `json:"folder"`
+	SSLEnabled         *bool  `json:"ssl_enabled,omitempty"`
+	InsecureSkipVerify *bool  `json:"insecure_skip_verify,omitempty"`
+	CACertPath         string `json:"ca_cert_path,omitempty"`
+	Enabled            *bool  `json:"enabled,omitempty"`
 }
 
 // IMAPTestRequest matches the OpenAPI 3.1 contract.
 type IMAPTestRequest struct {
-	Host       string `json:"host"`
-	Port       int    `json:"port"`
-	Username   string `json:"username"`
-	Password   string `json:"password"`
-	Folder     string `json:"folder"`
-	SSLEnabled *bool  `json:"ssl_enabled,omitempty"`
+	Host               string `json:"host"`
+	Port               int    `json:"port"`
+	Username           string `json:"username"`
+	Password           string `json:"password"`
+	Folder             string `json:"folder"`
+	SSLEnabled         *bool  `json:"ssl_enabled,omitempty"`
+	InsecureSkipVerify *bool  `json:"insecure_skip_verify,omitempty"`
+	CACertPath         string `json:"ca_cert_path,omitempty"`
 }
 
 // IMAPTestResponse matches the OpenAPI 3.1 contract.
@@ -3648,17 +3675,19 @@ func (s *Server) handleGetIMAPConfig(w http.ResponseWriter, r *http.Request) {
 	connected := cfg.Enabled && cfg.LastError == "" && cfg.LastPolledAt != nil
 
 	resp := IMAPConfigResponse{
-		ID:           cfg.ID,
-		Host:         cfg.Host,
-		Port:         cfg.Port,
-		Username:     cfg.Username,
-		Password:     "********",
-		Folder:       cfg.Folder,
-		SSLEnabled:   cfg.SSLEnabled,
-		Enabled:      cfg.Enabled,
-		Connected:    connected,
-		LastPolledAt: lastPolledStr,
-		LastError:    cfg.LastError,
+		ID:                 cfg.ID,
+		Host:               cfg.Host,
+		Port:               cfg.Port,
+		Username:           cfg.Username,
+		Password:           "********",
+		Folder:             cfg.Folder,
+		SSLEnabled:         cfg.SSLEnabled,
+		InsecureSkipVerify: cfg.InsecureSkipVerify,
+		CACertPath:         cfg.CACertPath,
+		Enabled:            cfg.Enabled,
+		Connected:          connected,
+		LastPolledAt:       lastPolledStr,
+		LastError:          cfg.LastError,
 	}
 
 	s.writeJSON(w, http.StatusOK, resp)
@@ -3701,6 +3730,10 @@ func (s *Server) handleSaveIMAPConfig(w http.ResponseWriter, r *http.Request) {
 	if req.SSLEnabled != nil {
 		sslEnabled = *req.SSLEnabled
 	}
+	insecureSkipVerify := false
+	if req.InsecureSkipVerify != nil {
+		insecureSkipVerify = *req.InsecureSkipVerify
+	}
 	enabled := true
 	if req.Enabled != nil {
 		enabled = *req.Enabled
@@ -3730,14 +3763,16 @@ func (s *Server) handleSaveIMAPConfig(w http.ResponseWriter, r *http.Request) {
 	}
 
 	configToSave := &store.IMAPConfig{
-		ID:         req.ID,
-		Host:       req.Host,
-		Port:       req.Port,
-		Username:   req.Username,
-		Password:   passwordToSave,
-		Folder:     req.Folder,
-		SSLEnabled: sslEnabled,
-		Enabled:    enabled,
+		ID:                 req.ID,
+		Host:               req.Host,
+		Port:               req.Port,
+		Username:           req.Username,
+		Password:           passwordToSave,
+		Folder:             req.Folder,
+		SSLEnabled:         sslEnabled,
+		InsecureSkipVerify: insecureSkipVerify,
+		CACertPath:         req.CACertPath,
+		Enabled:            enabled,
 	}
 
 	if err := imapStore.Save(r.Context(), configToSave); err != nil {
@@ -3754,16 +3789,18 @@ func (s *Server) handleSaveIMAPConfig(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp := IMAPConfigResponse{
-		ID:         configToSave.ID,
-		Host:       configToSave.Host,
-		Port:       configToSave.Port,
-		Username:   configToSave.Username,
-		Password:   "********",
-		Folder:     configToSave.Folder,
-		SSLEnabled: configToSave.SSLEnabled,
-		Enabled:    configToSave.Enabled,
-		Connected:  configToSave.Enabled && configToSave.LastError == "" && configToSave.LastPolledAt != nil,
-		LastError:  "",
+		ID:                 configToSave.ID,
+		Host:               configToSave.Host,
+		Port:               configToSave.Port,
+		Username:           configToSave.Username,
+		Password:           "********",
+		Folder:             configToSave.Folder,
+		SSLEnabled:         configToSave.SSLEnabled,
+		InsecureSkipVerify: configToSave.InsecureSkipVerify,
+		CACertPath:         configToSave.CACertPath,
+		Enabled:            configToSave.Enabled,
+		Connected:          configToSave.Enabled && configToSave.LastError == "" && configToSave.LastPolledAt != nil,
+		LastError:          "",
 	}
 
 	s.writeJSON(w, http.StatusOK, resp)
@@ -3800,6 +3837,10 @@ func (s *Server) handleTestIMAPConnection(w http.ResponseWriter, r *http.Request
 	if req.SSLEnabled != nil {
 		sslEnabled = *req.SSLEnabled
 	}
+	insecureSkipVerify := false
+	if req.InsecureSkipVerify != nil {
+		insecureSkipVerify = *req.InsecureSkipVerify
+	}
 
 	passwordToTest := req.Password
 	if passwordToTest == "" || passwordToTest == "********" {
@@ -3821,8 +3862,10 @@ func (s *Server) handleTestIMAPConnection(w http.ResponseWriter, r *http.Request
 	}()
 
 	addr := fmt.Sprintf("%s:%d", req.Host, req.Port)
-	tlsConfig := &tls.Config{
-		ServerName: req.Host,
+	tlsConfig, err := documents.BuildTLSConfig(req.Host, insecureSkipVerify, req.CACertPath)
+	if err != nil {
+		s.writeProblem(w, http.StatusBadRequest, "Invalid TLS Configuration", err.Error(), r.URL.Path)
+		return
 	}
 
 	testCtx, cancel := context.WithTimeout(r.Context(), 10*time.Second)

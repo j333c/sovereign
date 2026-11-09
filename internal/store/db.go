@@ -106,6 +106,9 @@ func (d *DB) migrate(ctx context.Context) error {
 	if _, err := d.ExecContext(ctx, baselineSchema); err != nil {
 		return fmt.Errorf("executing baseline schema failed: %w", err)
 	}
+	// Backward-compatible column migrations for existing databases
+	_, _ = d.ExecContext(ctx, "ALTER TABLE imap_configs ADD COLUMN insecure_skip_verify BOOLEAN NOT NULL DEFAULT 0;")
+	_, _ = d.ExecContext(ctx, "ALTER TABLE imap_configs ADD COLUMN ca_cert_path TEXT DEFAULT '';")
 	return nil
 }
 

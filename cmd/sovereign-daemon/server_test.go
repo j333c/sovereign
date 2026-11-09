@@ -1393,7 +1393,12 @@ func TestServer_SSE_TelemetryStreaming(t *testing.T) {
 		}
 	}
 
-	splitLines := strings.Split(fullText, "\n")
+	firstMsg := fullText
+	if idx := strings.Index(fullText, "\n\n"); idx != -1 {
+		firstMsg = fullText[:idx]
+	}
+
+	splitLines := strings.Split(firstMsg, "\n")
 	var eventName, dataJSON string
 	for _, l := range splitLines {
 		if strings.HasPrefix(l, "event:") {
@@ -6998,6 +7003,140 @@ func TestDockerSocket_PresentHealthy(t *testing.T) {
 		t.Errorf("expected SSE stream NOT to emit system.docker_unavailable event when socket present, got: %s", body)
 	}
 }
+
+func TestDropUpload_InsufficientStorage(t *testing.T) {
+	srv, dataDir := setupTestServer(t)
+	defer srv.Close()
+
+	// 1. Pre-flight check via Content-Length: free space 5GB, Content-Length 10GB (+1GB buffer = 11GB needed)
+	srv.dropzoneEngine.SetDiskFree(func(path string) (int64, error) {
+		return 5 * 1024 * 1024 * 1024, nil // 5 GB available
+	})
+
+	mp4Payload := []byte("\x00\x00\x00\x20ftypisom\x00\x00\x02\x00isomiso2mp41" + strings.Repeat("A", 100))
+	body, contentType, err := createMultipartUpload("movies", "sample.mp4", mp4Payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/drop/upload", body)
+	req.Header.Set("Content-Type", contentType)
+	req.ContentLength = 10 * 1024 * 1024 * 1024 // 10 GB
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusInsufficientStorage {
+		t.Fatalf("expected HTTP 507 Insufficient Storage on pre-flight capacity check, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var prob ProblemDetails
+	if err := json.Unmarshal(w.Body.Bytes(), &prob); err != nil {
+		t.Fatalf("failed decoding Problem Details: %v", err)
+	}
+	if prob.Type != "https://sovereign.local/errors/insufficient-storage" {
+		t.Errorf("expected type 'https://sovereign.local/errors/insufficient-storage', got %q", prob.Type)
+	}
+	if prob.Status != 507 {
+		t.Errorf("expected status 507 in problem details, got %d", prob.Status)
+	}
+
+	// 2. Runtime free space check: free space < payload + 1GB safety buffer
+	srv.dropzoneEngine.SetDiskFree(func(path string) (int64, error) {
+		return 500 * 1024 * 1024, nil // 500 MB (< 1GB safety buffer)
+	})
+
+	body2, contentType2, err := createMultipartUpload("movies", "sample.mp4", mp4Payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req2 := httptest.NewRequest(http.MethodPost, "/api/v1/drop/upload", body2)
+	req2.Header.Set("Content-Type", contentType2)
+	w2 := httptest.NewRecorder()
+	srv.router.ServeHTTP(w2, req2)
+
+	if w2.Code != http.StatusInsufficientStorage {
+		t.Fatalf("expected HTTP 507 Insufficient Storage on runtime capacity check, got %d: %s", w2.Code, w2.Body.String())
+	}
+
+	// Verify no files were promoted to destination
+	destFile := filepath.Join(dataDir, "media", "movies", "sample.mp4")
+	if _, err := os.Stat(destFile); !os.IsNotExist(err) {
+		t.Errorf("expected destination file %q not to exist after 507 rejection", destFile)
+	}
+}
+
+func TestIMAP_CustomTLS(t *testing.T) {
+	srv, _ := setupTestServer(t)
+	defer srv.Close()
+
+	// 1. Save IMAP configuration with custom TLS parameters (insecure_skip_verify & ca_cert_path)
+	savePayload := map[string]any{
+		"host":                 "imap.internal.corp",
+		"port":                 993,
+		"username":             "archivist@internal.corp",
+		"password":             "InternalPassword123!",
+		"folder":               "INBOX",
+		"ssl_enabled":          true,
+		"insecure_skip_verify": true,
+		"ca_cert_path":         "/etc/ssl/certs/internal-ca.crt",
+		"enabled":              true,
+	}
+	payloadBytes, _ := json.Marshal(savePayload)
+	req := httptest.NewRequest("POST", "/api/v1/documents/imap", bytes.NewReader(payloadBytes))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK saving IMAP config, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var saveResp IMAPConfigResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &saveResp); err != nil {
+		t.Fatalf("failed decoding save response: %v", err)
+	}
+	if !saveResp.InsecureSkipVerify {
+		t.Errorf("expected InsecureSkipVerify=true in response")
+	}
+	if saveResp.CACertPath != "/etc/ssl/certs/internal-ca.crt" {
+		t.Errorf("expected CACertPath='/etc/ssl/certs/internal-ca.crt', got %q", saveResp.CACertPath)
+	}
+
+	// 2. GET returns custom TLS fields
+	req = httptest.NewRequest("GET", "/api/v1/documents/imap", nil)
+	w = httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK getting IMAP config, got %d", w.Code)
+	}
+	var getResp IMAPConfigResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &getResp); err != nil {
+		t.Fatalf("failed decoding get response: %v", err)
+	}
+	if !getResp.InsecureSkipVerify || getResp.CACertPath != "/etc/ssl/certs/internal-ca.crt" {
+		t.Errorf("unexpected TLS fields in GET response: %+v", getResp)
+	}
+
+	// 3. Test IMAP connection endpoint with invalid CA path -> 400 Bad Request
+	testBadCAPayload := map[string]any{
+		"host":         "imap.internal.corp",
+		"port":         993,
+		"username":     "archivist@internal.corp",
+		"password":     "InternalPassword123!",
+		"ca_cert_path": "/nonexistent/invalid-ca.crt",
+	}
+	badCABytes, _ := json.Marshal(testBadCAPayload)
+	req = httptest.NewRequest("POST", "/api/v1/documents/imap/test", bytes.NewReader(badCABytes))
+	req.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+	srv.router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 Bad Request on invalid CA cert path, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
 
 
 

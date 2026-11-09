@@ -6,7 +6,11 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"sync"
 	"testing"
+	"time"
 )
 
 func TestHTTPMetadataClient_FetchMovieMetadata(t *testing.T) {
@@ -239,3 +243,168 @@ func TestHTTPMetadataClient_MusicBrainzRateLimitContextCancel(t *testing.T) {
 		t.Fatalf("expected context.Canceled, got %v", err)
 	}
 }
+
+func TestClient_RateLimit_Backoff(t *testing.T) {
+	t.Run("HTTP 429 retries with backoff and succeeds when server recovers", func(t *testing.T) {
+		var reqCount int
+		var mu sync.Mutex
+
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			mu.Lock()
+			reqCount++
+			current := reqCount
+			mu.Unlock()
+
+			// Fail first 2 attempts with HTTP 429 Too Many Requests
+			if current <= 2 {
+				w.WriteHeader(http.StatusTooManyRequests)
+				_, _ = w.Write([]byte(`{"status_code": 25, "status_message": "Your request count (#) is over the allowed limit of (40)."}`))
+				return
+			}
+
+			// 3rd attempt succeeds
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"results": []map[string]any{
+					{
+						"title":        "Gladiator",
+						"release_date": "2000-05-01",
+						"overview":     "A former Roman General...",
+						"genre_ids":    []int{28},
+					},
+				},
+			})
+		}))
+		defer server.Close()
+
+		client := NewHTTPMetadataClient(HTTPMetadataConfig{
+			TMDbAPIKey:  "test-api-key",
+			TMDbBaseURL: server.URL,
+		})
+
+		// Use short backoff delays for testing
+		client.SetBackoff(BackoffConfig{
+			BaseDelay:  5 * time.Millisecond,
+			Factor:     2,
+			MaxRetries: 3,
+			Jitter:     1 * time.Millisecond,
+		})
+
+		meta, err := client.FetchMovieMetadata(context.Background(), "Gladiator", 2000)
+		if err != nil {
+			t.Fatalf("expected successful retry, got error: %v", err)
+		}
+
+		if meta.Title != "Gladiator" {
+			t.Errorf("expected title 'Gladiator', got %q", meta.Title)
+		}
+
+		mu.Lock()
+		count := reqCount
+		mu.Unlock()
+
+		if count != 3 {
+			t.Errorf("expected 3 total requests (2 retried + 1 success), got %d", count)
+		}
+	})
+
+	t.Run("HTTP 429 returns ErrRateLimited after max retries exhausted", func(t *testing.T) {
+		var reqCount int
+		var mu sync.Mutex
+
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			mu.Lock()
+			reqCount++
+			mu.Unlock()
+
+			// Always return 429
+			w.WriteHeader(http.StatusTooManyRequests)
+			_, _ = w.Write([]byte(`{"error": "rate limited"}`))
+		}))
+		defer server.Close()
+
+		client := NewHTTPMetadataClient(HTTPMetadataConfig{
+			TMDbAPIKey:  "test-api-key",
+			TMDbBaseURL: server.URL,
+		})
+
+		client.SetBackoff(BackoffConfig{
+			BaseDelay:  5 * time.Millisecond,
+			Factor:     2,
+			MaxRetries: 3,
+			Jitter:     1 * time.Millisecond,
+		})
+
+		_, err := client.FetchMovieMetadata(context.Background(), "Exhausted", 2020)
+		if !errors.Is(err, ErrRateLimited) {
+			t.Fatalf("expected ErrRateLimited, got: %v", err)
+		}
+
+		mu.Lock()
+		count := reqCount
+		mu.Unlock()
+
+		// Initial + 3 retries = 4 requests
+		if count != 4 {
+			t.Errorf("expected 4 total attempts, got %d", count)
+		}
+	})
+
+	t.Run("EnrichmentEngine defers disc with cooldown upon rate limit", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		stagingDir := filepath.Join(tmpDir, "media", "staging", "discs")
+		_ = os.MkdirAll(stagingDir, 0755)
+
+		// Create a mock staged disc folder
+		discDir := filepath.Join(stagingDir, "rate_limited_movie")
+		_ = os.MkdirAll(discDir, 0755)
+		_ = os.WriteFile(filepath.Join(discDir, "disc.iso"), []byte("movie content"), 0644)
+
+		mockClient := NewMockMetadataClient()
+		mockClient.MovieErr = ErrRateLimited
+
+		engine, err := NewEnrichmentEngine(EngineConfig{
+			DataDir:    tmpDir,
+			StagingDir: stagingDir,
+			Client:     mockClient,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer engine.Close()
+
+		// First Scan: attempts enrichment, hits ErrRateLimited, defers disc
+		processed, err := engine.Scan(context.Background())
+		if err != nil {
+			t.Fatalf("Scan returned unexpected error: %v", err)
+		}
+		if processed != 0 {
+			t.Errorf("expected 0 processed items when rate limited, got %d", processed)
+		}
+
+		// Verify disc is marked as deferred with cooldown
+		if !engine.IsDiscDeferred(discDir) {
+			t.Fatalf("expected disc %s to be deferred under cooldown", discDir)
+		}
+
+		deferred := engine.GetDeferredDiscs()
+		cooldownUntil, ok := deferred[discDir]
+		if !ok || time.Until(cooldownUntil) < 4*time.Minute {
+			t.Errorf("expected cooldown ~5 minutes in future, got %v", cooldownUntil)
+		}
+
+		// Second Scan: should skip disc due to active cooldown without calling client
+		initialCalls := len(mockClient.Calls)
+		processed, err = engine.Scan(context.Background())
+		if err != nil {
+			t.Fatalf("second Scan failed: %v", err)
+		}
+		if processed != 0 {
+			t.Errorf("expected 0 processed items on second scan, got %d", processed)
+		}
+		if len(mockClient.Calls) != initialCalls {
+			t.Errorf("expected no additional client calls while deferred, calls went from %d to %d", initialCalls, len(mockClient.Calls))
+		}
+	})
+}
+

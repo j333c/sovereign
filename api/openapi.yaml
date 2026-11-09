@@ -936,6 +936,12 @@ paths:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/ProblemDetails'
+        '507':
+          description: Insufficient storage capacity in target storage pool.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
 
   /api/v1/drop/history:
     get:
@@ -3602,6 +3608,12 @@ components:
         ssl_enabled:
           type: boolean
           example: true
+        insecure_skip_verify:
+          type: boolean
+          example: false
+        ca_cert_path:
+          type: string
+          example: "/etc/ssl/certs/custom-ca.crt"
         enabled:
           type: boolean
           example: true
@@ -3616,6 +3628,8 @@ components:
         - password
         - folder
         - ssl_enabled
+        - insecure_skip_verify
+        - ca_cert_path
         - enabled
         - connected
       properties:
@@ -3641,6 +3655,12 @@ components:
         ssl_enabled:
           type: boolean
           example: true
+        insecure_skip_verify:
+          type: boolean
+          example: false
+        ca_cert_path:
+          type: string
+          example: "/etc/ssl/certs/custom-ca.crt"
         enabled:
           type: boolean
           example: true
@@ -3678,6 +3698,12 @@ components:
         ssl_enabled:
           type: boolean
           example: true
+        insecure_skip_verify:
+          type: boolean
+          example: false
+        ca_cert_path:
+          type: string
+          example: "/etc/ssl/certs/custom-ca.crt"
 
     IMAPTestResponse:
       type: object
