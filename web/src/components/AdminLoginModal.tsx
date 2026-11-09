@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { SovereignApiClient, ProblemDetailsError } from "@/lib/api";
 import { Language, translations } from "@/lib/i18n";
+import { useModalFocusTrap } from "@/lib/hooks";
 
 export interface AdminLoginModalProps {
   isOpen: boolean;
@@ -26,6 +27,10 @@ export function AdminLoginModal({
   const inputRef = useRef<HTMLInputElement>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
 
+  useModalFocusTrap(dialogRef, isOpen, onClose, {
+    focusSelector: 'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
+  });
+
   useEffect(() => {
     if (isOpen) {
       setPassword("");
@@ -36,38 +41,6 @@ export function AdminLoginModal({
       }, 50);
     }
   }, [isOpen]);
-
-  useEffect(() => {
-    function handleKeyDown(e: KeyboardEvent) {
-      if (!isOpen) return;
-      if (e.key === "Escape") {
-        onClose();
-        return;
-      }
-      if (e.key === "Tab" && dialogRef.current) {
-        const focusable = dialogRef.current.querySelectorAll<HTMLElement>(
-          'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
-        );
-        if (focusable.length === 0) return;
-        const first = focusable[0];
-        const last = focusable[focusable.length - 1];
-
-        if (e.shiftKey) {
-          if (document.activeElement === first) {
-            e.preventDefault();
-            last.focus();
-          }
-        } else {
-          if (document.activeElement === last) {
-            e.preventDefault();
-            first.focus();
-          }
-        }
-      }
-    }
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isOpen, onClose]);
 
   if (!isOpen) return null;
 

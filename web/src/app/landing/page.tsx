@@ -3,12 +3,13 @@
 import React, { useState, useEffect } from "react";
 import Link from "next/link";
 import { AppHeader } from "@/components/AppHeader";
-import { Language, translations, getInitialLanguage, persistLanguage } from "@/lib/i18n";
+import { Language } from "@/lib/i18n";
+import { useLanguage } from "@/lib/hooks";
 import {
   calculateHardwareTier,
   HardwareCalculatorState,
   HardwareTier,
-} from "@/app/hardware/page";
+} from "@/lib/hardware-calculator";
 
 export interface LandingPageProps {
   initialLanguage?: Language;
@@ -27,19 +28,13 @@ export default function LandingPage({
   initialFeatures,
   aggregateStatus = "healthy",
 }: LandingPageProps = {}) {
-  const [lang, setLang] = useState<Language>(() => getInitialLanguage(initialLanguage));
-  const t = translations[lang];
+  const { lang, t, handleLanguageChange } = useLanguage(initialLanguage);
 
   useEffect(() => {
     if (typeof document !== "undefined") {
       document.title = t.landingTitle;
     }
   }, [t.landingTitle]);
-
-  const handleLanguageChange = (newLang: Language) => {
-    setLang(newLang);
-    persistLanguage(newLang);
-  };
 
   const [activeTab, setActiveTab] = useState<FeatureTabKey>(initialActiveTab);
 

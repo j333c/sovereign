@@ -3,22 +3,13 @@
 import React from "react";
 import { TelemetryUpdate } from "@/lib/api";
 import { Language, translations } from "@/lib/i18n";
+import { formatBytesToTB, formatBytesToGB } from "@/lib/format";
+
+export { formatBytesToTB, formatBytesToGB };
 
 export interface TelemetryBarProps {
   telemetry: TelemetryUpdate | null;
   currentLanguage: Language;
-}
-
-export function formatBytesToTB(bytes: number): string {
-  if (bytes === 0) return "0.0 TB";
-  const tb = bytes / (1024 * 1024 * 1024 * 1024);
-  return `${tb.toFixed(1)} TB`;
-}
-
-export function formatBytesToGB(bytes: number): string {
-  if (bytes === 0) return "0.0 GB";
-  const gb = bytes / (1024 * 1024 * 1024);
-  return `${gb.toFixed(1)} GB`;
 }
 
 export function TelemetryBar({ telemetry, currentLanguage }: TelemetryBarProps) {

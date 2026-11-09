@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
 import { translations, type Language } from "@/lib/i18n";
+import { useModalFocusTrap } from "@/lib/hooks";
 
 export type DestructiveActionType = "reboot" | "factory-reset" | "deactivate";
 
@@ -47,11 +48,8 @@ export function DestructiveModal({
   const cancelButtonRef = useRef<HTMLButtonElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const previousActiveElement = useRef<HTMLElement | null>(null);
-  const isProcessingRef = useRef(isProcessing);
 
-  useEffect(() => {
-    isProcessingRef.current = isProcessing;
-  }, [isProcessing]);
+  useModalFocusTrap(dialogRef, isOpen, onClose, { disableEscape: isProcessing });
 
   // Reset state when opening/closing
   useEffect(() => {
@@ -81,47 +79,6 @@ export function DestructiveModal({
       previousActiveElement.current?.focus();
     };
   }, [isOpen, actionType]);
-
-  // Keydown handler: Escape to close and Tab focus trap
-  useEffect(() => {
-    if (!isOpen) return;
-
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape" && !isProcessingRef.current) {
-        onClose();
-        return;
-      }
-
-      if (event.key === "Tab") {
-        const container = dialogRef.current;
-        if (!container) return;
-        const focusables = container.querySelectorAll<HTMLElement>(
-          'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
-        );
-        if (!focusables || focusables.length === 0) return;
-
-        const first = focusables[0];
-        const last = focusables[focusables.length - 1];
-
-        if (event.shiftKey) {
-          if (document.activeElement === first) {
-            event.preventDefault();
-            last.focus();
-          }
-        } else {
-          if (document.activeElement === last) {
-            event.preventDefault();
-            first.focus();
-          }
-        }
-      }
-    }
-
-    window.addEventListener("keydown", handleKeyDown);
-    return () => {
-      window.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [isOpen, onClose]);
 
   if (!isOpen) {
     return null;

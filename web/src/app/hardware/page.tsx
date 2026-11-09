@@ -3,7 +3,15 @@
 import React, { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import { AppHeader } from "@/components/AppHeader";
-import { Language, translations, getInitialLanguage, persistLanguage } from "@/lib/i18n";
+import { Language } from "@/lib/i18n";
+import { useLanguage, useModalFocusTrap } from "@/lib/hooks";
+import {
+  calculateHardwareTier,
+  HardwareTier,
+  HardwareCalculatorState,
+} from "@/lib/hardware-calculator";
+
+export { calculateHardwareTier, type HardwareTier, type HardwareCalculatorState };
 
 export interface HardwarePageProps {
   initialLanguage?: Language;
@@ -13,29 +21,6 @@ export interface HardwarePageProps {
   initialFeatures?: HardwareCalculatorState;
 }
 
-export type HardwareTier = "light" | "media" | "ai";
-
-export interface HardwareCalculatorState {
-  dms: boolean;
-  audio: boolean;
-  video: boolean;
-  disc: boolean;
-  ai: boolean;
-}
-
-export function calculateHardwareTier(features?: HardwareCalculatorState | null): HardwareTier {
-  if (!features) {
-    return "light";
-  }
-  if (features.ai) {
-    return "ai";
-  }
-  if (features.video || features.disc) {
-    return "media";
-  }
-  return "light";
-}
-
 export default function HardwarePage({
   initialLanguage,
   initialPreorderModalOpen = false,
@@ -43,13 +28,7 @@ export default function HardwarePage({
   initialReservationToken = null,
   initialFeatures,
 }: HardwarePageProps = {}) {
-  const [lang, setLang] = useState<Language>(() => getInitialLanguage(initialLanguage));
-  const t = translations[lang];
-
-  const handleLanguageChange = (newLang: Language) => {
-    setLang(newLang);
-    persistLanguage(newLang);
-  };
+  const { lang, t, handleLanguageChange } = useLanguage(initialLanguage);
 
   const [features, setFeatures] = useState<HardwareCalculatorState>(
     () =>
@@ -99,39 +78,13 @@ export default function HardwarePage({
   };
 
   // Keyboard navigation & accessibility focus trap for modal
+  useModalFocusTrap(modalRef, isPreorderModalOpen, () => setIsPreorderModalOpen(false), {
+    focusSelector: 'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
+  });
+
   useEffect(() => {
     if (!isPreorderModalOpen) return;
     emailInputRef.current?.focus();
-
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        setIsPreorderModalOpen(false);
-        return;
-      }
-
-      if (e.key === "Tab" && modalRef.current) {
-        const focusable = modalRef.current.querySelectorAll<HTMLElement>(
-          'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
-        );
-        if (focusable.length === 0) return;
-        const first = focusable[0];
-        const last = focusable[focusable.length - 1];
-
-        if (e.shiftKey) {
-          if (document.activeElement === first) {
-            e.preventDefault();
-            last.focus();
-          }
-        } else {
-          if (document.activeElement === last) {
-            e.preventDefault();
-            first.focus();
-          }
-        }
-      }
-    };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
   }, [isPreorderModalOpen]);
 
   return (

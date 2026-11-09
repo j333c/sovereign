@@ -4,9 +4,12 @@ import React, { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import { AppHeader } from "@/components/AppHeader";
 import { StatusBadge } from "@/components/StatusBadge";
-import { Language, translations, getInitialLanguage, persistLanguage } from "@/lib/i18n";
+import { Language } from "@/lib/i18n";
+import { formatBytes } from "@/lib/format";
+import { useLanguage } from "@/lib/hooks";
 import { apiClient, DropHistoryItem, ProblemDetailsError } from "@/lib/api/client";
 
+export { formatBytes };
 export type MediaCategory = "movies" | "tv" | "music" | "audiobooks";
 
 interface ActiveUpload {
@@ -19,28 +22,12 @@ interface ActiveUpload {
   errorMessage?: string;
 }
 
-export function formatBytes(bytes: number): string {
-  if (bytes === 0) return "0 B";
-  const k = 1024;
-  const sizes = ["B", "KB", "MB", "GB", "TB"];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return `${parseFloat((bytes / Math.pow(k, i)).toFixed(1))} ${sizes[i]}`;
-}
-
 export interface DropzonePageProps {
   initialLanguage?: Language;
 }
 
 export default function DropzonePage({ initialLanguage }: DropzonePageProps = {}) {
-  const [lang, setLang] = useState<Language>(() => {
-    return getInitialLanguage(initialLanguage);
-  });
-  const t = translations[lang];
-
-  const handleLanguageChange = (newLang: Language) => {
-    setLang(newLang);
-    persistLanguage(newLang);
-  };
+  const { lang, t, handleLanguageChange } = useLanguage(initialLanguage);
 
   const [category, setCategory] = useState<MediaCategory>("movies");
   const [isDragging, setIsDragging] = useState(false);

@@ -1,5 +1,6 @@
 import React, { useEffect, useRef } from "react";
 import { translations, type Language } from "@/lib/i18n";
+import { useModalFocusTrap } from "@/lib/hooks";
 
 export interface RollbackModalProps {
   isOpen: boolean;
@@ -33,6 +34,8 @@ export function RollbackModal({
   const cancelButtonRef = useRef<HTMLButtonElement>(null);
   const previousActiveElement = useRef<HTMLElement | null>(null);
 
+  useModalFocusTrap(dialogRef, isOpen, onClose, { disableEscape: isRollingBack });
+
   useEffect(() => {
     if (!isOpen) return;
 
@@ -40,49 +43,16 @@ export function RollbackModal({
       previousActiveElement.current = document.activeElement as HTMLElement | null;
     }
 
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape" && !isRollingBack) {
-        onClose();
-        return;
-      }
-
-      if (event.key === "Tab") {
-        const container = dialogRef.current;
-        if (!container) return;
-        const focusables = container.querySelectorAll<HTMLElement>(
-          'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
-        );
-        if (!focusables || focusables.length === 0) return;
-
-        const first = focusables[0];
-        const last = focusables[focusables.length - 1];
-
-        if (event.shiftKey) {
-          if (document.activeElement === first) {
-            event.preventDefault();
-            last.focus();
-          }
-        } else {
-          if (document.activeElement === last) {
-            event.preventDefault();
-            first.focus();
-          }
-        }
-      }
-    }
-
-    window.addEventListener("keydown", handleKeyDown);
     // Auto-focus cancel button on open for keyboard accessibility
     const timer = setTimeout(() => {
       cancelButtonRef.current?.focus();
     }, 50);
 
     return () => {
-      window.removeEventListener("keydown", handleKeyDown);
       clearTimeout(timer);
       previousActiveElement.current?.focus();
     };
-  }, [isOpen, isRollingBack, onClose]);
+  }, [isOpen]);
 
   if (!isOpen) {
     return null;
