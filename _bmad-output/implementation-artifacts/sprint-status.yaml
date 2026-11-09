@@ -29,7 +29,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 # - Retrospective appends its action items to action_items; the status view surfaces open ones
 generated: 10-15-2026 15:17
-last_updated: 11-09-2026 19:08
+last_updated: 11-09-2026 19:49
 project: sovereign
 project_key: NOKEY
 tracking_system: file-system
@@ -91,19 +91,20 @@ development_status:
   epic-7-retrospective: done
 
   epic-8: done
-  8-1-core-daemon-transaction-atomicity-wal-checkpointing-rollback-circuit-breaker: done
+  8-1-core-daemon-transaction-atomicity-wal-checkpointing-rollback-circuit-breaker: 
+    done
   8-2-ingestion-preflight-capacity-guards-peripheral-error-recovery: done
   8-3-critical-path-fault-injection-stream-verification-suite: done
   8-4-multilingual-modal-token-validation-hardware-calculator-baseline: done
   8-5-public-github-repo-distribution-dual-remote-sync: done
-  epic-8-retrospective: optional
+  epic-8-retrospective: done
 
   epic-9: done
   9-1-one-line-installer-script-host-environment-validation: done
   9-2-automated-dependency-provisioning-docker-substrate-setup: done
   9-3-appliance-filesystem-layout-service-config-systemd-integration: done
   9-4-setup-handoff-uninstaller-maintenance-utilities: done
-  epic-9-retrospective: optional
+  epic-9-retrospective: done
 action_items:
   - id: "epic-1-retro-item-1-sse-server-timeout"
     epic: 1
@@ -141,7 +142,7 @@ action_items:
     epic: 2
     action: "Add pre-flight disk capacity verification to media dropzone"
     owner: "Amelia (Dev)"
-    status: open
+    status: done
     ref: "_bmad-output/implementation-artifacts/epic-2-retro-2026-10-25.md"
   - id: "epic-3-retro-item-1-optical-transcode-auth"
     epic: 3
@@ -154,13 +155,13 @@ action_items:
     epic: 3
     action: "Add exponential backoff to metadata enrichment API failures"
     owner: "Amelia (Dev)"
-    status: open
+    status: done
     ref: "_bmad-output/implementation-artifacts/epic-3-retro-2026-10-25.md"
   - id: "epic-3-retro-item-3-optical-eio-handling"
     epic: 3
     action: "Handle unexpected optical drive disconnection gracefully"
     owner: "Winston (Architect)"
-    status: open
+    status: done
     ref: "_bmad-output/implementation-artifacts/epic-3-retro-2026-10-25.md"
   - id: "epic-4-retro-item-1-deadlines-auth-protection"
     epic: 4
@@ -172,7 +173,7 @@ action_items:
     epic: 4
     action: "Support custom or self-signed TLS certificates in IMAP configuration"
     owner: "Winston (Architect)"
-    status: open
+    status: done
     ref: "_bmad-output/implementation-artifacts/epic-4-retro-2026-10-25.md"
   - id: "epic-4-retro-item-3-alert-dispatch-retry-test"
     epic: 4
@@ -247,3 +248,27 @@ action_items:
     owner: "Sally (UX)"
     status: done
     ref: "_bmad-output/implementation-artifacts/epic-7-retro-2026-10-25.md"
+  - id: "epic-8-retro-item-1-dual-remote-sync-check"
+    epic: 8
+    action: "Add dual-remote git sync sanity check script"
+    owner: "Amelia (Dev)"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-8-retro-2026-11-09.md"
+  - id: "epic-8-retro-item-2-retry-telemetry-metrics"
+    epic: 8
+    action: "Configure automated retry backoff jitter telemetry"
+    owner: "Winston (Architect)"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-8-retro-2026-11-09.md"
+  - id: "epic-9-retro-item-1-installer-matrix-test"
+    epic: 9
+    action: "Add automated containerized installer matrix test"
+    owner: "Amelia (Dev)"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-9-retro-2026-11-09.md"
+  - id: "epic-9-retro-item-2-selinux-guide"
+    epic: 9
+    action: "Document SELinux context configuration for Red Hat / Fedora distributions"
+    owner: "Winston (Architect)"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/epic-9-retro-2026-11-09.md"
