@@ -449,6 +449,73 @@ func TestModelManager_DownloadChecksumMismatchRejection(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(tmpDir, "model.gguf")); !os.IsNotExist(err) {
 		t.Errorf("model.gguf should not exist after checksum failure")
 	}
+
+	// Temporary .downloading file must have been purged
+	if _, err := os.Stat(filepath.Join(tmpDir, "model.gguf.downloading")); !os.IsNotExist(err) {
+		t.Errorf("model.gguf.downloading should have been cleaned up after checksum failure")
+	}
+}
+
+func TestModelManager_DownloadMidStreamWriteErrorCleanup(t *testing.T) {
+	if _, err := os.Stat("/dev/full"); err != nil {
+		t.Skip("skipping test: /dev/full not available on this platform")
+	}
+
+	tmpDir := t.TempDir()
+	modelData := createValidGGUFBytes(3, 10, 5)
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", strconv.Itoa(len(modelData)))
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(modelData)
+	}))
+	defer ts.Close()
+
+	mgr := NewModelManager(ModelManagerConfig{
+		ModelsDir:  tmpDir,
+		HTTPClient: ts.Client(),
+		DiskFree: func(path string) (int64, error) {
+			return 20 * 1024 * 1024 * 1024, nil
+		},
+	})
+
+	// Pre-create tempFile as a symlink pointing to /dev/full to simulate mid-stream ENOSPC write error
+	targetTemp := filepath.Join(tmpDir, "enospc-model.gguf.downloading")
+	if err := os.Symlink("/dev/full", targetTemp); err != nil {
+		t.Fatalf("failed creating symlink to /dev/full: %v", err)
+	}
+
+	progress, err := mgr.StartDownload(context.Background(), AIModelDownloadRequest{
+		URL:      ts.URL + "/enospc-model.gguf",
+		Filename: "enospc-model.gguf",
+	})
+	if err != nil {
+		t.Fatalf("StartDownload failed: %v", err)
+	}
+
+	timeout := time.After(3 * time.Second)
+	failed := false
+	for !failed {
+		select {
+		case <-timeout:
+			t.Fatalf("timed out waiting for mid-stream write error failure")
+		case <-time.After(50 * time.Millisecond):
+			for _, d := range mgr.ListDownloads() {
+				if d.ID == progress.ID && d.Status == "failed" {
+					if !strings.Contains(strings.ToLower(d.Error), "write error") && !strings.Contains(strings.ToLower(d.Error), "space") {
+						t.Errorf("expected write/space error, got: %s", d.Error)
+					}
+					failed = true
+					break
+				}
+			}
+		}
+	}
+
+	// Temporary .downloading file must have been deleted/unlinked
+	if _, err := os.Lstat(targetTemp); !os.IsNotExist(err) {
+		t.Errorf("temporary file %s should have been purged upon mid-stream write error", targetTemp)
+	}
 }
 
 func TestModelManager_SettingsTuningAndArbitratorSync(t *testing.T) {

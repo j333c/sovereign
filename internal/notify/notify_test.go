@@ -856,13 +856,13 @@ func TestAlertDispatcher_PersistentQueue(t *testing.T) {
 		webhookStatus = http.StatusOK
 		webhookMu.Unlock()
 
-		// Re-dispatch: ProcessQueue should retry and succeed
-		deliveredCount, err := dispatcher.ProcessQueue(ctx)
+		// Re-dispatch: DispatchCycle should retry pending queue items and succeed
+		deliveredCount, err := dispatcher.DispatchCycle(ctx)
 		if err != nil {
-			t.Fatalf("ProcessQueue failed: %v", err)
+			t.Fatalf("DispatchCycle retry failed: %v", err)
 		}
 		if deliveredCount != 1 {
-			t.Fatalf("expected 1 delivered from queue, got %d", deliveredCount)
+			t.Fatalf("expected 1 delivered from queue via DispatchCycle, got %d", deliveredCount)
 		}
 
 		// Verify target received webhook

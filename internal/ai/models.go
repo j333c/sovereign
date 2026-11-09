@@ -857,6 +857,7 @@ func (m *ModelManager) runDownloadWorker(ctx context.Context, job *downloadJob) 
 
 		actualSHA := hex.EncodeToString(hasher.Sum(nil))
 		if strings.ToLower(actualSHA) != expectedSHA {
+			_ = os.Remove(tempFile)
 			job.mu.Lock()
 			job.progress.Status = "failed"
 			job.progress.Error = fmt.Sprintf("%v: expected %s, got %s", ErrChecksumMismatch, expectedSHA, actualSHA)
@@ -868,6 +869,7 @@ func (m *ModelManager) runDownloadWorker(ctx context.Context, job *downloadJob) 
 	// Verify GGUF header magic bytes
 	header, err := ValidateGGUFHeader(tempFile)
 	if err != nil {
+		_ = os.Remove(tempFile)
 		job.mu.Lock()
 		job.progress.Status = "failed"
 		job.progress.Error = fmt.Sprintf("invalid GGUF header: %v", err)
@@ -877,6 +879,7 @@ func (m *ModelManager) runDownloadWorker(ctx context.Context, job *downloadJob) 
 
 	// 3. Atomic rename to final destination
 	if err := os.Rename(tempFile, finalFile); err != nil {
+		_ = os.Remove(tempFile)
 		job.mu.Lock()
 		job.progress.Status = "failed"
 		job.progress.Error = fmt.Sprintf("failed to atomically rename model: %v", err)

@@ -107,7 +107,7 @@ func (d *AlertDispatcher) DispatchCycle(ctx context.Context) (int, error) {
 	}
 
 	// 0. Retry any pending items in the persistent alert queue
-	_, _ = d.processQueueLocked(ctx)
+	queueDelivered, _ := d.processQueueLocked(ctx)
 
 	cfg, err := LoadConfig(ctx, d.db)
 	if err != nil {
@@ -128,8 +128,8 @@ func (d *AlertDispatcher) DispatchCycle(ctx context.Context) (int, error) {
 	}
 
 	if len(pendingDeadlines) == 0 {
-		d.logger.Debug("no impending pending deadlines found within threshold", "threshold_days", threshold)
-		return 0, nil
+		d.logger.Debug("no impending pending deadlines found within threshold", "threshold_days", threshold, "queue_delivered", queueDelivered)
+		return queueDelivered, nil
 	}
 
 	hasWebhook := cfg.HAWebhookURL != ""
@@ -265,7 +265,7 @@ func (d *AlertDispatcher) DispatchCycle(ctx context.Context) (int, error) {
 			)
 			qPayload := QueuedEmailPayload{Type: "digest", Items: items}
 			if payloadBytes, mErr := json.Marshal(qPayload); mErr == nil {
-				d.enqueueFailedAlert(ctx, fmt.Sprintf("alert-email-digest-%s", now.Format("2006-01-02-15-04")), "email", cfg.AlertEmail, string(payloadBytes), err.Error())
+				d.enqueueFailedAlert(ctx, fmt.Sprintf("alert-email-digest-%s", now.Format("2006-01-02-15-04-05")), "email", cfg.AlertEmail, string(payloadBytes), err.Error())
 			}
 		} else {
 			d.logger.Info("sent consolidated email alert digest",
@@ -280,13 +280,13 @@ func (d *AlertDispatcher) DispatchCycle(ctx context.Context) (int, error) {
 	// so the next evaluation cycle retries the digest
 	if hasEmail && !emailSucceeded {
 		d.logger.Warn("retaining pending status for deadlines due to email delivery failure")
-		return 0, nil
+		return queueDelivered, nil
 	}
 
 	// If only webhook and/or MQTT were enabled, and all enabled channels failed, do NOT transition to notified
 	if !hasEmail && (hasWebhook || hasMQTT) && !webhookSucceeded && !mqttSucceeded {
 		d.logger.Warn("retaining pending status for deadlines because all configured ambient alert channels failed")
-		return 0, nil
+		return queueDelivered, nil
 	}
 
 	// Transition deadlines from 'pending' to 'notified'
@@ -299,8 +299,8 @@ func (d *AlertDispatcher) DispatchCycle(ctx context.Context) (int, error) {
 		}
 	}
 
-	d.logger.Info("alert dispatch cycle completed", "notified_count", notifiedCount)
-	return notifiedCount, nil
+	d.logger.Info("alert dispatch cycle completed", "notified_count", notifiedCount, "queue_delivered", queueDelivered)
+	return notifiedCount + queueDelivered, nil
 }
 
 // TestWebhook sends a test payload to the specified webhook URL.
@@ -472,6 +472,10 @@ func (d *AlertDispatcher) processQueueLocked(ctx context.Context) (int, error) {
 
 	deliveredCount := 0
 	for _, item := range pendingItems {
+		if err := ctx.Err(); err != nil {
+			return deliveredCount, err
+		}
+
 		var sendErr error
 		switch strings.ToLower(item.Channel) {
 		case "webhook":
@@ -530,7 +534,7 @@ func (d *AlertDispatcher) processQueueLocked(ctx context.Context) (int, error) {
 					if err := json.Unmarshal([]byte(item.Payload), &digestItems); err == nil && len(digestItems) > 0 {
 						sendErr = d.emailClient.SendDigest(ctx, smtpCfg, recipient, digestItems)
 					} else {
-						sendErr = d.emailClient.SendTestEmail(ctx, smtpCfg, recipient)
+						sendErr = errors.New("malformed queued email payload")
 					}
 				}
 			}
@@ -567,7 +571,7 @@ func (d *AlertDispatcher) processQueueLocked(ctx context.Context) (int, error) {
 				}
 			}
 		} else {
-			nextAttempt := now.Add(store.CalculateBackoff(item.RetryCount + 1))
+			nextAttempt := d.nowFunc().Add(store.CalculateBackoff(item.RetryCount + 1))
 			if err := d.alertQueue.RecordFailure(ctx, item.ID, sendErr.Error(), nextAttempt); err != nil {
 				d.logger.Error("failed to record retry failure in queue", "id", item.ID, "error", err)
 			}

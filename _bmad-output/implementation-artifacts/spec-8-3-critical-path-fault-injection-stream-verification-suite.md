@@ -2,8 +2,8 @@
 title: 'Story 8.3: Critical Path Fault-Injection & Long-Running Stream Verification Suite'
 type: 'feature'
 created: '2026-11-09'
-status: 'review'
-baseline_commit: 'e5aa7a13d7e52b217648356981e4b8552194b6ec'
+status: 'done'
+baseline_commit: 'e5aa7a1fac3c1ab784e475ac66587c0c04caafe2'
 route: 'dispatch'
 review_loop_iteration: 0
 context:
@@ -100,6 +100,22 @@ context:
 ## Spec Change Log
 
 ## Review Triage Log
+
+| Finding | Verdict | Evidence & Routing |
+|---|---|---|
+| `internal/store/alert_queue.go`: `Enqueue` ON CONFLICT does not reset status/retry | `high` | Re-enqueuing an existing alert row leaves status as `delivered` or `failed`, preventing subsequent dispatch. Reset status to `excluded.status` and retry count. Route: `patch`. |
+| `internal/store/alert_queue.go`: integer overflow in `CalculateBackoff` | `medium` | `10s * (1 << retryCount)` overflows 64-bit int when `retryCount >= 30`. Cap at 1 hour when `retryCount >= 9`. Route: `patch`. |
+| `internal/notify/dispatcher.go`: `DispatchCycle` discards `processQueueLocked` delivered count | `medium` | `_, _ = d.processQueueLocked(ctx)` discarded count of delivered queued items, causing underreporting in API. Add count to returned value. Route: `patch`. |
+| `internal/ai/models.go`: verify failure leaves orphaned `.downloading` file | `medium` | If SHA-256 or header validation fails after streaming, `tempFile` is not removed. Ensure `os.Remove(tempFile)` is called. Route: `patch`. |
+| `internal/ai/models_test.go`: missing mid-stream write error test | `medium` | Verified gap: no test simulates `file.Write` error mid-stream to assert `.downloading` file cleanup and failure status. Route: `patch`. |
+| `internal/notify/notify_test.go`: missing `DispatchCycle` queue retry caller test | `medium` | Verified gap: tests only invoked `ProcessQueue(ctx)` directly, not the production entry point `DispatchCycle(ctx)`. Route: `patch`. |
+| `cmd/sovereign-daemon/server.go`: background queue retry periodic routine missing | `medium` | Without background ticker in `StartBackgroundServices`, queued alerts only retry when new documents or manual dispatches arrive. Route: `patch`. |
+| `internal/notify/dispatcher.go`: malformed email payload fallback sends test email | `medium` | Deserialization failure fell back to `SendTestEmail` instead of recording failure on the queue item. Route: `patch`. |
+| `cmd/sovereign-daemon/sse_endurance_test.go`: select loop lacks stalled-read timeout | `low` | If server stalls silently, test blocks indefinitely. Add per-message read timeout. Route: `patch`. |
+| `internal/notify/dispatcher.go`: stale `now` timestamp in queue retry loop | `low` | Next attempt calculation used loop-start timestamp instead of current time when recording failures. Route: `patch`. |
+| `internal/store/alert_queue.go`: `datetime()` wrapper on indexed column suppresses index | `low` | Wrapping `datetime(next_attempt_at)` prevents SQLite composite index usage. Compare `next_attempt_at <= ?` directly. Route: `patch`. |
+| `internal/notify/dispatcher.go`: email digest ID collision on same minute | `low` | Truncating timestamp to minute in ID format causes collision on multiple digest failures. Include seconds or UUID suffix. Route: `patch`. |
+
 
 ## Design Notes
 

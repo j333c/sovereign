@@ -182,6 +182,8 @@ func TestSSE_Endurance(t *testing.T) {
 			}
 		case err := <-serverErrCh:
 			t.Fatalf("server encountered unexpected error during streaming: %v", err)
+		case <-time.After(3 * time.Second):
+			t.Fatalf("stream stalled: timed out waiting for next line from SSE stream")
 		}
 	}
 

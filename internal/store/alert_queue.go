@@ -54,13 +54,10 @@ func CalculateBackoff(retryCount int) time.Duration {
 	if retryCount < 0 {
 		retryCount = 0
 	}
-	multiplier := int64(1)
-	if retryCount < 30 {
-		multiplier = int64(1) << retryCount
-	} else {
-		multiplier = 1 << 30
+	if retryCount >= 9 {
+		return time.Hour
 	}
-	delay := time.Duration(10*multiplier) * time.Second
+	delay := time.Duration(10*(int64(1)<<retryCount)) * time.Second
 	if delay > time.Hour {
 		delay = time.Hour
 	}
@@ -98,6 +95,9 @@ func (s *AlertQueueStore) Enqueue(ctx context.Context, item *AlertQueueItem) err
 			id, channel, recipient, payload, status, retry_count, max_retries, next_attempt_at, last_error, created_at, updated_at
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
 		ON CONFLICT(id) DO UPDATE SET
+			status = excluded.status,
+			retry_count = 0,
+			next_attempt_at = excluded.next_attempt_at,
 			payload = excluded.payload,
 			last_error = excluded.last_error,
 			updated_at = CURRENT_TIMESTAMP
@@ -118,7 +118,7 @@ func (s *AlertQueueStore) GetPending(ctx context.Context, asOf time.Time) ([]*Al
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, channel, recipient, payload, status, retry_count, max_retries, next_attempt_at, last_error, created_at, updated_at
 		FROM alert_dispatch_queue
-		WHERE status = 'pending' AND datetime(next_attempt_at) <= datetime(?)
+		WHERE status = 'pending' AND next_attempt_at <= ?
 		ORDER BY next_attempt_at ASC, created_at ASC
 	`, asOfStr)
 	if err != nil {

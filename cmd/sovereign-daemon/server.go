@@ -876,6 +876,26 @@ func (s *Server) StartBackgroundServices(ctx context.Context) {
 	if s.obligationScanner != nil {
 		s.obligationScanner.Start(ctx)
 	}
+
+	// 13. Start background alert dispatch queue retry runner
+	if s.alertDispatcher != nil {
+		go func() {
+			ticker := time.NewTicker(30 * time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-s.stopChan:
+					return
+				case <-ticker.C:
+					retryCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+					_, _ = s.alertDispatcher.ProcessQueue(retryCtx)
+					cancel()
+				}
+			}
+		}()
+	}
 }
 
 // BootManager returns the active BootManager instance.
