@@ -264,7 +264,7 @@ action_items:
     epic: 9
     action: "Add automated containerized installer matrix test"
     owner: "Amelia (Dev)"
-    status: open
+    status: done
     ref: "_bmad-output/implementation-artifacts/epic-9-retro-2026-11-09.md"
   - id: "epic-9-retro-item-2-selinux-guide"
     epic: 9

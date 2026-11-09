@@ -17,6 +17,7 @@ SKIP_DOCKER=false
 UNINSTALL=false
 UPGRADE=false
 PURGE_DATA=false
+DRY_RUN=false
 
 # Styling & Colors (disabled if not terminal or NO_COLOR set)
 if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
@@ -90,6 +91,10 @@ parse_args() {
         PURGE_DATA=true
         shift
         ;;
+      --dry-run|--check)
+        DRY_RUN=true
+        shift
+        ;;
       -h|--help)
         echo "Usage: curl -fsSL https://raw.githubusercontent.com/j333c/sovereign/main/install.sh | sudo bash [OPTIONS]"
         echo ""
@@ -98,6 +103,7 @@ parse_args() {
         echo "  --upgrade          Update Sovereign from https://github.com/j333c/sovereign and rebuild"
         echo "  --uninstall        Uninstall Sovereign and disable the systemd service"
         echo "  --purge-data       With --uninstall, delete persistent /data storage as well"
+        echo "  --dry-run, --check Run environment pre-flight validation only without system changes"
         echo "  --no-docker        Skip automated Docker CE and Compose plugin installation"
         echo "  -h, --help         Show this help message"
         exit 0
@@ -112,6 +118,10 @@ parse_args() {
 
 check_root() {
   if [ "$(id -u)" -ne 0 ]; then
+    if [ "$DRY_RUN" = true ]; then
+      log_warn "Dry run executing without root privileges. Note that actual installation requires root or sudo."
+      return 0
+    fi
     log_error "This script must be run as root or with sudo privileges."
     echo "Please re-run: curl -fsSL https://raw.githubusercontent.com/j333c/sovereign/main/install.sh | sudo bash"
     exit 1
@@ -138,12 +148,13 @@ validate_environment() {
   esac
 
   # OS distribution detection
-  if [ -f /etc/os-release ]; then
+  local os_release="${OS_RELEASE_FILE:-/etc/os-release}"
+  if [ -f "$os_release" ]; then
     # shellcheck source=/dev/null
-    . /etc/os-release
+    . "$os_release"
     log_ok "Operating system: ${NAME:-Linux} ${VERSION_ID:-}"
   else
-    log_warn "Could not identify distribution via /etc/os-release. Proceeding with generic Linux checks."
+    log_warn "Could not identify distribution via ${os_release}. Proceeding with generic Linux checks."
   fi
 
   # Systemd verification
@@ -169,7 +180,7 @@ validate_environment() {
 
   # Disk space check
   local free_disk_mb
-  free_disk_mb="$(df -m / | awk 'NR==2 {print $4}')"
+  free_disk_mb="$(df -P -m / | awk 'NR==2 {print $4}')"
   if [ "$free_disk_mb" -lt 10000 ]; then
     log_error "Insufficient root disk space: ${free_disk_mb} MB available. Sovereign requires at least 10 GB (10000 MB) free space."
     exit 1
@@ -351,8 +362,34 @@ display_completion_banner() {
   echo "------------------------------------------------------------------------"
 }
 
+display_upgrade_banner() {
+  echo ""
+  echo -e "${GREEN}${BOLD}════════════════════════════════════════════════════════════════════════${RESET}"
+  echo -e "${GREEN}${BOLD}       🎉 Sovereign Home Appliance Upgraded Successfully!              ${RESET}"
+  echo -e "${GREEN}${BOLD}════════════════════════════════════════════════════════════════════════${RESET}"
+  echo ""
+  echo -e "Your private server has been updated to the latest release."
+  echo ""
+  echo -e "  ${BOLD}► Local mDNS Link:${RESET}  ${CYAN}${BOLD}http://sovereign.local${RESET}"
+  echo ""
+  echo -e "${BLUE}Repository:${RESET} https://github.com/j333c/sovereign"
+  echo "------------------------------------------------------------------------"
+}
+
 uninstall_sovereign() {
   log_warn "Initiating uninstallation of Sovereign Appliance..."
+
+  if [ "$DRY_RUN" = true ]; then
+    log_info "[DRY-RUN] Would stop and remove systemd unit: ${SYSTEMD_UNIT}"
+    log_info "[DRY-RUN] Would stop and remove containers at: ${INSTALL_DIR}"
+    if [ "$PURGE_DATA" = true ]; then
+      log_warn "[DRY-RUN] Would purge persistent storage at: ${DATA_DIR}"
+    else
+      log_info "[DRY-RUN] Would preserve persistent storage at: ${DATA_DIR}"
+    fi
+    log_ok "[DRY-RUN] Sovereign uninstallation dry-run completed."
+    exit 0
+  fi
 
   if [ "$NON_INTERACTIVE" = false ]; then
     read -r -p "Are you sure you want to uninstall Sovereign from this machine? [y/N]: " confirm
@@ -394,6 +431,13 @@ uninstall_sovereign() {
 upgrade_sovereign() {
   log_info "Upgrading Sovereign from ${REPO_URL}..."
 
+  if [ "$DRY_RUN" = true ]; then
+    log_info "[DRY-RUN] Would pull latest code changes from ${REPO_URL}"
+    log_info "[DRY-RUN] Would rebuild and restart Docker Compose services at ${INSTALL_DIR}"
+    log_ok "[DRY-RUN] Sovereign upgrade dry-run completed."
+    exit 0
+  fi
+
   if [ ! -d "${INSTALL_DIR}/.git" ]; then
     log_error "No existing git installation found at ${INSTALL_DIR}. Run standard install instead."
     exit 1
@@ -408,7 +452,7 @@ upgrade_sovereign() {
   docker compose -f "${INSTALL_DIR}/docker-compose.yml" up -d --build
 
   log_ok "Sovereign successfully upgraded to the latest version."
-  display_completion_banner
+  display_upgrade_banner
   exit 0
 }
 
@@ -423,6 +467,12 @@ main() {
 
   if [ "$UPGRADE" = true ]; then
     upgrade_sovereign
+  fi
+
+  if [ "$DRY_RUN" = true ]; then
+    validate_environment
+    log_ok "Pre-flight dry run completed: host environment validation succeeded."
+    exit 0
   fi
 
   if [ "$NON_INTERACTIVE" = false ]; then

@@ -1,4 +1,4 @@
-.PHONY: all build build-daemon build-web test test-daemon test-web test-scripts codegen lint clean config-check verify-remotes
+.PHONY: all build build-daemon build-web test test-daemon test-web test-scripts test-installer codegen lint clean config-check verify-remotes
 
 # Default target
 all: build
@@ -24,7 +24,10 @@ test-web:
 
 test-scripts:
 	./tests/verify_remotes_test.sh
+	./tests/installer_test.sh
 
+test-installer:
+	./tests/installer_test.sh
 
 # Run OpenAPI 3.1 code generation
 codegen:
