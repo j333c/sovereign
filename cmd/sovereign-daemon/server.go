@@ -612,6 +612,7 @@ func NewServer(cfg Config) (*Server, error) {
 		if client == nil {
 			client = enrichment.NewHTTPMetadataClient(enrichment.HTTPMetadataConfig{
 				TMDbAPIKey: os.Getenv("TMDB_API_KEY"),
+				Logger:     cfg.Logger,
 			})
 		}
 		var err error

@@ -258,7 +258,7 @@ action_items:
     epic: 8
     action: "Configure automated retry backoff jitter telemetry"
     owner: "Winston (Architect)"
-    status: open
+    status: done
     ref: "_bmad-output/implementation-artifacts/epic-8-retro-2026-11-09.md"
   - id: "epic-9-retro-item-1-installer-matrix-test"
     epic: 9

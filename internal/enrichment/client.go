@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
@@ -216,16 +217,36 @@ type BackoffConfig struct {
 	Factor     int
 	MaxRetries int
 	Jitter     time.Duration
+	MaxDelay   time.Duration
 }
 
-// DefaultBackoffConfig returns the standard parameters: 1s base delay, factor 2, 3 max retries, 250ms jitter.
+// DefaultBackoffConfig returns the standard parameters: 1s base delay, factor 2, 3 max retries, 250ms jitter, 30s max delay.
 func DefaultBackoffConfig() BackoffConfig {
 	return BackoffConfig{
 		BaseDelay:  1 * time.Second,
 		Factor:     2,
 		MaxRetries: 3,
 		Jitter:     250 * time.Millisecond,
+		MaxDelay:   30 * time.Second,
 	}
+}
+
+// RetryMetrics records aggregate retry telemetry for external metadata API interactions.
+// Durations (TotalBackoffDelay, LastBackoffDelay, etc.) serialize to nanoseconds in JSON.
+type RetryMetrics struct {
+	TotalRetries       uint64        `json:"total_retries"`
+	RateLimitRetries   uint64        `json:"rate_limit_retries"`
+	NetworkRetries     uint64        `json:"network_retries"`
+	TotalBackoffDelay  time.Duration `json:"total_backoff_delay"`
+	LastBackoffDelay   time.Duration `json:"last_backoff_delay"`
+	TotalJitterOffset  time.Duration `json:"total_jitter_offset"`
+	LastJitterOffset   time.Duration `json:"last_jitter_offset"`
+	LastRetryTimestamp time.Time     `json:"last_retry_timestamp"`
+}
+
+// RetryMetricsProvider represents any metadata client capable of exposing retry telemetry.
+type RetryMetricsProvider interface {
+	GetRetryMetrics() RetryMetrics
 }
 
 // HTTPMetadataConfig holds configuration for the real third-party API client.
@@ -237,6 +258,7 @@ type HTTPMetadataConfig struct {
 	UserAgent          string
 	Timeout            time.Duration
 	Backoff            *BackoffConfig
+	Logger             *slog.Logger
 }
 
 // HTTPMetadataClient connects to TMDb and MusicBrainz external databases.
@@ -247,6 +269,10 @@ type HTTPMetadataClient struct {
 	backoff    BackoffConfig
 	mbMu       sync.Mutex
 	lastMBReq  time.Time
+	loggerMu   sync.RWMutex
+	logger     *slog.Logger
+	metricsMu  sync.RWMutex
+	metrics    RetryMetrics
 }
 
 // NewHTTPMetadataClient creates an HTTPMetadataClient with bounded timeouts (<= 5s).
@@ -273,13 +299,95 @@ func NewHTTPMetadataClient(cfg HTTPMetadataConfig) *HTTPMetadataClient {
 		bo = *cfg.Backoff
 	}
 
+	logger := cfg.Logger
+	if logger == nil {
+		logger = slog.Default()
+	}
+
 	return &HTTPMetadataClient{
 		cfg: cfg,
 		httpClient: &http.Client{
 			Timeout: timeout,
 		},
 		backoff: bo,
+		logger:  logger,
 	}
+}
+
+// SetLogger configures the logger used for structured debug telemetry.
+func (c *HTTPMetadataClient) SetLogger(l *slog.Logger) {
+	c.loggerMu.Lock()
+	defer c.loggerMu.Unlock()
+	if l == nil {
+		l = slog.Default()
+	}
+	c.logger = l
+}
+
+func (c *HTTPMetadataClient) getLogger() *slog.Logger {
+	c.loggerMu.RLock()
+	defer c.loggerMu.RUnlock()
+	if c.logger == nil {
+		return slog.Default()
+	}
+	return c.logger
+}
+
+// GetRetryMetrics returns a copy of current retry telemetry metrics.
+func (c *HTTPMetadataClient) GetRetryMetrics() RetryMetrics {
+	c.metricsMu.RLock()
+	defer c.metricsMu.RUnlock()
+	return c.metrics
+}
+
+// ResetRetryMetrics clears recorded retry metrics.
+func (c *HTTPMetadataClient) ResetRetryMetrics() {
+	c.metricsMu.Lock()
+	defer c.metricsMu.Unlock()
+	c.metrics = RetryMetrics{}
+}
+
+func (c *HTTPMetadataClient) recordRetryTelemetry(reason string, delay time.Duration, jitterOffset time.Duration) {
+	c.metricsMu.Lock()
+	defer c.metricsMu.Unlock()
+
+	c.metrics.TotalRetries++
+	if reason == "rate_limit" {
+		c.metrics.RateLimitRetries++
+	} else if reason == "network_error" {
+		c.metrics.NetworkRetries++
+	}
+	c.metrics.TotalBackoffDelay += delay
+	c.metrics.LastBackoffDelay = delay
+	c.metrics.TotalJitterOffset += jitterOffset
+	c.metrics.LastJitterOffset = jitterOffset
+	c.metrics.LastRetryTimestamp = time.Now()
+}
+
+func sanitizeURL(u *url.URL) string {
+	if u == nil {
+		return ""
+	}
+	clone := *u
+	q := clone.Query()
+	if q.Has("api_key") {
+		q.Set("api_key", "REDACTED")
+		clone.RawQuery = q.Encode()
+	}
+	return clone.String()
+}
+
+func sanitizeError(err error) string {
+	if err == nil {
+		return ""
+	}
+	var urlErr *url.Error
+	if errors.As(err, &urlErr) {
+		if parsed, parseErr := url.Parse(urlErr.URL); parseErr == nil {
+			return fmt.Sprintf("%s %q: %v", urlErr.Op, sanitizeURL(parsed), urlErr.Err)
+		}
+	}
+	return err.Error()
 }
 
 // SetBackoff overrides the backoff configuration (used for testing).
@@ -295,7 +403,7 @@ func (c *HTTPMetadataClient) getBackoff() BackoffConfig {
 	return c.backoff
 }
 
-func (c *HTTPMetadataClient) calculateBackoffDelay(attempt int) time.Duration {
+func (c *HTTPMetadataClient) calculateBackoffDelay(attempt int) (time.Duration, time.Duration) {
 	bo := c.getBackoff()
 	base := bo.BaseDelay
 	if base <= 0 {
@@ -312,26 +420,38 @@ func (c *HTTPMetadataClient) calculateBackoffDelay(attempt int) time.Duration {
 	}
 	delay := base * time.Duration(mult)
 
+	maxDelay := bo.MaxDelay
+	if maxDelay <= 0 {
+		maxDelay = 30 * time.Second
+	}
+	if delay > maxDelay {
+		delay = maxDelay
+	}
+
 	jitter := bo.Jitter
+	var offset int64
 	if jitter > 0 {
 		var b [8]byte
 		_, _ = rand.Read(b[:])
 		u := binary.LittleEndian.Uint64(b[:])
 		jitterRange := uint64(jitter * 2)
 		if jitterRange > 0 {
-			offset := int64(u%jitterRange) - int64(jitter)
+			offset = int64(u%jitterRange) - int64(jitter)
 			delay += time.Duration(offset)
 		}
 	}
 	if delay < 0 {
 		delay = 0
 	}
-	return delay
+	return delay, time.Duration(offset)
 }
 
 func isRetryableNetworkError(err error) bool {
 	if err == nil {
 		return false
+	}
+	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+		return true
 	}
 	var netErr net.Error
 	if errors.As(err, &netErr) {
@@ -341,13 +461,18 @@ func isRetryableNetworkError(err error) bool {
 	if errors.As(err, &opErr) {
 		return true
 	}
-	lower := strings.ToLower(err.Error())
+	var rootErr error = err
+	var urlErr *url.Error
+	if errors.As(err, &urlErr) {
+		rootErr = urlErr.Err
+	}
+	lower := strings.ToLower(rootErr.Error())
 	if strings.Contains(lower, "connection refused") ||
 		strings.Contains(lower, "connection reset") ||
 		strings.Contains(lower, "timeout") ||
 		strings.Contains(lower, "network is unreachable") ||
 		strings.Contains(lower, "no route to host") ||
-		strings.Contains(lower, "eof") {
+		strings.Contains(lower, "unexpected eof") {
 		return true
 	}
 	return false
@@ -365,15 +490,26 @@ func (c *HTTPMetadataClient) doRequestWithBackoff(req *http.Request) (*http.Resp
 		resp, err := c.httpClient.Do(reqClone)
 
 		if err != nil {
-			if errors.Is(err, context.Canceled) || errors.Is(req.Context().Err(), context.Canceled) {
+			if req.Context().Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 				return nil, err
 			}
 			if isRetryableNetworkError(err) && attempt < maxRetries {
-				delay := c.calculateBackoffDelay(attempt)
+				delay, jitterOffset := c.calculateBackoffDelay(attempt)
+				c.getLogger().DebugContext(req.Context(), "metadata api retry backoff",
+					slog.String("reason", "network_error"),
+					slog.String("method", req.Method),
+					slog.String("url", sanitizeURL(req.URL)),
+					slog.Int("attempt", attempt+1),
+					slog.Int("max_retries", maxRetries),
+					slog.Duration("delay", delay),
+					slog.Duration("jitter_offset", jitterOffset),
+					slog.String("error", sanitizeError(err)),
+				)
 				select {
 				case <-req.Context().Done():
 					return nil, req.Context().Err()
 				case <-time.After(delay):
+					c.recordRetryTelemetry("network_error", delay, jitterOffset)
 					continue
 				}
 			}
@@ -382,12 +518,26 @@ func (c *HTTPMetadataClient) doRequestWithBackoff(req *http.Request) (*http.Resp
 
 		if resp.StatusCode == http.StatusTooManyRequests {
 			_ = resp.Body.Close()
+			if req.Context().Err() != nil {
+				return nil, req.Context().Err()
+			}
 			if attempt < maxRetries {
-				delay := c.calculateBackoffDelay(attempt)
+				delay, jitterOffset := c.calculateBackoffDelay(attempt)
+				c.getLogger().DebugContext(req.Context(), "metadata api retry backoff",
+					slog.String("reason", "rate_limit"),
+					slog.String("method", req.Method),
+					slog.String("url", sanitizeURL(req.URL)),
+					slog.Int("attempt", attempt+1),
+					slog.Int("max_retries", maxRetries),
+					slog.Duration("delay", delay),
+					slog.Duration("jitter_offset", jitterOffset),
+					slog.Int("status_code", http.StatusTooManyRequests),
+				)
 				select {
 				case <-req.Context().Done():
 					return nil, req.Context().Err()
 				case <-time.After(delay):
+					c.recordRetryTelemetry("rate_limit", delay, jitterOffset)
 					continue
 				}
 			}
@@ -420,10 +570,13 @@ func (c *HTTPMetadataClient) FetchMovieMetadata(ctx context.Context, query strin
 
 	resp, err := c.doRequestWithBackoff(req)
 	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return nil, err
+		}
 		if errors.Is(err, ErrRateLimited) {
 			return nil, ErrRateLimited
 		}
-		return nil, fmt.Errorf("%w: TMDb request error: %v", ErrAPIUnavailable, err)
+		return nil, fmt.Errorf("%w: TMDb request error: %w", ErrAPIUnavailable, err)
 	}
 	defer resp.Body.Close()
 
@@ -488,10 +641,13 @@ func (c *HTTPMetadataClient) FetchTVMetadata(ctx context.Context, query string, 
 
 	resp, err := c.doRequestWithBackoff(req)
 	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return nil, err
+		}
 		if errors.Is(err, ErrRateLimited) {
 			return nil, ErrRateLimited
 		}
-		return nil, fmt.Errorf("%w: TMDb request error: %v", ErrAPIUnavailable, err)
+		return nil, fmt.Errorf("%w: TMDb request error: %w", ErrAPIUnavailable, err)
 	}
 	defer resp.Body.Close()
 
@@ -579,10 +735,13 @@ func (c *HTTPMetadataClient) FetchMusicMetadata(ctx context.Context, query strin
 
 	resp, err := c.doRequestWithBackoff(req)
 	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return nil, err
+		}
 		if errors.Is(err, ErrRateLimited) {
 			return nil, ErrRateLimited
 		}
-		return nil, fmt.Errorf("%w: MusicBrainz request error: %v", ErrAPIUnavailable, err)
+		return nil, fmt.Errorf("%w: MusicBrainz request error: %w", ErrAPIUnavailable, err)
 	}
 	defer resp.Body.Close()
 
@@ -686,10 +845,13 @@ func (c *HTTPMetadataClient) DownloadArtwork(ctx context.Context, artworkURL str
 
 	resp, err := c.doRequestWithBackoff(req)
 	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return nil, err
+		}
 		if errors.Is(err, ErrRateLimited) {
 			return nil, ErrRateLimited
 		}
-		return nil, fmt.Errorf("%w: artwork download failed: %v", ErrAPIUnavailable, err)
+		return nil, fmt.Errorf("%w: artwork download failed: %w", ErrAPIUnavailable, err)
 	}
 	defer resp.Body.Close()
 

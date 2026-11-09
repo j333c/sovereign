@@ -1,13 +1,16 @@
 package enrichment
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -470,4 +473,319 @@ func TestClient_RateLimit_Backoff(t *testing.T) {
 		}
 	})
 }
+
+func TestHTTPMetadataClient_RetryTelemetry_MetricsAndLogging(t *testing.T) {
+	var reqCount int
+	var mu sync.Mutex
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		reqCount++
+		current := reqCount
+		mu.Unlock()
+
+		if current <= 2 {
+			w.WriteHeader(http.StatusTooManyRequests)
+			_, _ = w.Write([]byte(`{"status_message": "Rate limit exceeded"}`))
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"results": []map[string]any{
+				{
+					"title":        "Interstellar",
+					"release_date": "2014-11-07",
+					"genre_ids":    []int{878},
+				},
+			},
+		})
+	}))
+	defer server.Close()
+
+	var logBuf bytes.Buffer
+	testLogger := slog.New(slog.NewJSONHandler(&logBuf, &slog.HandlerOptions{
+		Level: slog.LevelDebug,
+	}))
+
+	client := NewHTTPMetadataClient(HTTPMetadataConfig{
+		TMDbAPIKey:  "secret-tmdb-key-12345",
+		TMDbBaseURL: server.URL,
+		Logger:      testLogger,
+		Backoff: &BackoffConfig{
+			BaseDelay:  2 * time.Millisecond,
+			Factor:     2,
+			MaxRetries: 3,
+			Jitter:     1 * time.Millisecond,
+		},
+	})
+
+	meta, err := client.FetchMovieMetadata(context.Background(), "Interstellar", 2014)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if meta.Title != "Interstellar" {
+		t.Errorf("expected 'Interstellar', got %q", meta.Title)
+	}
+
+	// 1. Verify thread-safe telemetry metrics
+	metrics := client.GetRetryMetrics()
+	if metrics.TotalRetries != 2 {
+		t.Errorf("expected 2 total retries, got %d", metrics.TotalRetries)
+	}
+	if metrics.RateLimitRetries != 2 {
+		t.Errorf("expected 2 rate limit retries, got %d", metrics.RateLimitRetries)
+	}
+	if metrics.NetworkRetries != 0 {
+		t.Errorf("expected 0 network retries, got %d", metrics.NetworkRetries)
+	}
+	if metrics.TotalBackoffDelay <= 0 {
+		t.Errorf("expected positive total backoff delay, got %v", metrics.TotalBackoffDelay)
+	}
+	if metrics.LastBackoffDelay <= 0 {
+		t.Errorf("expected positive last backoff delay, got %v", metrics.LastBackoffDelay)
+	}
+	if metrics.LastRetryTimestamp.IsZero() {
+		t.Errorf("expected non-zero last retry timestamp")
+	}
+
+	// 2. Verify structured debug logs
+	logOutput := logBuf.String()
+	if !strings.Contains(logOutput, "metadata api retry backoff") {
+		t.Errorf("expected debug log with message 'metadata api retry backoff', got:\n%s", logOutput)
+	}
+	if !strings.Contains(logOutput, `"reason":"rate_limit"`) {
+		t.Errorf("expected debug log reason 'rate_limit', got:\n%s", logOutput)
+	}
+	if !strings.Contains(logOutput, `"status_code":429`) {
+		t.Errorf("expected debug log status_code 429, got:\n%s", logOutput)
+	}
+	if !strings.Contains(logOutput, "api_key=REDACTED") {
+		t.Errorf("expected api_key to be redacted in URL attribute, got:\n%s", logOutput)
+	}
+	if strings.Contains(logOutput, "secret-tmdb-key-12345") {
+		t.Errorf("raw API key leaked into log output! Content:\n%s", logOutput)
+	}
+	if !strings.Contains(logOutput, `"jitter_offset":`) {
+		t.Errorf("expected jitter_offset in log attributes, got:\n%s", logOutput)
+	}
+
+	// 3. Test ResetRetryMetrics
+	client.ResetRetryMetrics()
+	cleared := client.GetRetryMetrics()
+	if cleared.TotalRetries != 0 || cleared.RateLimitRetries != 0 || cleared.TotalBackoffDelay != 0 {
+		t.Errorf("expected cleared metrics after ResetRetryMetrics, got %+v", cleared)
+	}
+}
+
+func TestHTTPMetadataClient_NetworkRetryTelemetry(t *testing.T) {
+	var reqCount int
+	var mu sync.Mutex
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		reqCount++
+		current := reqCount
+		mu.Unlock()
+
+		if current == 1 {
+			hj, ok := w.(http.Hijacker)
+			if ok {
+				conn, _, _ := hj.Hijack()
+				_ = conn.Close()
+				return
+			}
+			http.Error(w, "connection reset", http.StatusBadGateway)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"results": []map[string]any{
+				{
+					"title":        "Dune",
+					"release_date": "2021-10-22",
+				},
+			},
+		})
+	}))
+	defer server.Close()
+
+	var logBuf bytes.Buffer
+	testLogger := slog.New(slog.NewJSONHandler(&logBuf, &slog.HandlerOptions{
+		Level: slog.LevelDebug,
+	}))
+
+	client := NewHTTPMetadataClient(HTTPMetadataConfig{
+		TMDbAPIKey:  "tmdb-key",
+		TMDbBaseURL: server.URL,
+		Logger:      testLogger,
+		Backoff: &BackoffConfig{
+			BaseDelay:  2 * time.Millisecond,
+			Factor:     2,
+			MaxRetries: 3,
+			Jitter:     1 * time.Millisecond,
+		},
+	})
+
+	meta, err := client.FetchMovieMetadata(context.Background(), "Dune", 2021)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if meta.Title != "Dune" {
+		t.Errorf("expected 'Dune', got %q", meta.Title)
+	}
+
+	metrics := client.GetRetryMetrics()
+	if metrics.TotalRetries != 1 {
+		t.Errorf("expected 1 total retry, got %d", metrics.TotalRetries)
+	}
+	if metrics.NetworkRetries != 1 {
+		t.Errorf("expected 1 network retry, got %d", metrics.NetworkRetries)
+	}
+	if metrics.RateLimitRetries != 0 {
+		t.Errorf("expected 0 rate limit retries, got %d", metrics.RateLimitRetries)
+	}
+
+	logOutput := logBuf.String()
+	if !strings.Contains(logOutput, `"reason":"network_error"`) {
+		t.Errorf("expected reason 'network_error' in log output, got:\n%s", logOutput)
+	}
+	if !strings.Contains(logOutput, `"error":`) {
+		t.Errorf("expected error attribute in log output, got:\n%s", logOutput)
+	}
+	if strings.Contains(logOutput, "secret-key") {
+		t.Errorf("secret leaked in network error log! output:\n%s", logOutput)
+	}
+}
+
+func TestHTTPMetadataClient_SensitiveURLRedactionInNetworkErrorLogs(t *testing.T) {
+	// Point to an invalid port where connection is instantly refused
+	var logBuf bytes.Buffer
+	testLogger := slog.New(slog.NewJSONHandler(&logBuf, &slog.HandlerOptions{
+		Level: slog.LevelDebug,
+	}))
+
+	client := NewHTTPMetadataClient(HTTPMetadataConfig{
+		TMDbAPIKey:  "super-secret-tmdb-token-9999",
+		TMDbBaseURL: "http://127.0.0.1:54321", // unreachable port
+		Logger:      testLogger,
+		Backoff: &BackoffConfig{
+			BaseDelay:  1 * time.Millisecond,
+			Factor:     2,
+			MaxRetries: 1,
+			Jitter:     0,
+		},
+	})
+
+	_, err := client.FetchMovieMetadata(context.Background(), "Unreachable", 2024)
+	if err == nil {
+		t.Fatalf("expected error from unreachable server, got nil")
+	}
+
+	logOutput := logBuf.String()
+	if strings.Contains(logOutput, "super-secret-tmdb-token-9999") {
+		t.Errorf("API key leaked in debug log output:\n%s", logOutput)
+	}
+	if !strings.Contains(logOutput, "api_key=REDACTED") {
+		t.Errorf("expected api_key=REDACTED in sanitized error log, got:\n%s", logOutput)
+	}
+}
+
+func TestHTTPMetadataClient_ContextCancellationDuringBackoff(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	defer server.Close()
+
+	client := NewHTTPMetadataClient(HTTPMetadataConfig{
+		TMDbAPIKey:  "test-key",
+		TMDbBaseURL: server.URL,
+		Backoff: &BackoffConfig{
+			BaseDelay:  500 * time.Millisecond, // long delay
+			Factor:     2,
+			MaxRetries: 3,
+			Jitter:     0,
+		},
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+
+	_, err := client.FetchMovieMetadata(ctx, "TimeoutTest", 2022)
+	if !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context deadline exceeded/canceled, got %v", err)
+	}
+
+	// Telemetry should NOT have committed retries because the retry sleep was canceled
+	metrics := client.GetRetryMetrics()
+	if metrics.TotalRetries != 0 {
+		t.Errorf("expected 0 recorded retries on canceled backoff, got %d", metrics.TotalRetries)
+	}
+}
+
+func TestHTTPMetadataClient_ConcurrentAccess(t *testing.T) {
+	client := NewHTTPMetadataClient(HTTPMetadataConfig{
+		TMDbAPIKey: "key",
+	})
+
+	var wg sync.WaitGroup
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+			for j := 0; j < 50; j++ {
+				client.recordRetryTelemetry("rate_limit", time.Duration(j)*time.Millisecond, 100*time.Microsecond)
+				_ = client.GetRetryMetrics()
+				if j%10 == 0 {
+					client.SetLogger(slog.Default())
+					client.SetBackoff(DefaultBackoffConfig())
+				}
+				if j%25 == 0 {
+					client.ResetRetryMetrics()
+				}
+			}
+		}(i)
+	}
+	wg.Wait()
+}
+
+func TestEnrichmentEngine_GetRetryMetrics(t *testing.T) {
+	mockClient := NewMockMetadataClient()
+	engine, err := NewEnrichmentEngine(EngineConfig{
+		DataDir: t.TempDir(),
+		Client:  mockClient,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer engine.Close()
+
+	// MockMetadataClient does not implement RetryMetricsProvider
+	_, ok := engine.GetRetryMetrics()
+	if ok {
+		t.Errorf("expected ok=false for mock client without RetryMetricsProvider")
+	}
+
+	// Real HTTPMetadataClient implements RetryMetricsProvider
+	httpClient := NewHTTPMetadataClient(HTTPMetadataConfig{})
+	engineHTTP, err := NewEnrichmentEngine(EngineConfig{
+		DataDir: t.TempDir(),
+		Client:  httpClient,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer engineHTTP.Close()
+
+	metrics, ok := engineHTTP.GetRetryMetrics()
+	if !ok {
+		t.Errorf("expected ok=true for HTTPMetadataClient")
+	}
+	if metrics.TotalRetries != 0 {
+		t.Errorf("expected initial 0 retries, got %d", metrics.TotalRetries)
+	}
+}
+
+
 

@@ -875,3 +875,12 @@ func defaultHeadroomChecker(path string) (float64, error) {
 
 	return float64(stat.Bavail) / float64(stat.Blocks), nil
 }
+
+// GetRetryMetrics returns retry telemetry metrics from the underlying metadata client, if supported.
+func (e *EnrichmentEngine) GetRetryMetrics() (RetryMetrics, bool) {
+	if provider, ok := e.client.(RetryMetricsProvider); ok {
+		return provider.GetRetryMetrics(), true
+	}
+	return RetryMetrics{}, false
+}
+
