@@ -111,3 +111,19 @@ CREATE TABLE IF NOT EXISTS compose_revisions (
 CREATE INDEX IF NOT EXISTS idx_compose_revisions_service ON compose_revisions(service_id, revision);
 CREATE INDEX IF NOT EXISTS idx_compose_revisions_status ON compose_revisions(status);
 
+CREATE TABLE IF NOT EXISTS alert_dispatch_queue (
+    id TEXT PRIMARY KEY,
+    channel TEXT NOT NULL,
+    recipient TEXT NOT NULL,
+    payload TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    retry_count INTEGER NOT NULL DEFAULT 0,
+    max_retries INTEGER NOT NULL DEFAULT 5,
+    next_attempt_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_error TEXT DEFAULT '',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_alert_dispatch_queue_status_next ON alert_dispatch_queue(status, next_attempt_at);
+

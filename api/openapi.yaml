@@ -221,6 +221,19 @@ paths:
                 type: string
                 description: SSE stream emitting telemetry.update, service.*, and dms.* events.
 
+  /api/v1/telemetry/events:
+    get:
+      summary: Real-time SSE telemetry event stream alias
+      description: Alias for /api/v1/system/events emitting continuous hardware telemetry, service lifecycle, and document events.
+      operationId: getTelemetryEvents
+      responses:
+        '200':
+          description: Continuous Server-Sent Events telemetry stream.
+          content:
+            text/event-stream:
+              schema:
+                type: string
+                description: SSE stream emitting telemetry.update, service.*, and dms.* events.
 
   /api/v1/storage/disks:
     get:

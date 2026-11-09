@@ -7138,6 +7138,81 @@ func TestIMAP_CustomTLS(t *testing.T) {
 	}
 }
 
+func TestModelDownload_InsufficientStorage(t *testing.T) {
+	srv, dataDir := setupTestServer(t)
+	defer srv.Close()
+
+	// 1. Mock HTTP server serving a 4.0 GB model
+	const modelSize int64 = 4 * 1024 * 1024 * 1024 // 4 GB
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", fmt.Sprintf("%d", modelSize))
+		w.Header().Set("Accept-Ranges", "bytes")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer mockServer.Close()
+
+	// 2. Set available disk space to 8.0 GB
+	// Requires modelSize (4 GB) + SafetyBufferBytes (5 GB) = 9 GB total.
+	// Since 8 GB < 9 GB, pre-flight check must abort with 507 Insufficient Storage.
+	const freeSpace int64 = 8 * 1024 * 1024 * 1024 // 8 GB
+	srv.ModelManager().SetDiskFree(func(path string) (int64, error) {
+		return freeSpace, nil
+	})
+
+	modelsDir := filepath.Join(dataDir, "models")
+	_ = os.MkdirAll(modelsDir, 0755)
+
+	// 3. Request model download
+	payload := fmt.Sprintf(`{"url": "%s/large-model.gguf", "filename": "large-model.gguf"}`, mockServer.URL)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/ai/models/download", strings.NewReader(payload))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	srv.router.ServeHTTP(w, req)
+
+	// 4. Assert HTTP 507 Insufficient Storage
+	if w.Code != http.StatusInsufficientStorage {
+		t.Fatalf("expected HTTP 507 Insufficient Storage, got %d: %s", w.Code, w.Body.String())
+	}
+
+	contentType := w.Header().Get("Content-Type")
+	if !strings.Contains(contentType, "application/problem+json") {
+		t.Errorf("expected Content-Type application/problem+json, got %q", contentType)
+	}
+
+	// 5. Assert RFC 7807 problem details
+	var prob ProblemDetails
+	if err := json.NewDecoder(w.Body).Decode(&prob); err != nil {
+		t.Fatalf("failed to decode RFC 7807 problem details: %v", err)
+	}
+	if prob.Type != "https://sovereign.local/errors/insufficient-storage" {
+		t.Errorf("expected problem type 'https://sovereign.local/errors/insufficient-storage', got %q", prob.Type)
+	}
+	if prob.Status != http.StatusInsufficientStorage {
+		t.Errorf("expected problem status 507, got %d", prob.Status)
+	}
+	if prob.Title != "Insufficient Storage" {
+		t.Errorf("expected problem title 'Insufficient Storage', got %q", prob.Title)
+	}
+
+	// 6. Assert zero partial files or clutter in models directory
+	entries, err := os.ReadDir(modelsDir)
+	if err != nil {
+		t.Fatalf("failed to read models directory: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Errorf("expected 0 files in models dir after pre-flight rejection, found %d entries", len(entries))
+		for _, e := range entries {
+			t.Errorf("unexpected file in models directory: %s", e.Name())
+		}
+	}
+
+	partialFile := filepath.Join(modelsDir, "large-model.gguf.downloading")
+	if _, err := os.Stat(partialFile); err == nil {
+		t.Errorf("unexpected partial download file %q exists on disk", partialFile)
+	}
+}
+
 
 
 

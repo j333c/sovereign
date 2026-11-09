@@ -19,6 +19,7 @@ import (
 type AlertDispatcher struct {
 	db            *store.DB
 	deadlineStore *store.DeadlineStore
+	alertQueue    *store.AlertQueueStore
 	webhookClient *WebhookClient
 	mqttClient    *MQTTClient
 	emailClient   *EmailClient
@@ -34,9 +35,15 @@ func NewAlertDispatcher(db *store.DB, dStore *store.DeadlineStore, logger *slog.
 		logger = slog.Default()
 	}
 
+	var qStore *store.AlertQueueStore
+	if db != nil {
+		qStore, _ = store.NewAlertQueueStore(db)
+	}
+
 	return &AlertDispatcher{
 		db:            db,
 		deadlineStore: dStore,
+		alertQueue:    qStore,
 		webhookClient: NewWebhookClient(),
 		mqttClient:    NewMQTTClient(),
 		emailClient:   NewEmailClient(),
@@ -69,6 +76,26 @@ func (d *AlertDispatcher) DocumentURL(documentID string) string {
 	return fmt.Sprintf("%s/docs/documents/%s", d.baseURL, documentID)
 }
 
+// SetAlertQueue sets the persistent alert queue store.
+func (d *AlertDispatcher) SetAlertQueue(q *store.AlertQueueStore) {
+	d.alertQueue = q
+}
+
+// AlertQueue returns the configured AlertQueueStore.
+func (d *AlertDispatcher) AlertQueue() *store.AlertQueueStore {
+	return d.alertQueue
+}
+
+// QueuedEmailPayload wraps queued email notifications for retries.
+type QueuedEmailPayload struct {
+	Type            string               `json:"type"` // "digest" or "service_rollback"
+	Items           []DeadlineDigestItem `json:"items,omitempty"`
+	ServiceName     string               `json:"service_name,omitempty"`
+	FailedVersion   string               `json:"failed_version,omitempty"`
+	RestoredVersion string               `json:"restored_version,omitempty"`
+	Reason          string               `json:"reason,omitempty"`
+}
+
 // DispatchCycle evaluates pending deadlines within the alert threshold and delivers
 // notifications across all enabled channels. Successfully notified deadlines transition to 'notified'.
 func (d *AlertDispatcher) DispatchCycle(ctx context.Context) (int, error) {
@@ -78,6 +105,9 @@ func (d *AlertDispatcher) DispatchCycle(ctx context.Context) (int, error) {
 	if d.db == nil || d.deadlineStore == nil {
 		return 0, errors.New("database or deadline store is not initialized")
 	}
+
+	// 0. Retry any pending items in the persistent alert queue
+	_, _ = d.processQueueLocked(ctx)
 
 	cfg, err := LoadConfig(ctx, d.db)
 	if err != nil {
@@ -143,6 +173,9 @@ func (d *AlertDispatcher) DispatchCycle(ctx context.Context) (int, error) {
 					"url", cfg.HAWebhookURL,
 					"error", err,
 				)
+				if payloadBytes, mErr := json.Marshal(payload); mErr == nil {
+					d.enqueueFailedAlert(ctx, fmt.Sprintf("alert-webhook-%s", dl.ID), "webhook", cfg.HAWebhookURL, string(payloadBytes), err.Error())
+				}
 			} else {
 				d.logger.Debug("dispatched webhook alert", "id", dl.ID, "title", dl.Title)
 				webhookCount++
@@ -186,6 +219,7 @@ func (d *AlertDispatcher) DispatchCycle(ctx context.Context) (int, error) {
 					"topic", cfg.MQTTTopic,
 					"error", err,
 				)
+				d.enqueueFailedAlert(ctx, fmt.Sprintf("alert-mqtt-%s", dl.ID), "mqtt", cfg.MQTTTopic, string(payloadBytes), err.Error())
 			} else {
 				d.logger.Debug("published MQTT alert", "id", dl.ID, "topic", cfg.MQTTTopic)
 				mqttCount++
@@ -229,6 +263,10 @@ func (d *AlertDispatcher) DispatchCycle(ctx context.Context) (int, error) {
 				"recipient", cfg.AlertEmail,
 				"error", err,
 			)
+			qPayload := QueuedEmailPayload{Type: "digest", Items: items}
+			if payloadBytes, mErr := json.Marshal(qPayload); mErr == nil {
+				d.enqueueFailedAlert(ctx, fmt.Sprintf("alert-email-digest-%s", now.Format("2006-01-02-15-04")), "email", cfg.AlertEmail, string(payloadBytes), err.Error())
+			}
 		} else {
 			d.logger.Info("sent consolidated email alert digest",
 				"recipient", cfg.AlertEmail,
@@ -343,7 +381,11 @@ func (d *AlertDispatcher) SendRollbackAlert(ctx context.Context, serviceID, serv
 			"reassurance_message": "Update couldn't start properly. We've safely restored your previous working version.",
 			"timestamp":           d.nowFunc().UTC().Format(time.RFC3339),
 		}
-		_ = d.webhookClient.SendWebhookJSON(ctx, cfg.HAWebhookURL, payload)
+		if err := d.webhookClient.SendWebhookJSON(ctx, cfg.HAWebhookURL, payload); err != nil {
+			if payloadBytes, mErr := json.Marshal(payload); mErr == nil {
+				d.enqueueFailedAlert(ctx, fmt.Sprintf("alert-webhook-rollback-%s-%s", serviceID, failedVersion), "webhook", cfg.HAWebhookURL, string(payloadBytes), err.Error())
+			}
+		}
 	}
 
 	// 2. MQTT
@@ -354,7 +396,7 @@ func (d *AlertDispatcher) SendRollbackAlert(ctx context.Context, serviceID, serv
 			Username: cfg.MQTTUsername,
 			Password: cfg.MQTTPassword,
 		}
-		payloadBytes, _ := json.Marshal(map[string]any{
+		payloadMap := map[string]any{
 			"event":               "service_rollback",
 			"service_id":          serviceID,
 			"service_name":        serviceName,
@@ -363,12 +405,15 @@ func (d *AlertDispatcher) SendRollbackAlert(ctx context.Context, serviceID, serv
 			"reason":              reason,
 			"reassurance_message": "Update couldn't start properly. We've safely restored your previous working version.",
 			"timestamp":           d.nowFunc().UTC().Format(time.RFC3339),
-		})
+		}
+		payloadBytes, _ := json.Marshal(payloadMap)
 		topic := cfg.MQTTTopic
 		if topic == "" {
 			topic = "sovereign/alerts/services"
 		}
-		_ = d.mqttClient.PublishQoS1(ctx, mqttOpts, topic, payloadBytes)
+		if err := d.mqttClient.PublishQoS1(ctx, mqttOpts, topic, payloadBytes); err != nil {
+			d.enqueueFailedAlert(ctx, fmt.Sprintf("alert-mqtt-rollback-%s-%s", serviceID, failedVersion), "mqtt", topic, string(payloadBytes), err.Error())
+		}
 	}
 
 	// 3. Email
@@ -382,11 +427,197 @@ func (d *AlertDispatcher) SendRollbackAlert(ctx context.Context, serviceID, serv
 		}
 		if err := d.emailClient.SendRollbackAlert(ctx, smtpCfg, cfg.AlertEmail, serviceName, failedVersion, restoredVersion, reason); err != nil {
 			d.logger.Error("failed to send rollback alert email", "error", err, "recipient", cfg.AlertEmail)
+			qPayload := QueuedEmailPayload{
+				Type:            "service_rollback",
+				ServiceName:     serviceName,
+				FailedVersion:   failedVersion,
+				RestoredVersion: restoredVersion,
+				Reason:          reason,
+			}
+			if payloadBytes, mErr := json.Marshal(qPayload); mErr == nil {
+				d.enqueueFailedAlert(ctx, fmt.Sprintf("alert-email-rollback-%s-%s", serviceID, failedVersion), "email", cfg.AlertEmail, string(payloadBytes), err.Error())
+			}
 			return err
 		}
 	}
 
 	return nil
+}
+
+// ProcessQueue re-evaluates pending alert queue items and retries delivery with exponential backoff.
+func (d *AlertDispatcher) ProcessQueue(ctx context.Context) (int, error) {
+	d.dispatchMu.Lock()
+	defer d.dispatchMu.Unlock()
+	return d.processQueueLocked(ctx)
+}
+
+func (d *AlertDispatcher) processQueueLocked(ctx context.Context) (int, error) {
+	if d.alertQueue == nil || d.db == nil {
+		return 0, nil
+	}
+
+	now := d.nowFunc()
+	pendingItems, err := d.alertQueue.GetPending(ctx, now)
+	if err != nil {
+		return 0, fmt.Errorf("failed to fetch pending alert queue items: %w", err)
+	}
+	if len(pendingItems) == 0 {
+		return 0, nil
+	}
+
+	cfg, err := LoadConfig(ctx, d.db)
+	if err != nil {
+		return 0, fmt.Errorf("failed to load alert config for queue processing: %w", err)
+	}
+
+	deliveredCount := 0
+	for _, item := range pendingItems {
+		var sendErr error
+		switch strings.ToLower(item.Channel) {
+		case "webhook":
+			targetURL := item.Recipient
+			if targetURL == "" {
+				targetURL = cfg.HAWebhookURL
+			}
+			if targetURL == "" {
+				sendErr = errors.New("no webhook URL configured")
+			} else {
+				sendErr = d.webhookClient.SendWebhookJSON(ctx, targetURL, json.RawMessage(item.Payload))
+			}
+
+		case "mqtt":
+			if cfg.MQTTBrokerHost == "" {
+				sendErr = errors.New("no MQTT broker host configured")
+			} else {
+				mqttOpts := MQTTConnectOptions{
+					Host:     cfg.MQTTBrokerHost,
+					Port:     cfg.MQTTBrokerPort,
+					Username: cfg.MQTTUsername,
+					Password: cfg.MQTTPassword,
+				}
+				topic := item.Recipient
+				if topic == "" {
+					topic = cfg.MQTTTopic
+				}
+				sendErr = d.mqttClient.PublishQoS1(ctx, mqttOpts, topic, []byte(item.Payload))
+			}
+
+		case "email":
+			if cfg.AlertEmail == "" || cfg.SMTPHost == "" {
+				sendErr = errors.New("no SMTP server or alert email configured")
+			} else {
+				smtpCfg := SMTPConfig{
+					Host:     cfg.SMTPHost,
+					Port:     cfg.SMTPPort,
+					Username: cfg.SMTPUsername,
+					Password: cfg.SMTPPassword,
+					From:     cfg.SMTPFrom,
+				}
+				recipient := item.Recipient
+				if recipient == "" {
+					recipient = cfg.AlertEmail
+				}
+
+				var qPayload QueuedEmailPayload
+				if err := json.Unmarshal([]byte(item.Payload), &qPayload); err == nil && qPayload.Type != "" {
+					if qPayload.Type == "service_rollback" {
+						sendErr = d.emailClient.SendRollbackAlert(ctx, smtpCfg, recipient, qPayload.ServiceName, qPayload.FailedVersion, qPayload.RestoredVersion, qPayload.Reason)
+					} else {
+						sendErr = d.emailClient.SendDigest(ctx, smtpCfg, recipient, qPayload.Items)
+					}
+				} else {
+					var digestItems []DeadlineDigestItem
+					if err := json.Unmarshal([]byte(item.Payload), &digestItems); err == nil && len(digestItems) > 0 {
+						sendErr = d.emailClient.SendDigest(ctx, smtpCfg, recipient, digestItems)
+					} else {
+						sendErr = d.emailClient.SendTestEmail(ctx, smtpCfg, recipient)
+					}
+				}
+			}
+
+		default:
+			sendErr = fmt.Errorf("unsupported alert channel %q", item.Channel)
+		}
+
+		if sendErr == nil {
+			if err := d.alertQueue.MarkDelivered(ctx, item.ID); err != nil {
+				d.logger.Error("failed to mark alert as delivered in queue", "id", item.ID, "error", err)
+			} else {
+				deliveredCount++
+				d.logger.Info("re-dispatched queued alert successfully", "id", item.ID, "channel", item.Channel)
+
+				// If associated with deadlines, update deadline store to 'notified'
+				if d.deadlineStore != nil {
+					var whPayload WebhookDeadlinePayload
+					if err := json.Unmarshal([]byte(item.Payload), &whPayload); err == nil && whPayload.ID != "" {
+						_ = d.deadlineStore.MarkNotified(ctx, whPayload.ID)
+					}
+					var qPayload QueuedEmailPayload
+					if err := json.Unmarshal([]byte(item.Payload), &qPayload); err == nil {
+						for _, it := range qPayload.Items {
+							_ = d.deadlineStore.MarkNotified(ctx, it.ID)
+						}
+					}
+					var digestItems []DeadlineDigestItem
+					if err := json.Unmarshal([]byte(item.Payload), &digestItems); err == nil {
+						for _, it := range digestItems {
+							_ = d.deadlineStore.MarkNotified(ctx, it.ID)
+						}
+					}
+				}
+			}
+		} else {
+			nextAttempt := now.Add(store.CalculateBackoff(item.RetryCount + 1))
+			if err := d.alertQueue.RecordFailure(ctx, item.ID, sendErr.Error(), nextAttempt); err != nil {
+				d.logger.Error("failed to record retry failure in queue", "id", item.ID, "error", err)
+			}
+			if item.RetryCount+1 >= item.MaxRetries {
+				d.logger.Warn("alert delivery abandoned after reaching maximum retry attempts",
+					"id", item.ID,
+					"channel", item.Channel,
+					"recipient", item.Recipient,
+					"retries", item.RetryCount+1,
+					"max_retries", item.MaxRetries,
+					"error", sendErr,
+				)
+			} else {
+				d.logger.Warn("queued alert delivery retry failed, scheduled next attempt",
+					"id", item.ID,
+					"channel", item.Channel,
+					"retry_count", item.RetryCount+1,
+					"next_attempt", nextAttempt,
+					"error", sendErr,
+				)
+			}
+		}
+	}
+
+	return deliveredCount, nil
+}
+
+func (d *AlertDispatcher) enqueueFailedAlert(ctx context.Context, id, channel, recipient, payload, lastErr string) {
+	if d.alertQueue == nil {
+		return
+	}
+	if id == "" {
+		id = fmt.Sprintf("alert-%s-%d", channel, d.nowFunc().UnixNano())
+	}
+	item := &store.AlertQueueItem{
+		ID:            id,
+		Channel:       channel,
+		Recipient:     recipient,
+		Payload:       payload,
+		Status:        store.AlertQueueStatusPending,
+		RetryCount:    0,
+		MaxRetries:    store.DefaultMaxRetries,
+		NextAttemptAt: d.nowFunc(),
+		LastError:     lastErr,
+	}
+	if err := d.alertQueue.Enqueue(ctx, item); err != nil {
+		d.logger.Error("failed to enqueue failed alert to persistent retry queue", "id", id, "channel", channel, "error", err)
+	} else {
+		d.logger.Info("enqueued failed alert to persistent retry queue", "id", id, "channel", channel, "recipient", recipient)
+	}
 }
 
 // computeDaysRemaining calculates calendar days between due date and now,

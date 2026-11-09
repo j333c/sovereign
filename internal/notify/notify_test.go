@@ -753,3 +753,284 @@ func TestAlertDispatcher_SendRollbackAlert(t *testing.T) {
 	}
 }
 
+func TestAlertDispatcher_PersistentQueue(t *testing.T) {
+	tempDir := t.TempDir()
+	dbPath := filepath.Join(tempDir, "persistent_queue_test.db")
+	db, err := store.Open(dbPath)
+	if err != nil {
+		t.Fatalf("failed to open test db: %v", err)
+	}
+	defer db.Close()
+
+	dStore, err := store.NewDeadlineStore(db)
+	if err != nil {
+		t.Fatalf("NewDeadlineStore failed: %v", err)
+	}
+
+	qStore, err := store.NewAlertQueueStore(db)
+	if err != nil {
+		t.Fatalf("NewAlertQueueStore failed: %v", err)
+	}
+
+	ctx := context.Background()
+	now := time.Date(2026, 11, 9, 12, 0, 0, 0, time.UTC)
+
+	dispatcher := NewAlertDispatcher(db, dStore, nil)
+	dispatcher.SetNowFunc(func() time.Time { return now })
+	dispatcher.SetAlertQueue(qStore)
+
+	// =========================================================================
+	// Fault-Injection 1: Webhook Endpoint Temporary Downtime (HTTP 503) & Recovery
+	// =========================================================================
+	t.Run("WebhookEndpoint_FailureAndRecovery", func(t *testing.T) {
+		var webhookMu sync.Mutex
+		webhookStatus := http.StatusServiceUnavailable
+		var receivedWebhooks []WebhookDeadlinePayload
+
+		webhookServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			webhookMu.Lock()
+			defer webhookMu.Unlock()
+			if webhookStatus != http.StatusOK {
+				http.Error(w, "upstream service degraded", webhookStatus)
+				return
+			}
+			var p WebhookDeadlinePayload
+			if err := json.NewDecoder(r.Body).Decode(&p); err == nil {
+				receivedWebhooks = append(receivedWebhooks, p)
+			}
+			w.WriteHeader(http.StatusOK)
+		}))
+		defer webhookServer.Close()
+
+		amt := 85.00
+		dl := &store.DocumentDeadline{
+			DocumentID: "doc-wh-fail",
+			Title:      "Health Insurance Renewal",
+			DueDate:    "2026-11-16",
+			Amount:     &amt,
+			Currency:   "EUR",
+			Status:     store.DeadlineStatusPending,
+		}
+		if err := dStore.Save(ctx, dl); err != nil {
+			t.Fatalf("failed to save deadline: %v", err)
+		}
+
+		cfg := &AlertConfig{
+			HAWebhookURL:           webhookServer.URL,
+			DeadlineAlertThreshold: 14,
+		}
+		if err := SaveConfig(ctx, db, cfg); err != nil {
+			t.Fatalf("SaveConfig failed: %v", err)
+		}
+
+		// Initial dispatch: webhook returns 503 -> fails delivery
+		count, err := dispatcher.DispatchCycle(ctx)
+		if err != nil {
+			t.Fatalf("DispatchCycle returned unexpected error: %v", err)
+		}
+		if count != 0 {
+			t.Errorf("expected 0 notified due to webhook 503, got %d", count)
+		}
+
+		// Verify alert was captured in alert_dispatch_queue as 'pending'
+		pendingItems, err := qStore.List(ctx, store.AlertQueueStatusPending)
+		if err != nil {
+			t.Fatalf("List pending failed: %v", err)
+		}
+		if len(pendingItems) != 1 {
+			t.Fatalf("expected 1 pending item in alert_dispatch_queue, got %d", len(pendingItems))
+		}
+		item := pendingItems[0]
+		if item.Channel != "webhook" {
+			t.Errorf("expected channel 'webhook', got %q", item.Channel)
+		}
+		if item.RetryCount != 0 {
+			t.Errorf("expected retry_count 0 on initial enqueue, got %d", item.RetryCount)
+		}
+		if !strings.Contains(item.LastError, "503") {
+			t.Errorf("expected last_error to mention 503, got %q", item.LastError)
+		}
+
+		// Recovery: remote webhook target recovers and returns 200 OK
+		webhookMu.Lock()
+		webhookStatus = http.StatusOK
+		webhookMu.Unlock()
+
+		// Re-dispatch: ProcessQueue should retry and succeed
+		deliveredCount, err := dispatcher.ProcessQueue(ctx)
+		if err != nil {
+			t.Fatalf("ProcessQueue failed: %v", err)
+		}
+		if deliveredCount != 1 {
+			t.Fatalf("expected 1 delivered from queue, got %d", deliveredCount)
+		}
+
+		// Verify target received webhook
+		webhookMu.Lock()
+		if len(receivedWebhooks) != 1 {
+			t.Errorf("expected 1 webhook received after recovery, got %d", len(receivedWebhooks))
+		} else if receivedWebhooks[0].Title != dl.Title {
+			t.Errorf("expected webhook title %q, got %q", dl.Title, receivedWebhooks[0].Title)
+		}
+		webhookMu.Unlock()
+
+		// Verify queue status transitioned to 'delivered'
+		deliveredItem, err := qStore.Get(ctx, item.ID)
+		if err != nil {
+			t.Fatalf("Get item failed: %v", err)
+		}
+		if deliveredItem.Status != store.AlertQueueStatusDelivered {
+			t.Errorf("expected queue status 'delivered', got %q", deliveredItem.Status)
+		}
+
+		// Verify document deadline transitioned to 'notified'
+		updatedDL, _ := dStore.Get(ctx, dl.ID)
+		if updatedDL.Status != store.DeadlineStatusNotified {
+			t.Errorf("expected deadline status 'notified', got %q", updatedDL.Status)
+		}
+	})
+
+	// =========================================================================
+	// Fault-Injection 2: SMTP Connection Refused & Recovery
+	// =========================================================================
+	t.Run("SMTPEndpoint_FailureAndRecovery", func(t *testing.T) {
+		amt := 199.99
+		dlEmail := &store.DocumentDeadline{
+			DocumentID: "doc-email-fail",
+			Title:      "Quarterly Property Tax",
+			DueDate:    "2026-11-20",
+			Amount:     &amt,
+			Currency:   "USD",
+			Status:     store.DeadlineStatusPending,
+		}
+		if err := dStore.Save(ctx, dlEmail); err != nil {
+			t.Fatalf("failed to save deadline: %v", err)
+		}
+
+		// Point to closed port to simulate connection failure
+		cfg := &AlertConfig{
+			AlertEmail:             "homeowner@sovereign.local",
+			SMTPHost:               "127.0.0.1",
+			SMTPPort:               54329, // Unreachable port
+			DeadlineAlertThreshold: 14,
+		}
+		if err := SaveConfig(ctx, db, cfg); err != nil {
+			t.Fatalf("SaveConfig failed: %v", err)
+		}
+
+		// Initial attempt: fails and enqueues to alert_dispatch_queue
+		count, err := dispatcher.DispatchCycle(ctx)
+		if err != nil {
+			t.Fatalf("DispatchCycle returned unexpected error: %v", err)
+		}
+		if count != 0 {
+			t.Errorf("expected 0 notified due to unreachable SMTP, got %d", count)
+		}
+
+		emailPending, err := qStore.List(ctx, store.AlertQueueStatusPending)
+		if err != nil {
+			t.Fatalf("List pending failed: %v", err)
+		}
+		var emailItem *store.AlertQueueItem
+		for _, it := range emailPending {
+			if it.Channel == "email" {
+				emailItem = it
+				break
+			}
+		}
+		if emailItem == nil {
+			t.Fatalf("expected pending email alert in queue, found none")
+		}
+
+		// Recovery: spin up working mock SMTP server and update configuration
+		smtpHost, smtpPort, cleanupSMTP, smtpReceived := startMockSMTPServer(t, "", "")
+		defer cleanupSMTP()
+
+		cfg.SMTPHost = smtpHost
+		cfg.SMTPPort = smtpPort
+		if err := SaveConfig(ctx, db, cfg); err != nil {
+			t.Fatalf("SaveConfig with recovered SMTP failed: %v", err)
+		}
+
+		// Process queue retry
+		deliveredCount, err := dispatcher.ProcessQueue(ctx)
+		if err != nil {
+			t.Fatalf("ProcessQueue failed: %v", err)
+		}
+		if deliveredCount < 1 {
+			t.Fatalf("expected at least 1 delivered item, got %d", deliveredCount)
+		}
+
+		// Verify SMTP server received the email digest
+		if len(*smtpReceived) != 1 {
+			t.Fatalf("expected 1 email received by mock SMTP server, got %d", len(*smtpReceived))
+		}
+		if !strings.Contains((*smtpReceived)[0], "Quarterly Property Tax") {
+			t.Errorf("expected email to contain deadline title, got: %s", (*smtpReceived)[0])
+		}
+
+		// Verify queue item is 'delivered'
+		itemAfter, err := qStore.Get(ctx, emailItem.ID)
+		if err != nil {
+			t.Fatalf("Get email item failed: %v", err)
+		}
+		if itemAfter.Status != store.AlertQueueStatusDelivered {
+			t.Errorf("expected email queue item status 'delivered', got %q", itemAfter.Status)
+		}
+	})
+
+	// =========================================================================
+	// Fault-Injection 3: Max Retries (5) Exhaustion Transitions to 'failed'
+	// =========================================================================
+	t.Run("MaxRetriesExhaustion_TransitionsToFailed", func(t *testing.T) {
+		failItem := &store.AlertQueueItem{
+			ID:            "alert-fail-exhaustion",
+			Channel:       "webhook",
+			Recipient:     "http://127.0.0.1:54399/unreachable",
+			Payload:       `{"event":"test"}`,
+			Status:        store.AlertQueueStatusPending,
+			RetryCount:    0,
+			MaxRetries:    5,
+			NextAttemptAt: now,
+		}
+		if err := qStore.Enqueue(ctx, failItem); err != nil {
+			t.Fatalf("Enqueue failed: %v", err)
+		}
+
+		// Attempt retries 1 through 5 with advancing simulated time
+		currentTime := now
+		for attempt := 1; attempt <= 5; attempt++ {
+			dispatcher.SetNowFunc(func() time.Time { return currentTime })
+			delivered, _ := dispatcher.ProcessQueue(ctx)
+			if delivered != 0 {
+				t.Fatalf("attempt %d: expected 0 delivered to unreachable endpoint, got %d", attempt, delivered)
+			}
+
+			// Advance time past next_attempt_at for subsequent attempt
+			currentTime = currentTime.Add(time.Hour)
+		}
+
+		// Verify item transitioned to 'failed' after 5 attempts
+		exhaustedItem, err := qStore.Get(ctx, failItem.ID)
+		if err != nil {
+			t.Fatalf("Get exhausted item failed: %v", err)
+		}
+		if exhaustedItem.Status != store.AlertQueueStatusFailed {
+			t.Errorf("expected status 'failed' after 5 attempts, got %q", exhaustedItem.Status)
+		}
+		if exhaustedItem.RetryCount != 5 {
+			t.Errorf("expected retry_count 5, got %d", exhaustedItem.RetryCount)
+		}
+
+		// Ensure it is not picked up for further retries
+		dispatcher.SetNowFunc(func() time.Time { return currentTime.Add(24 * time.Hour) })
+		delivered, err := dispatcher.ProcessQueue(ctx)
+		if err != nil {
+			t.Fatalf("ProcessQueue after exhaustion returned error: %v", err)
+		}
+		if delivered != 0 {
+			t.Errorf("expected 0 delivered after exhaustion, got %d", delivered)
+		}
+	})
+}
+

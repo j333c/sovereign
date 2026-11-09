@@ -187,6 +187,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/telemetry/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Real-time SSE telemetry event stream alias
+         * @description Alias for /api/v1/system/events emitting continuous hardware telemetry, service lifecycle, and document events.
+         */
+        get: operations["getTelemetryEvents"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/storage/disks": {
         parameters: {
             query?: never;
@@ -3214,6 +3234,26 @@ export interface operations {
         };
     };
     getEvents: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Continuous Server-Sent Events telemetry stream. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/event-stream": string;
+                };
+            };
+        };
+    };
+    getTelemetryEvents: {
         parameters: {
             query?: never;
             header?: never;

@@ -207,12 +207,14 @@ type Config struct {
 	DeadlineStore     *store.DeadlineStore
 	ObligationScanner *documents.ObligationScanner
 	AlertDispatcher   *notify.AlertDispatcher
+	AlertQueue        *store.AlertQueueStore
 	LlamaProvisioner  *supervisor.LlamaProvisioner
 	AIGateway         ai.Gateway
 	LlamaURL          string
 	PersonaStore      *ai.PersonaStore
 	RAGEngine         *ai.RAGEngine
 	ModelManager      *ai.ModelManager
+	DiskFree          ai.DiskFreeFunc
 	DockerSocketPath  string
 }
 
@@ -537,6 +539,7 @@ func NewServer(cfg Config) (*Server, error) {
 			Reloader:   reloader,
 			Arbitrator: arb,
 			Logger:     cfg.Logger,
+			DiskFree:   cfg.DiskFree,
 		})
 	} else {
 		s.modelManager = cfg.ModelManager
@@ -745,6 +748,9 @@ func NewServer(cfg Config) (*Server, error) {
 		cfg.AlertDispatcher = notify.NewAlertDispatcher(db, s.deadlineStore, cfg.Logger)
 	}
 	s.alertDispatcher = cfg.AlertDispatcher
+	if s.alertDispatcher != nil && cfg.AlertQueue != nil {
+		s.alertDispatcher.SetAlertQueue(cfg.AlertQueue)
+	}
 	if s.obligationScanner != nil && s.alertDispatcher != nil {
 		s.obligationScanner.SetAlertDispatcher(s.alertDispatcher)
 	}
@@ -1076,6 +1082,7 @@ func (s *Server) routes() {
 	s.router.HandleFunc("GET /api/v1/system/events", s.handleEvents)
 	s.router.HandleFunc("GET /api/events", s.handleEvents)
 	s.router.HandleFunc("GET /api/v1/events", s.handleEvents)
+	s.router.HandleFunc("GET /api/v1/telemetry/events", s.handleEvents)
 	s.router.HandleFunc("GET /api/v1/storage/disks", s.handleStorageDisks)
 	s.router.HandleFunc("POST /api/v1/storage/initialize", s.requireSetupOrAdmin(s.handleStorageInitialize))
 	s.router.HandleFunc("POST /api/v1/storage/nas/test", s.requireSetupOrAdmin(s.handleStorageNASTest))
@@ -1618,7 +1625,7 @@ func (s *Server) handleDownloadAIModel(w http.ResponseWriter, r *http.Request) {
 	progress, err := mm.StartDownload(r.Context(), req)
 	if err != nil {
 		if errors.Is(err, ai.ErrInsufficientStorageSpace) {
-			s.writeProblem(w, http.StatusInsufficientStorage, "Insufficient Storage", err.Error(), r.URL.Path)
+			s.writeProblemWithType(w, "https://sovereign.local/errors/insufficient-storage", http.StatusInsufficientStorage, "Insufficient Storage", err.Error(), r.URL.Path)
 			return
 		}
 		if errors.Is(err, ai.ErrDownloadInProgress) {
@@ -2123,6 +2130,10 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Streaming unsupported", http.StatusInternalServerError)
 		return
 	}
+
+	// Disable HTTP server write deadlines on persistent SSE streaming connection
+	rc := http.NewResponseController(w)
+	_ = rc.SetWriteDeadline(time.Time{})
 
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")

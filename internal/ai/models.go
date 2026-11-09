@@ -770,6 +770,8 @@ func (m *ModelManager) runDownloadWorker(ctx context.Context, job *downloadJob) 
 		n, readErr := resp.Body.Read(buf)
 		if n > 0 {
 			if _, wErr := file.Write(buf[:n]); wErr != nil {
+				_ = file.Close()
+				_ = os.Remove(tempFile)
 				job.mu.Lock()
 				job.progress.Status = "failed"
 				job.progress.Error = wErr.Error()
