@@ -9,8 +9,9 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
+
+	"sovereign/internal/fsutil"
 )
 
 var (
@@ -852,13 +853,5 @@ func (e *TranscodeEngine) dispatchRefresh(serviceID string) {
 
 // DefaultHeadroomChecker calculates free capacity percentage on Linux filesystems.
 func DefaultHeadroomChecker(dirPath string) (float64, error) {
-	var stat syscall.Statfs_t
-	if err := syscall.Statfs(dirPath, &stat); err != nil {
-		return 0, err
-	}
-	if stat.Blocks == 0 {
-		return 0, nil
-	}
-	freePercent := (float64(stat.Bavail) / float64(stat.Blocks)) * 100.0
-	return freePercent, nil
+	return fsutil.DiskFreePercent(dirPath)
 }

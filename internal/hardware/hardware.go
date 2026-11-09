@@ -38,15 +38,16 @@ type Collector interface {
 
 // SystemCollector reads hardware metrics from host sysfs/procfs with safe fallbacks.
 type SystemCollector struct {
-	mu           sync.Mutex
-	prevCPUTotal uint64
-	prevCPUIdle  uint64
-	hasPrevCPU   bool
+	mu             sync.Mutex
+	prevCPUTotal   uint64
+	prevCPUIdle    uint64
+	hasPrevCPU     bool
+	lastCPUPercent float64
 }
 
 // NewSystemCollector initializes a new SystemCollector instance.
 func NewSystemCollector() *SystemCollector {
-	return &SystemCollector{}
+	return &SystemCollector{lastCPUPercent: 5.0}
 }
 
 // CollectSnapshot collects CPU, memory, and thermal metrics.
@@ -145,6 +146,7 @@ func (c *SystemCollector) readCPUUsage() float64 {
 		c.prevCPUTotal = total
 		c.prevCPUIdle = idle
 		c.hasPrevCPU = true
+		c.lastCPUPercent = 5.0
 		return 5.0
 	}
 
@@ -154,6 +156,9 @@ func (c *SystemCollector) readCPUUsage() float64 {
 	c.prevCPUIdle = idle
 
 	if deltaTotal == 0 {
+		if c.lastCPUPercent > 0 {
+			return c.lastCPUPercent
+		}
 		return 5.0
 	}
 
@@ -170,28 +175,7 @@ func (c *SystemCollector) readCPUUsage() float64 {
 	} else if pct > 100 {
 		pct = 100
 	}
+	c.lastCPUPercent = pct
 	return pct
-}
-
-// MockCollector allows injecting static snapshots for verification tests.
-type MockCollector struct {
-	Snapshot *TelemetrySnapshot
-	Err      error
-}
-
-// CollectSnapshot returns the configured mock snapshot.
-func (m *MockCollector) CollectSnapshot(ctx context.Context) (*TelemetrySnapshot, error) {
-	if m.Err != nil {
-		return nil, m.Err
-	}
-	if m.Snapshot != nil {
-		return m.Snapshot, nil
-	}
-	return &TelemetrySnapshot{
-		CPUUsagePercent:    12.4,
-		MemoryUsedBytes:    3221225472, // 3 GB
-		MemoryTotalBytes:   8589934592, // 8 GB
-		TemperatureCelsius: 38.5,
-	}, nil
 }
 

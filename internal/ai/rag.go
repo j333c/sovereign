@@ -1,52 +1,19 @@
 package ai
 
 import (
-	"bytes"
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
-	"net/http"
+	_ "modernc.org/sqlite"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
 	"sync"
-
-	_ "modernc.org/sqlite"
 )
-
-// inMemoryResponseWriter captures HTTP response headers, status code, and body in-memory.
-type inMemoryResponseWriter struct {
-	header http.Header
-	buf    bytes.Buffer
-	code   int
-}
-
-func newInMemoryResponseWriter() *inMemoryResponseWriter {
-	return &inMemoryResponseWriter{
-		header: make(http.Header),
-		code:   http.StatusOK,
-	}
-}
-
-func (w *inMemoryResponseWriter) Header() http.Header {
-	return w.header
-}
-
-func (w *inMemoryResponseWriter) Write(b []byte) (int, error) {
-	if w.code == 0 {
-		w.code = http.StatusOK
-	}
-	return w.buf.Write(b)
-}
-
-func (w *inMemoryResponseWriter) WriteHeader(statusCode int) {
-	w.code = statusCode
-}
 
 // Default context capacity and headroom buffer constants.
 const (
@@ -166,227 +133,6 @@ type RAGQueryResponse struct {
 	Notice    string            `json:"notice,omitempty"`
 }
 
-// ChatCompletionMessage represents an OpenAI-compatible message.
-type ChatCompletionMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
-}
-
-// ChatCompletionChoice represents a single completion choice.
-type ChatCompletionChoice struct {
-	Index        int                   `json:"index"`
-	Message      ChatCompletionMessage `json:"message"`
-	FinishReason string                `json:"finish_reason,omitempty"`
-}
-
-// ChatCompletionRequest represents an OpenAI-compatible chat completion request.
-type ChatCompletionRequest struct {
-	Model       string                  `json:"model"`
-	Messages    []ChatCompletionMessage `json:"messages"`
-	MaxTokens   int                     `json:"max_tokens,omitempty"`
-	Temperature float64                 `json:"temperature,omitempty"`
-	TopP        float64                 `json:"top_p,omitempty"`
-	Stream      bool                    `json:"stream,omitempty"`
-}
-
-// ChatCompletionResponse represents an OpenAI-compatible chat completion response.
-type ChatCompletionResponse struct {
-	ID      string                 `json:"id"`
-	Choices []ChatCompletionChoice `json:"choices"`
-}
-
-// InferenceClient executes an inference request.
-type InferenceClient interface {
-	Complete(ctx context.Context, req ChatCompletionRequest) (*ChatCompletionResponse, error)
-}
-
-// GatewayInferenceClient implements InferenceClient by routing completion requests
-// through the supervisor AI Gateway with PriorityInteractive (Lane 1).
-type GatewayInferenceClient struct {
-	gateway Gateway
-}
-
-// NewGatewayInferenceClient creates a new GatewayInferenceClient.
-func NewGatewayInferenceClient(gw Gateway) *GatewayInferenceClient {
-	return &GatewayInferenceClient{gateway: gw}
-}
-
-// Complete dispatches the completion request to the AI Gateway via an internal HTTP request.
-func (c *GatewayInferenceClient) Complete(ctx context.Context, req ChatCompletionRequest) (*ChatCompletionResponse, error) {
-	if c.gateway == nil {
-		return nil, errors.New("ai gateway is not configured")
-	}
-
-	avail, err := c.gateway.CheckModelAvailability(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to check model availability: %w", err)
-	}
-	if !avail {
-		return nil, ErrSafeStub
-	}
-
-	bodyBytes, err := json.Marshal(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal completion request: %w", err)
-	}
-
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, "/v1/chat/completions", bytes.NewReader(bodyBytes))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create http request: %w", err)
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("X-Inference-Priority", "interactive")
-	httpReq.Header.Set("X-Lane", "1")
-	httpReq.Header.Set("X-Generation-Intent", "precise")
-
-	rec := newInMemoryResponseWriter()
-	c.gateway.ServeHTTP(rec, httpReq)
-
-	if rec.code == http.StatusServiceUnavailable {
-		return nil, ErrSafeStub
-	}
-	if rec.code < 200 || rec.code >= 300 {
-		return nil, fmt.Errorf("gateway inference error (status %d): %s", rec.code, rec.buf.String())
-	}
-
-	var resp ChatCompletionResponse
-	if err := json.Unmarshal(rec.buf.Bytes(), &resp); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal completion response: %w", err)
-	}
-	return &resp, nil
-}
-
-// EstimateTokens calculates a fast, conservative token estimation for prompt texts.
-// Heuristic: ~4 characters per token for Latin/English text, rounded up.
-func EstimateTokens(text string) int {
-	runes := []rune(text)
-	if len(runes) == 0 {
-		return 0
-	}
-	tokens := (len(runes) + 3) / 4
-	if tokens < 1 {
-		return 1
-	}
-	return tokens
-}
-
-// TruncationResult holds the outcome of headroom truncation.
-type TruncationResult struct {
-	RetainedChunks    []RAGSearchResult
-	Truncated         bool
-	Notice            string
-	AvailableHeadroom int
-	TotalUsedTokens   int
-}
-
-// HeadroomTruncator enforces context capacity limits and reserves a dedicated
-// 512-token response buffer for the LLM output.
-type HeadroomTruncator struct {
-	ContextCapacity        int
-	ReservedResponseBuffer int
-	TokenEstimator         func(string) int
-}
-
-// NewHeadroomTruncator creates a new HeadroomTruncator with default 4096 capacity and 512 reserved buffer.
-func NewHeadroomTruncator(capacity, reserved int, estimator func(string) int) *HeadroomTruncator {
-	if capacity <= 0 {
-		capacity = DefaultContextCapacity
-	}
-	if reserved <= 0 {
-		reserved = DefaultReservedResponseTokens
-	}
-	if estimator == nil {
-		estimator = EstimateTokens
-	}
-	return &HeadroomTruncator{
-		ContextCapacity:        capacity,
-		ReservedResponseBuffer: reserved,
-		TokenEstimator:         estimator,
-	}
-}
-
-// FormatExcerptChunk formats a single document excerpt for inclusion in the prompt context.
-func FormatExcerptChunk(ex RAGSearchResult) string {
-	return fmt.Sprintf("--- Document Excerpt (ID: %d) ---\nSource: %s (Page %d)\nURL: %s\nContent:\n%s\n\n",
-		ex.DocumentID, ex.Title, ex.PageNumber, ex.URL, ex.Snippet)
-}
-
-// Truncate checks available context headroom and retains the highest-ranking chunks that fit.
-func (t *HeadroomTruncator) Truncate(systemPrompt, userQuery string, excerpts []RAGSearchResult, lang string) TruncationResult {
-	capacity := t.ContextCapacity
-	if capacity <= 0 {
-		capacity = DefaultContextCapacity
-	}
-	reserved := t.ReservedResponseBuffer
-	if reserved <= 0 {
-		reserved = DefaultReservedResponseTokens
-	}
-	estimator := t.TokenEstimator
-	if estimator == nil {
-		estimator = EstimateTokens
-	}
-
-	systemTokens := estimator(systemPrompt)
-	queryTokens := estimator(userQuery)
-
-	availableHeadroom := capacity - reserved - systemTokens - queryTokens
-	if availableHeadroom < 0 {
-		availableHeadroom = 0
-	}
-
-	var retained []RAGSearchResult
-	usedTokens := 0
-	truncated := false
-
-	for _, ex := range excerpts {
-		chunkText := FormatExcerptChunk(ex)
-		chunkTokens := estimator(chunkText)
-
-		if usedTokens+chunkTokens <= availableHeadroom {
-			retained = append(retained, ex)
-			usedTokens += chunkTokens
-		} else {
-			truncated = true
-			// If we have remaining headroom and no chunk could be retained yet,
-			// slice the snippet text to fit the available headroom
-			if len(retained) == 0 && availableHeadroom > 50 {
-				headerTokens := estimator(fmt.Sprintf("--- Document Excerpt (ID: %d) ---\nSource: %s (Page %d)\nURL: %s\nContent:\n\n\n",
-					ex.DocumentID, ex.Title, ex.PageNumber, ex.URL))
-				remainingForSnippet := availableHeadroom - headerTokens
-				if remainingForSnippet > 20 {
-					allowedChars := remainingForSnippet * 4
-					runes := []rune(ex.Snippet)
-					if len(runes) > allowedChars {
-						ex.Snippet = string(runes[:allowedChars]) + "..."
-					}
-					retained = append(retained, ex)
-					usedTokens += estimator(FormatExcerptChunk(ex))
-					break
-				}
-			}
-			// Continue loop to see if smaller subsequent excerpts can fit in the remaining budget
-			continue
-		}
-	}
-
-	if len(retained) < len(excerpts) {
-		truncated = true
-	}
-
-	notice := ""
-	if truncated {
-		notice = GetTruncationNotice(lang)
-	}
-
-	return TruncationResult{
-		RetainedChunks:    retained,
-		Truncated:         truncated,
-		Notice:            notice,
-		AvailableHeadroom: availableHeadroom,
-		TotalUsedTokens:   systemTokens + queryTokens + usedTokens,
-	}
-}
-
 // RAGConfig provides configuration options for RAGEngine.
 type RAGConfig struct {
 	DataDir         string
@@ -402,6 +148,8 @@ type RAGEngine struct {
 	mu              sync.RWMutex
 	dataDir         string
 	dbPath          string
+	activeDBPath    string
+	ftsReady        bool
 	logger          *slog.Logger
 	inferenceClient InferenceClient
 	truncator       *HeadroomTruncator
@@ -436,13 +184,6 @@ func (e *RAGEngine) SetInferenceClient(client InferenceClient) {
 	e.inferenceClient = client
 }
 
-// InferenceClient returns the active inference client.
-func (e *RAGEngine) InferenceClient() InferenceClient {
-	e.mu.RLock()
-	defer e.mu.RUnlock()
-	return e.inferenceClient
-}
-
 // SetDBPath sets or overrides the target SQLite database path.
 func (e *RAGEngine) SetDBPath(path string) {
 	e.mu.Lock()
@@ -451,6 +192,8 @@ func (e *RAGEngine) SetDBPath(path string) {
 		_ = e.dbPool.Close()
 		e.dbPool = nil
 	}
+	e.ftsReady = false
+	e.activeDBPath = ""
 	e.dbPath = path
 }
 
@@ -458,6 +201,8 @@ func (e *RAGEngine) SetDBPath(path string) {
 func (e *RAGEngine) Close() error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	e.ftsReady = false
+	e.activeDBPath = ""
 	if e.dbPool != nil {
 		err := e.dbPool.Close()
 		e.dbPool = nil
@@ -466,24 +211,17 @@ func (e *RAGEngine) Close() error {
 	return nil
 }
 
-// ResolveDBPath determines the active Paperless SQLite database file location.
-// Checks candidate paths in /data/documents/data/db.sqlite3 and /data/state/services/paperless/db.sqlite3.
-func (e *RAGEngine) ResolveDBPath() string {
-	e.mu.RLock()
-	explicit := e.dbPath
-	dataDir := e.dataDir
-	e.mu.RUnlock()
-
-	if explicit != "" {
-		if info, err := os.Stat(explicit); err == nil && !info.IsDir() {
-			return explicit
+func (e *RAGEngine) resolveDBPathLocked() string {
+	if e.dbPath != "" {
+		if info, err := os.Stat(e.dbPath); err == nil && !info.IsDir() {
+			return e.dbPath
 		}
 		return ""
 	}
 
 	candidates := []string{
-		filepath.Join(dataDir, "documents", "data", "db.sqlite3"),
-		filepath.Join(dataDir, "state", "services", "paperless", "db.sqlite3"),
+		filepath.Join(e.dataDir, "documents", "data", "db.sqlite3"),
+		filepath.Join(e.dataDir, "state", "services", "paperless", "db.sqlite3"),
 	}
 
 	for _, p := range candidates {
@@ -495,34 +233,25 @@ func (e *RAGEngine) ResolveDBPath() string {
 	return ""
 }
 
+// ResolveDBPath determines the active Paperless SQLite database file location.
+// Checks candidate paths in /data/documents/data/db.sqlite3 and /data/state/services/paperless/db.sqlite3.
+func (e *RAGEngine) ResolveDBPath() string {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return e.resolveDBPathLocked()
+}
+
 // getDB returns an open, configured sql.DB connection or opens one with WAL mode and busy timeout.
 func (e *RAGEngine) getDB(ctx context.Context) (*sql.DB, string, error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
-	dbPath := e.dbPath
-	if dbPath == "" {
-		candidates := []string{
-			filepath.Join(e.dataDir, "documents", "data", "db.sqlite3"),
-			filepath.Join(e.dataDir, "state", "services", "paperless", "db.sqlite3"),
-		}
-		for _, p := range candidates {
-			if info, err := os.Stat(p); err == nil && !info.IsDir() {
-				dbPath = p
-				break
-			}
-		}
-	}
-
+	dbPath := e.resolveDBPathLocked()
 	if dbPath == "" {
 		return nil, "", nil
 	}
 
-	if _, err := os.Stat(dbPath); err != nil {
-		return nil, "", nil
-	}
-
-	if e.dbPool != nil {
+	if e.dbPool != nil && e.activeDBPath == dbPath {
 		if err := e.dbPool.PingContext(ctx); err == nil {
 			return e.dbPool, dbPath, nil
 		} else if ctx.Err() != nil {
@@ -531,6 +260,11 @@ func (e *RAGEngine) getDB(ctx context.Context) (*sql.DB, string, error) {
 		}
 		_ = e.dbPool.Close()
 		e.dbPool = nil
+		e.ftsReady = false
+	} else if e.dbPool != nil {
+		_ = e.dbPool.Close()
+		e.dbPool = nil
+		e.ftsReady = false
 	}
 
 	separator := "?"
@@ -544,6 +278,8 @@ func (e *RAGEngine) getDB(ctx context.Context) (*sql.DB, string, error) {
 	}
 
 	e.dbPool = db
+	e.activeDBPath = dbPath
+	e.ftsReady = false
 	return db, dbPath, nil
 }
 
@@ -560,6 +296,9 @@ func (e *RAGEngine) EnsureFTS5(ctx context.Context, db *sql.DB) error {
 	var ftsCount int
 	err = db.QueryRowContext(ctx, "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='documents_fts';").Scan(&ftsCount)
 	if err == nil && ftsCount > 0 {
+		e.mu.Lock()
+		e.ftsReady = true
+		e.mu.Unlock()
 		return nil
 	}
 
@@ -596,6 +335,10 @@ func (e *RAGEngine) EnsureFTS5(ctx context.Context, db *sql.DB) error {
 			e.logger.Warn("failed to apply fts trigger/rebuild", "error", err)
 		}
 	}
+
+	e.mu.Lock()
+	e.ftsReady = true
+	e.mu.Unlock()
 
 	return nil
 }
@@ -761,22 +504,28 @@ func (e *RAGEngine) Search(ctx context.Context, req RAGSearchRequest) (*RAGSearc
 		}, nil
 	}
 
-	// Verify documents_document table exists
-	var tableCount int
-	if err := db.QueryRowContext(ctx, "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='documents_document';").Scan(&tableCount); err != nil || tableCount == 0 {
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
-		}
-		return &RAGSearchResponse{
-			Query:        req.Query,
-			TotalMatches: 0,
-			Results:      []RAGSearchResult{},
-			Notice:       GetUnprovisionedDBNotice(normLang),
-		}, nil
-	}
+	e.mu.RLock()
+	ftsReady := e.ftsReady
+	e.mu.RUnlock()
 
-	// Try ensuring FTS5 table
-	_ = e.EnsureFTS5(ctx, db)
+	if !ftsReady {
+		// Verify documents_document table exists
+		var tableCount int
+		if err := db.QueryRowContext(ctx, "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='documents_document';").Scan(&tableCount); err != nil || tableCount == 0 {
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
+			return &RAGSearchResponse{
+				Query:        req.Query,
+				TotalMatches: 0,
+				Results:      []RAGSearchResult{},
+				Notice:       GetUnprovisionedDBNotice(normLang),
+			}, nil
+		}
+
+		// Try ensuring FTS5 table
+		_ = e.EnsureFTS5(ctx, db)
+	}
 
 	ftsQuery := SanitizeFTSQuery(req.Query)
 	if ftsQuery == "" {

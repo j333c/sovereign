@@ -9,6 +9,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"sovereign/internal/fsutil"
 )
 
 // Supported language codes.
@@ -394,16 +396,9 @@ func (s *PersonaStore) persist() error {
 		return fmt.Errorf("failed to marshal persona state: %w", err)
 	}
 
-	// Atomic write: write to temp file, sync, then rename
-	tmpFile := filepath.Join(stateDir, fmt.Sprintf(".persona_state-%d.tmp", time.Now().UnixNano()))
-	defer os.Remove(tmpFile)
-	if err := os.WriteFile(tmpFile, data, 0644); err != nil {
-		return fmt.Errorf("failed to write temp persona state file: %w", err)
-	}
-
 	destFile := filepath.Join(stateDir, "persona_state.json")
-	if err := os.Rename(tmpFile, destFile); err != nil {
-		return fmt.Errorf("failed to atomically rename persona state file: %w", err)
+	if err := fsutil.AtomicWriteFile(destFile, data, 0644); err != nil {
+		return fmt.Errorf("failed to persist persona state file: %w", err)
 	}
 
 	return nil
@@ -424,19 +419,10 @@ func (s *PersonaStore) SeedOpenWebUI() error {
 
 	persona := BuildPersona(def, lang, true)
 
-	if err := os.MkdirAll(stateDir, 0755); err != nil {
-		return fmt.Errorf("failed to create openwebui state directory for seeding: %w", err)
-	}
-
 	// 1. Seed system_prompt.txt
 	promptFile := filepath.Join(stateDir, "system_prompt.txt")
-	tmpPrompt := filepath.Join(stateDir, fmt.Sprintf(".system_prompt-%d.tmp", time.Now().UnixNano()))
-	defer os.Remove(tmpPrompt)
-	if err := os.WriteFile(tmpPrompt, []byte(persona.SystemPrompt), 0644); err != nil {
-		return fmt.Errorf("failed to write temp system_prompt file: %w", err)
-	}
-	if err := os.Rename(tmpPrompt, promptFile); err != nil {
-		return fmt.Errorf("failed to atomically rename system_prompt file: %w", err)
+	if err := fsutil.AtomicWriteFile(promptFile, []byte(persona.SystemPrompt), 0644); err != nil {
+		return fmt.Errorf("failed to seed system_prompt file: %w", err)
 	}
 
 	// 2. Seed prompts_seed.json containing all available prompts
@@ -446,13 +432,8 @@ func (s *PersonaStore) SeedOpenWebUI() error {
 		return fmt.Errorf("failed to marshal prompts seed: %w", err)
 	}
 	seedFile := filepath.Join(stateDir, "prompts_seed.json")
-	tmpSeed := filepath.Join(stateDir, fmt.Sprintf(".prompts_seed-%d.tmp", time.Now().UnixNano()))
-	defer os.Remove(tmpSeed)
-	if err := os.WriteFile(tmpSeed, promptsData, 0644); err != nil {
-		return fmt.Errorf("failed to write temp prompts_seed file: %w", err)
-	}
-	if err := os.Rename(tmpSeed, seedFile); err != nil {
-		return fmt.Errorf("failed to atomically rename prompts_seed file: %w", err)
+	if err := fsutil.AtomicWriteFile(seedFile, promptsData, 0644); err != nil {
+		return fmt.Errorf("failed to seed prompts_seed file: %w", err)
 	}
 
 	return nil

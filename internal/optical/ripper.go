@@ -13,6 +13,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"sovereign/internal/fsutil"
 )
 
 // State represents the discrete optical ripper lifecycle phases.
@@ -631,25 +633,7 @@ func (r *OpticalRipper) broadcast(event string, data any) {
 
 // defaultHeadroomChecker uses statfs to check the ratio of free blocks to total blocks.
 func defaultHeadroomChecker(path string) (float64, error) {
-	var stat syscall.Statfs_t
-	// Stat parent if path doesn't exist yet
-	checkPath := path
-	for checkPath != "/" && checkPath != "." {
-		if _, err := os.Stat(checkPath); err == nil {
-			break
-		}
-		checkPath = filepath.Dir(checkPath)
-	}
-
-	if err := syscall.Statfs(checkPath, &stat); err != nil {
-		return 0, fmt.Errorf("statfs failed for %q: %w", checkPath, err)
-	}
-
-	if stat.Blocks == 0 {
-		return 1.0, nil
-	}
-
-	return float64(stat.Bavail) / float64(stat.Blocks), nil
+	return fsutil.DiskFreeRatio(path)
 }
 
 // isDriveDisconnectError tests whether an error is caused by optical hardware disconnection (EIO, ENODEV, or missing device).

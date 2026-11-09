@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -12,8 +11,9 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
+
+	"sovereign/internal/fsutil"
 )
 
 const (
@@ -778,42 +778,7 @@ func isDirectoryActivelyWritten(dirPath string, stabilityWindow time.Duration) b
 
 // moveFile attempts atomic rename, falling back to copy+sync+delete for cross-device links.
 func moveFile(src, dst string) error {
-	if err := os.Rename(src, dst); err == nil {
-		return nil
-	}
-
-	in, err := os.Open(src)
-	if err != nil {
-		return fmt.Errorf("open src %q: %w", src, err)
-	}
-	defer in.Close()
-
-	tmpDst := dst + fmt.Sprintf(".tmp.%d", time.Now().UnixNano())
-	out, err := os.OpenFile(tmpDst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
-	if err != nil {
-		return fmt.Errorf("create tmpDst %q: %w", tmpDst, err)
-	}
-
-	if _, err := io.Copy(out, in); err != nil {
-		out.Close()
-		_ = os.Remove(tmpDst)
-		return fmt.Errorf("copy bytes: %w", err)
-	}
-
-	if err := out.Sync(); err != nil {
-		out.Close()
-		_ = os.Remove(tmpDst)
-		return fmt.Errorf("sync dst: %w", err)
-	}
-	out.Close()
-	in.Close()
-
-	if err := os.Rename(tmpDst, dst); err != nil {
-		_ = os.Remove(tmpDst)
-		return fmt.Errorf("rename tmpDst to dst: %w", err)
-	}
-
-	return os.Remove(src)
+	return fsutil.AtomicMoveOrCopy(src, dst)
 }
 
 func formatMovieNFO(m *MovieMetadata) string {
@@ -856,24 +821,7 @@ func escapeXML(s string) string {
 }
 
 func defaultHeadroomChecker(path string) (float64, error) {
-	var stat syscall.Statfs_t
-	checkPath := path
-	for checkPath != "/" && checkPath != "." {
-		if _, err := os.Stat(checkPath); err == nil {
-			break
-		}
-		checkPath = filepath.Dir(checkPath)
-	}
-
-	if err := syscall.Statfs(checkPath, &stat); err != nil {
-		return 0, fmt.Errorf("statfs failed for %q: %w", checkPath, err)
-	}
-
-	if stat.Blocks == 0 {
-		return 1.0, nil
-	}
-
-	return float64(stat.Bavail) / float64(stat.Blocks), nil
+	return fsutil.DiskFreeRatio(path)
 }
 
 // GetRetryMetrics returns retry telemetry metrics from the underlying metadata client, if supported.

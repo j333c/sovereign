@@ -4,9 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"os"
-	"path/filepath"
-	"syscall"
+
+	"sovereign/internal/fsutil"
 )
 
 // SafetyBufferBytes specifies the strict 5.0 GB disk space buffer (5 * 1024 * 1024 * 1024)
@@ -33,31 +32,10 @@ func (e *StorageSpaceError) Unwrap() error {
 }
 
 // DiskFreeFunc defines a function prototype for checking available bytes at a path.
-type DiskFreeFunc func(path string) (int64, error)
+type DiskFreeFunc = fsutil.DiskFreeFunc
 
 func defaultDiskFree(path string) (int64, error) {
-	if abs, err := filepath.Abs(path); err == nil {
-		path = abs
-	}
-	checkPath := path
-	for checkPath != "/" && checkPath != "." {
-		if _, err := os.Stat(checkPath); err == nil {
-			break
-		}
-		parent := filepath.Dir(checkPath)
-		if parent == checkPath {
-			break
-		}
-		checkPath = parent
-	}
-
-	var stat syscall.Statfs_t
-	if err := syscall.Statfs(checkPath, &stat); err != nil {
-		return 0, fmt.Errorf("statfs failed for %q: %w", checkPath, err)
-	}
-
-	freeBytes := int64(stat.Bavail) * int64(stat.Bsize)
-	return freeBytes, nil
+	return fsutil.DiskFree(path)
 }
 
 // CheckModelStorageSpace verifies that path has at least requiredBytes + 5.0 GB of free disk space.

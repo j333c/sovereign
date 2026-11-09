@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+
+	"sovereign/internal/fsutil"
 )
 
 // Boot modes matching OpenAPI and architectural spine.
@@ -329,51 +331,5 @@ func (bm *BootManager) Close() error {
 // atomicWriteFile writes data to a temporary file in the same directory as destPath,
 // calls fsync(), closes it, and atomically renames it to destPath.
 func atomicWriteFile(destPath string, data []byte, perm os.FileMode) error {
-	dir := filepath.Dir(destPath)
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return fmt.Errorf("failed to create directory %q: %w", dir, err)
-	}
-
-	tmpFile, err := os.CreateTemp(dir, ".boot_state-*.tmp")
-	if err != nil {
-		return fmt.Errorf("failed to create temp file: %w", err)
-	}
-	tmpName := tmpFile.Name()
-	cleanedUp := false
-	defer func() {
-		if !cleanedUp {
-			_ = tmpFile.Close()
-			_ = os.Remove(tmpName)
-		}
-	}()
-
-	if _, err := tmpFile.Write(data); err != nil {
-		return fmt.Errorf("failed to write to temp file: %w", err)
-	}
-
-	if err := tmpFile.Sync(); err != nil {
-		return fmt.Errorf("failed to fsync temp file: %w", err)
-	}
-
-	if err := tmpFile.Close(); err != nil {
-		return fmt.Errorf("failed to close temp file: %w", err)
-	}
-
-	if err := os.Chmod(tmpName, perm); err != nil {
-		return fmt.Errorf("failed to chmod temp file: %w", err)
-	}
-
-	if err := os.Rename(tmpName, destPath); err != nil {
-		return fmt.Errorf("failed to atomically rename %q to %q: %w", tmpName, destPath, err)
-	}
-
-	cleanedUp = true
-
-	// Best-effort directory sync to guarantee directory entry persistence
-	if dirFile, err := os.Open(dir); err == nil {
-		_ = dirFile.Sync()
-		_ = dirFile.Close()
-	}
-
-	return nil
+	return fsutil.AtomicWriteFile(destPath, data, perm)
 }
