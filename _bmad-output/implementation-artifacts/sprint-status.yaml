@@ -252,7 +252,7 @@ action_items:
     epic: 8
     action: "Add dual-remote git sync sanity check script"
     owner: "Amelia (Dev)"
-    status: open
+    status: done
     ref: "_bmad-output/implementation-artifacts/epic-8-retro-2026-11-09.md"
   - id: "epic-8-retro-item-2-retry-telemetry-metrics"
     epic: 8

@@ -1,4 +1,4 @@
-.PHONY: all build build-daemon build-web test test-daemon test-web codegen lint clean config-check
+.PHONY: all build build-daemon build-web test test-daemon test-web test-scripts codegen lint clean config-check verify-remotes
 
 # Default target
 all: build
@@ -14,13 +14,17 @@ build-web:
 	npm --prefix web run build
 
 # Run unit and integration tests across monorepo
-test: test-daemon test-web
+test: test-daemon test-web test-scripts
 
 test-daemon:
 	go test -v ./...
 
 test-web:
 	npm --prefix web test
+
+test-scripts:
+	./tests/verify_remotes_test.sh
+
 
 # Run OpenAPI 3.1 code generation
 codegen:
@@ -39,3 +43,8 @@ lint:
 clean:
 	rm -rf bin
 	rm -rf web/.next
+
+# Verify dual-remote synchronization parity
+verify-remotes:
+	./scripts/verify-remotes.sh
+
