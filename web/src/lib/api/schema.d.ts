@@ -419,7 +419,11 @@ export interface paths {
          * @description Returns configuration settings. Requires administrative privileges.
          */
         get: operations["getSettings"];
-        put?: never;
+        /**
+         * Update administrative settings
+         * @description Updates key-value settings via PUT. Requires administrative privileges.
+         */
+        put: operations["updateSettingsPut"];
         /**
          * Update administrative settings
          * @description Updates key-value settings. Requires administrative privileges.
@@ -1506,6 +1510,11 @@ export interface components {
             diagnostics_completed: boolean;
             /** @example All systems operational */
             message: string;
+            /**
+             * @example stable
+             * @enum {string}
+             */
+            update_channel?: "stable" | "security-only" | "preview";
         };
         IngressStatusResponse: {
             /**
@@ -1789,8 +1798,18 @@ export interface components {
             hostname?: string;
             /** @example video,audio,dms,ai */
             features?: string;
+            /**
+             * @example stable
+             * @enum {string}
+             */
+            update_channel?: "stable" | "security-only" | "preview";
         };
         TelemetryUpdate: {
+            /**
+             * @example stable
+             * @enum {string}
+             */
+            update_channel?: "stable" | "security-only" | "preview";
             /**
              * Format: float
              * @example 14.2
@@ -3646,6 +3665,62 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SettingsResponse"];
+                };
+            };
+            /** @description Authentication required. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            /** @description Administrative privileges required. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    updateSettingsPut: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    [key: string]: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Settings updated successfully. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @example ok */
+                        status?: string;
+                    };
+                };
+            };
+            /** @description Malformed payload or missing preview confirmation token. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
                 };
             };
             /** @description Authentication required. */

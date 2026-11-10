@@ -26,6 +26,7 @@ type TelemetryUpdate struct {
 	DockerAvailable   bool    `json:"docker_available"`
 	DockerStatus      string  `json:"docker_status,omitempty"`
 	DockerMessage     string  `json:"docker_message,omitempty"`
+	UpdateChannel     string  `json:"update_channel,omitempty"`
 	Timestamp         string  `json:"timestamp"`
 }
 
@@ -159,6 +160,14 @@ func (s *Server) getTelemetryUpdate(ctx context.Context) TelemetryUpdate {
 		dockerMessage = "Container engine operational"
 	}
 
+	updateChannel := ""
+	if s.db != nil {
+		updateChannel, _ = s.db.GetSetting(context.Background(), "update_channel")
+	}
+	if updateChannel == "" {
+		updateChannel = "stable"
+	}
+
 	return TelemetryUpdate{
 		CPUPercent:        cpuPercent,
 		MemoryUsedBytes:   memUsed,
@@ -174,6 +183,7 @@ func (s *Server) getTelemetryUpdate(ctx context.Context) TelemetryUpdate {
 		DockerAvailable:   dockerAvailable,
 		DockerStatus:      dockerStatus,
 		DockerMessage:     dockerMessage,
+		UpdateChannel:     updateChannel,
 		Timestamp:         time.Now().UTC().Format(time.RFC3339),
 	}
 }

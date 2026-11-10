@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 	"sovereign/internal/auth"
+	"sovereign/internal/supervisor"
 )
 
 func (s *Server) handleSetupStatus(w http.ResponseWriter, r *http.Request) {
@@ -150,6 +152,16 @@ func (s *Server) handleSession(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func isValidPreviewConfirmationToken(token string) bool {
+	normalized := strings.TrimSpace(strings.ToLower(token))
+	switch normalized {
+	case "preview", "vorschau", "preliminar", "vista previa", "aperçu", "apercu":
+		return true
+	default:
+		return false
+	}
+}
+
 func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 	s.mu.RLock()
 	dbHandle := s.db
@@ -165,12 +177,17 @@ func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 	email, _ := dbHandle.GetSetting(ctx, "admin_email")
 	hostname, _ := dbHandle.GetSetting(ctx, "hostname")
 	features, _ := dbHandle.GetSetting(ctx, "features")
+	updateChannel, _ := dbHandle.GetSetting(ctx, "update_channel")
+	if updateChannel == "" {
+		updateChannel = supervisor.ChannelStable
+	}
 
 	s.writeJSON(w, http.StatusOK, map[string]any{
-		"language":    lang,
-		"admin_email": email,
-		"hostname":    hostname,
-		"features":    features,
+		"language":       lang,
+		"admin_email":    email,
+		"hostname":       hostname,
+		"features":       features,
+		"update_channel": updateChannel,
 	})
 }
 
@@ -190,8 +207,40 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if newChannel, exists := payload["update_channel"]; exists {
+		newChannel = strings.TrimSpace(strings.ToLower(newChannel))
+		if newChannel != supervisor.ChannelStable &&
+			newChannel != supervisor.ChannelSecurityOnly &&
+			newChannel != supervisor.ChannelPreview {
+			s.writeProblem(w, http.StatusBadRequest, "Invalid Channel", "Update channel must be stable, security-only, or preview", r.URL.Path)
+			return
+		}
+
+		if newChannel == supervisor.ChannelPreview {
+			confirmation := payload["confirmation"]
+			if confirmation == "" {
+				confirmation = r.Header.Get("X-Confirmation-Token")
+			}
+			if confirmation == "" {
+				confirmation = r.URL.Query().Get("confirmation")
+			}
+			if !isValidPreviewConfirmationToken(confirmation) {
+				s.writeProblem(w, http.StatusBadRequest, "Preview Confirmation Required", "Changing to the preview release channel requires typing confirmation 'PREVIEW'.", r.URL.Path)
+				return
+			}
+		}
+
+		payload["update_channel"] = newChannel
+		if s.updateEngine != nil {
+			s.updateEngine.SetChannel(newChannel)
+		}
+	}
+
 	ctx := r.Context()
 	for k, v := range payload {
+		if k == "confirmation" {
+			continue
+		}
 		if err := dbHandle.SetSetting(ctx, k, v); err != nil {
 			s.logger.Error("failed to set setting", "key", k, "error", err)
 			s.writeProblem(w, http.StatusInternalServerError, "Internal Server Error", "Failed to update setting", r.URL.Path)

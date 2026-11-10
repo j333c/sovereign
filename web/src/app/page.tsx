@@ -655,6 +655,7 @@ function HomeScreenContent({
         onLanguageChange={handleLanguageChange}
         aggregateStatus={aggregateStatus}
         onSettingsClick={handleSettingsClick}
+        updateChannel={telemetry?.update_channel || "stable"}
       />
 
       {/* Main Single-Viewport / Scrollable Service Grid Container */}

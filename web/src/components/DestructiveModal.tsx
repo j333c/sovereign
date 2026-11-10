@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from "react";
 import { translations, type Language } from "@/lib/i18n";
 import { useModalFocusTrap } from "@/lib/hooks";
 
-export type DestructiveActionType = "reboot" | "factory-reset" | "deactivate";
+export type DestructiveActionType = "reboot" | "factory-reset" | "deactivate" | "preview-channel";
 
 export const LOCALIZED_RESET_TOKENS: Record<Language, string[]> = {
   en: ["reset", "delete"],
@@ -11,11 +11,23 @@ export const LOCALIZED_RESET_TOKENS: Record<Language, string[]> = {
   fr: ["reset", "delete", "supprimer", "réinitialiser", "reinitialiser"],
 };
 
-export function isValidConfirmationToken(input: string | null | undefined, lang: Language): boolean {
+export const LOCALIZED_PREVIEW_TOKENS: Record<Language, string[]> = {
+  en: ["preview"],
+  de: ["preview", "vorschau"],
+  es: ["preview", "preliminar", "vista previa"],
+  fr: ["preview", "aperçu", "apercu"],
+};
+
+export function isValidConfirmationToken(
+  input: string | null | undefined,
+  lang: Language,
+  actionType: DestructiveActionType = "factory-reset"
+): boolean {
   if (!input || typeof input !== "string") return false;
   const normalized = input.normalize("NFC").trim().toLowerCase();
   if (!normalized) return false;
-  const allowed = LOCALIZED_RESET_TOKENS[lang] || LOCALIZED_RESET_TOKENS.en;
+  const tokens = actionType === "preview-channel" ? LOCALIZED_PREVIEW_TOKENS : LOCALIZED_RESET_TOKENS;
+  const allowed = tokens[lang] || tokens.en;
   return allowed.some((token) => token.normalize("NFC") === normalized);
 }
 
@@ -67,7 +79,7 @@ export function DestructiveModal({
     }
 
     const timer = setTimeout(() => {
-      if (actionType === "factory-reset") {
+      if (actionType === "factory-reset" || actionType === "preview-channel") {
         inputRef.current?.focus();
       } else {
         cancelButtonRef.current?.focus();
@@ -84,7 +96,9 @@ export function DestructiveModal({
     return null;
   }
 
-  const isResetValid = actionType !== "factory-reset" || isValidConfirmationToken(resetInput, currentLanguage);
+  const isResetValid =
+    (actionType !== "factory-reset" && actionType !== "preview-channel") ||
+    isValidConfirmationToken(resetInput, currentLanguage, actionType);
 
   // Derive title, description, and button text based on actionType
   let title = t.rebootTitle;
@@ -99,6 +113,12 @@ export function DestructiveModal({
     confirmText = isProcessing ? t.factoryResettingState : t.factoryResetConfirmButton;
     icon = "⚠️";
     buttonColor = "bg-rose-600 hover:bg-rose-700 text-white focus-visible:ring-rose-500 disabled:opacity-40 disabled:cursor-not-allowed";
+  } else if (actionType === "preview-channel") {
+    title = t.previewModalTitle;
+    description = t.previewModalDesc;
+    confirmText = isProcessing ? t.starting : t.previewConfirmButton;
+    icon = "⚠️";
+    buttonColor = "bg-amber-600 hover:bg-amber-700 text-white focus-visible:ring-amber-500 disabled:opacity-40 disabled:cursor-not-allowed";
   } else if (actionType === "deactivate") {
     title = t.deactivateTitle;
     description = serviceName
@@ -139,14 +159,14 @@ export function DestructiveModal({
           </div>
         </div>
 
-        {/* Factory Reset Validation Input */}
-        {actionType === "factory-reset" && (
+        {/* Validation Input for Factory Reset or Preview Channel */}
+        {(actionType === "factory-reset" || actionType === "preview-channel") && (
           <div className="mt-5 space-y-2">
-            <label htmlFor="factory-reset-confirmation-input" className="block text-xs font-semibold text-[#334155]">
-              {t.typeResetToConfirm}
+            <label htmlFor="destructive-confirmation-input" className="block text-xs font-semibold text-[#334155]">
+              {actionType === "preview-channel" ? t.previewConfirmationPrompt : t.typeResetToConfirm}
             </label>
             <input
-              id="factory-reset-confirmation-input"
+              id="destructive-confirmation-input"
               ref={inputRef}
               type="text"
               value={resetInput}
@@ -157,12 +177,16 @@ export function DestructiveModal({
                   void onConfirm();
                 }
               }}
-              placeholder={t.resetInputPlaceholder}
+              placeholder={actionType === "preview-channel" ? t.previewConfirmationPlaceholder : t.resetInputPlaceholder}
               disabled={isProcessing}
-              aria-invalid={actionType === "factory-reset" && resetInput.length > 0 && !isResetValid}
-              className="w-full min-h-[44px] rounded-lg border border-[#CBD5E1] px-3.5 py-2 text-sm font-mono tracking-wider text-[#0F172A] placeholder-[#94A3B8] focus:border-rose-500 focus:outline-none focus:ring-2 focus:ring-rose-200"
+              aria-invalid={resetInput.length > 0 && !isResetValid}
+              className={`w-full min-h-[44px] rounded-lg border border-[#CBD5E1] px-3.5 py-2 text-sm font-mono tracking-wider text-[#0F172A] placeholder-[#94A3B8] focus:outline-none focus:ring-2 ${
+                actionType === "preview-channel"
+                  ? "focus:border-amber-500 focus:ring-amber-200"
+                  : "focus:border-rose-500 focus:ring-rose-200"
+              }`}
               autoComplete="off"
-              data-testid="factory-reset-input"
+              data-testid={actionType === "preview-channel" ? "preview-channel-input" : "factory-reset-input"}
             />
           </div>
         )}

@@ -158,6 +158,34 @@ export default function SettingsPage({
     }
   };
 
+  // Release Channel & Version State (Story 10.2)
+  const [updateChannel, setUpdateChannel] = useState<string>("stable");
+  const [currentVersion, setCurrentVersion] = useState<string>("v0.1.0");
+
+  useEffect(() => {
+    client
+      .getSettings()
+      .then((res: any) => {
+        if (res?.update_channel) {
+          setUpdateChannel(res.update_channel);
+        }
+      })
+      .catch(() => {});
+    client
+      .getHealth()
+      .then((h: any) => {
+        if (h?.version) {
+          setCurrentVersion(h.version);
+        }
+      })
+      .catch(() => {});
+  }, [client]);
+
+  const handleChannelChange = async (newChannel: string) => {
+    await client.updateSettings({ update_channel: newChannel });
+    setUpdateChannel(newChannel);
+  };
+
   // Destructive Actions State
   const [destructiveModalState, setDestructiveModalState] = useState<{
     isOpen: boolean;
@@ -184,6 +212,10 @@ export default function SettingsPage({
       } else if (destructiveModalState.actionType === "factory-reset") {
         await client.factoryReset("RESET");
         setDestructiveModalState({ isOpen: false, actionType: "factory-reset" });
+      } else if (destructiveModalState.actionType === "preview-channel") {
+        await client.updateSettings({ update_channel: "preview", confirmation: "PREVIEW" });
+        setUpdateChannel("preview");
+        setDestructiveModalState({ isOpen: false, actionType: "preview-channel" });
       } else if (destructiveModalState.actionType === "deactivate" && destructiveModalState.serviceId) {
         await client.deactivateService(destructiveModalState.serviceId);
         setDestructiveModalState({ isOpen: false, actionType: "deactivate" });
@@ -626,6 +658,7 @@ export default function SettingsPage({
         currentLanguage={lang}
         onLanguageChange={handleLanguageChange}
         aggregateStatus="operational"
+        updateChannel={updateChannel}
       />
 
       {/* Main Settings Layout */}
@@ -823,6 +856,9 @@ export default function SettingsPage({
           {activeTab === "system" && (
             <SystemSettingsTab
               t={t}
+              currentChannel={updateChannel}
+              currentVersion={currentVersion}
+              onChannelChange={handleChannelChange}
               onOpenDestructiveModal={setDestructiveModalState}
             />
           )}

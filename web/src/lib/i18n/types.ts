@@ -351,6 +351,22 @@ export interface DashboardTranslations {
   landingReadGuideDisc: string;
   landingFullHardwareGuides: string;
   landingFooterBrandDesc: string;
+
+  // Release Channels & Preview Safeguards (Story 10.2)
+  updateChannelLabel: string;
+  channelStable: string;
+  channelSecurityOnly: string;
+  channelPreview: string;
+  channelToastSuccess: string;
+  graduatingToStableTitle: string;
+  graduatingToStableDesc: string;
+  manualRollbackLink: string;
+  previewModalTitle: string;
+  previewModalDesc: string;
+  previewConfirmationPrompt: string;
+  previewConfirmationPlaceholder: string;
+  previewConfirmButton: string;
+  previewChannelPill: string;
 }
 
 

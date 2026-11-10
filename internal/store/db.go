@@ -124,6 +124,7 @@ type BootStatusInfo struct {
 	CleanShutdown        bool   `json:"clean_shutdown"`
 	DiagnosticsCompleted bool   `json:"diagnostics_completed"`
 	Message              string `json:"message"`
+	UpdateChannel        string `json:"update_channel,omitempty"`
 }
 
 // GetBootStatus returns the current boot status.

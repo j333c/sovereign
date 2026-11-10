@@ -84,6 +84,14 @@ func (s *Server) handleBootStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if s.db != nil {
+		if ch, _ := s.db.GetSetting(r.Context(), "update_channel"); ch != "" {
+			status.UpdateChannel = ch
+		} else {
+			status.UpdateChannel = "stable"
+		}
+	}
+
 	s.writeJSON(w, http.StatusOK, status)
 }
 

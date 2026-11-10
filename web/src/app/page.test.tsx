@@ -292,6 +292,35 @@ describe("AppHeader Component", () => {
     assert.ok(html.includes("value=\"fr\""));
     assert.ok(html.includes("Alle Systeme betriebsbereit"), "German header text must reflect active language");
   });
+
+  it("renders preview channel pill when updateChannel is preview", () => {
+    const htmlWithPreview = renderToStaticMarkup(
+      <AppHeader
+        currentLanguage="en"
+        onLanguageChange={() => {}}
+        aggregateStatus="operational"
+        updateChannel="preview"
+      />
+    );
+    assert.ok(
+      htmlWithPreview.includes('data-testid="preview-channel-pill"'),
+      "Must render preview pill when updateChannel is preview"
+    );
+    assert.ok(htmlWithPreview.includes("Preview Channel"));
+
+    const htmlStable = renderToStaticMarkup(
+      <AppHeader
+        currentLanguage="en"
+        onLanguageChange={() => {}}
+        aggregateStatus="operational"
+        updateChannel="stable"
+      />
+    );
+    assert.ok(
+      !htmlStable.includes('data-testid="preview-channel-pill"'),
+      "Must not render preview pill when updateChannel is stable"
+    );
+  });
 });
 
 

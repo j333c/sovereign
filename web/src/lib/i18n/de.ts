@@ -337,4 +337,20 @@ export const de: DashboardTranslations = {
     landingReadGuideDisc: "Disc-Ripping-Leitfaden lesen",
     landingFullHardwareGuides: "Vollständige Hardware-Leitfäden & Stufen-Roadmap",
     landingFooterBrandDesc: "100 % privater selbstgehosteter Heimserver",
+
+    // Release Channels & Preview Safeguards (Story 10.2)
+    updateChannelLabel: "Aktualisierungskanal",
+    channelStable: "Stabil (Empfohlen)",
+    channelSecurityOnly: "Nur Sicherheitsupdates",
+    channelPreview: "Vorschau (Experimentell)",
+    channelToastSuccess: "Aktualisierungskanal erfolgreich aktualisiert.",
+    graduatingToStableTitle: "Übergang zu Stabil",
+    graduatingToStableDesc: "Sie führen derzeit eine Vorschau-Version aus. Ihr System verbleibt auf dieser Version, bis eine neuere stabile Version veröffentlicht wird. Ihre Daten bleiben vollständig geschützt.",
+    manualRollbackLink: "Zur manuellen Wiederherstellung / Snapshot-Restore",
+    previewModalTitle: "Auf Vorschau-Kanal wechseln",
+    previewModalDesc: "Vorschau-Versionen enthalten experimentelle Funktionen und Vorwärts-Datenbankmigrationen, die ohne Snapshot-Wiederherstellung nicht herabgestuft werden können.",
+    previewConfirmationPrompt: "Geben Sie VORSCHAU ein, um den Wechsel zu bestätigen:",
+    previewConfirmationPlaceholder: "VORSCHAU",
+    previewConfirmButton: "Auf Vorschau wechseln",
+    previewChannelPill: "Vorschau-Kanal aktiv",
 };

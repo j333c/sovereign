@@ -291,3 +291,91 @@ func TestServer_ProtectedEndpoints_RequireAdminAfterSetup(t *testing.T) {
 		})
 	}
 }
+
+func TestServer_UpdateChannelSettingsAndSafeguard(t *testing.T) {
+	srv, _ := setupTestServer(t)
+	defer srv.Close()
+
+	cookie := loginTestAdmin(t, srv)
+
+	// 1. GET /api/v1/settings returns update_channel defaulting to stable
+	reqGet := httptest.NewRequest(http.MethodGet, "/api/v1/settings", nil)
+	reqGet.AddCookie(cookie)
+	wGet := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(wGet, reqGet)
+	if wGet.Code != http.StatusOK {
+		t.Fatalf("expected 200 from GET /api/v1/settings, got %d", wGet.Code)
+	}
+	var settings map[string]any
+	if err := json.Unmarshal(wGet.Body.Bytes(), &settings); err != nil {
+		t.Fatalf("failed to decode settings: %v", err)
+	}
+	if settings["update_channel"] != "stable" {
+		t.Errorf("expected default update_channel 'stable', got %v", settings["update_channel"])
+	}
+
+	// 2. PUT /api/v1/settings changing to security-only works without confirmation
+	reqSec := httptest.NewRequest(http.MethodPut, "/api/v1/settings", strings.NewReader(`{"update_channel":"security-only"}`))
+	reqSec.Header.Set("Content-Type", "application/json")
+	reqSec.AddCookie(cookie)
+	wSec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(wSec, reqSec)
+	if wSec.Code != http.StatusOK {
+		t.Fatalf("expected 200 for update to security-only, got %d: %s", wSec.Code, wSec.Body.String())
+	}
+
+	// 3. POST /api/v1/settings changing to preview without confirmation token fails with 400
+	reqPrevFail := httptest.NewRequest(http.MethodPost, "/api/v1/settings", strings.NewReader(`{"update_channel":"preview"}`))
+	reqPrevFail.Header.Set("Content-Type", "application/json")
+	reqPrevFail.AddCookie(cookie)
+	wPrevFail := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(wPrevFail, reqPrevFail)
+	if wPrevFail.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 when changing to preview without confirmation, got %d", wPrevFail.Code)
+	}
+
+	// 4. POST /api/v1/settings changing to preview with invalid confirmation fails
+	reqPrevBad := httptest.NewRequest(http.MethodPost, "/api/v1/settings", strings.NewReader(`{"update_channel":"preview","confirmation":"invalid"}`))
+	reqPrevBad.Header.Set("Content-Type", "application/json")
+	reqPrevBad.AddCookie(cookie)
+	wPrevBad := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(wPrevBad, reqPrevBad)
+	if wPrevBad.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for invalid preview confirmation token, got %d", wPrevBad.Code)
+	}
+
+	// 5. POST /api/v1/settings changing to preview with confirmation token "PREVIEW" succeeds
+	reqPrevOk := httptest.NewRequest(http.MethodPost, "/api/v1/settings", strings.NewReader(`{"update_channel":"preview","confirmation":"PREVIEW"}`))
+	reqPrevOk.Header.Set("Content-Type", "application/json")
+	reqPrevOk.AddCookie(cookie)
+	wPrevOk := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(wPrevOk, reqPrevOk)
+	if wPrevOk.Code != http.StatusOK {
+		t.Fatalf("expected 200 for preview update with confirmation, got %d: %s", wPrevOk.Code, wPrevOk.Body.String())
+	}
+
+	// 6. Localized token "VORSCHAU" also succeeds
+	reqGerman := httptest.NewRequest(http.MethodPut, "/api/v1/settings", strings.NewReader(`{"update_channel":"preview","confirmation":"Vorschau"}`))
+	reqGerman.Header.Set("Content-Type", "application/json")
+	reqGerman.AddCookie(cookie)
+	wGerman := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(wGerman, reqGerman)
+	if wGerman.Code != http.StatusOK {
+		t.Fatalf("expected 200 for preview update with German token, got %d", wGerman.Code)
+	}
+
+	// 7. Verify boot-status endpoint returns update_channel
+	reqBoot := httptest.NewRequest(http.MethodGet, "/api/v1/system/boot-status", nil)
+	wBoot := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(wBoot, reqBoot)
+	if wBoot.Code != http.StatusOK {
+		t.Fatalf("expected 200 from boot-status, got %d", wBoot.Code)
+	}
+	var bootStatus map[string]any
+	if err := json.Unmarshal(wBoot.Body.Bytes(), &bootStatus); err != nil {
+		t.Fatalf("failed to decode boot status: %v", err)
+	}
+	if bootStatus["update_channel"] != "preview" {
+		t.Errorf("expected boot-status update_channel 'preview', got %v", bootStatus["update_channel"])
+	}
+}

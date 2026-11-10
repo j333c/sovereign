@@ -337,4 +337,20 @@ export const es: DashboardTranslations = {
     landingReadGuideDisc: "Leer guía de digitalización de discos",
     landingFullHardwareGuides: "Guías completas de especificaciones de hardware y mapa de niveles",
     landingFooterBrandDesc: "Servidor doméstico 100% privado y autónomo",
+
+    // Release Channels & Preview Safeguards (Story 10.2)
+    updateChannelLabel: "Canal de actualizaciones",
+    channelStable: "Estable (Recomendado)",
+    channelSecurityOnly: "Solo seguridad",
+    channelPreview: "Vista previa (Experimental)",
+    channelToastSuccess: "Canal de actualizaciones actualizado con éxito.",
+    graduatingToStableTitle: "Transición a Estable",
+    graduatingToStableDesc: "Actualmente está ejecutando una versión preliminar. Su sistema se mantendrá en esta versión hasta que se publique una versión estable posterior. Sus datos permanecen completamente seguros.",
+    manualRollbackLink: "Ir a Reversión manual / Restauración de instantáneas",
+    previewModalTitle: "Cambiar a canal de vista previa",
+    previewModalDesc: "Las versiones preliminares contienen funciones experimentales y migraciones de base de datos que no se pueden revertir sin restaurar una instantánea.",
+    previewConfirmationPrompt: "Escriba PRELIMINAR para confirmar el cambio a versiones preliminares:",
+    previewConfirmationPlaceholder: "PRELIMINAR",
+    previewConfirmButton: "Cambiar a vista previa",
+    previewChannelPill: "Canal de vista previa activo",
 };

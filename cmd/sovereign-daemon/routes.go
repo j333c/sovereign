@@ -33,6 +33,7 @@ func (s *Server) routes() {
 	// Protected administrative settings endpoints
 	s.router.Handle("GET /api/v1/settings", s.authMgr.RequireAdmin(http.HandlerFunc(s.handleGetSettings)))
 	s.router.Handle("POST /api/v1/settings", s.authMgr.RequireAdmin(http.HandlerFunc(s.handleUpdateSettings)))
+	s.router.Handle("PUT /api/v1/settings", s.authMgr.RequireAdmin(http.HandlerFunc(s.handleUpdateSettings)))
 
 	// Managed Services lifecycle endpoints
 	s.router.HandleFunc("GET /api/v1/services", s.handleListServices)

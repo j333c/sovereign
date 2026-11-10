@@ -484,4 +484,107 @@ describe("DestructiveModal Component (Story 6.4)", () => {
     invalidBtn.props.onClick();
     assert.equal(invalidConfirmed, false, "onConfirm must not be called with invalid token");
   });
+
+  describe("Preview Channel Safeguard Mode (Story 10.2)", () => {
+    it("renders preview-channel mode with PREVIEW validation input and disabled confirm button initially", () => {
+      const html = renderToStaticMarkup(
+        <DestructiveModal
+          isOpen={true}
+          actionType="preview-channel"
+          onConfirm={() => {}}
+          onClose={() => {}}
+          currentLanguage="en"
+        />
+      );
+
+      assert.ok(html.includes("Switch to Preview Channel"));
+      assert.ok(html.includes("Type PREVIEW to confirm"));
+      assert.ok(html.includes('data-testid="preview-channel-input"'));
+      assert.ok(html.includes("disabled"));
+      assert.ok(html.includes("Switch to Preview Channel"));
+      assert.ok(html.includes("bg-amber-600"));
+    });
+
+    it("validates preview tokens correctly across EN, DE, ES, FR", () => {
+      // EN
+      assert.equal(isValidConfirmationToken("preview", "en", "preview-channel"), true);
+      assert.equal(isValidConfirmationToken("PREVIEW", "en", "preview-channel"), true);
+      assert.equal(isValidConfirmationToken("  preview  ", "en", "preview-channel"), true);
+      assert.equal(isValidConfirmationToken("reset", "en", "preview-channel"), false);
+
+      // DE
+      assert.equal(isValidConfirmationToken("vorschau", "de", "preview-channel"), true);
+      assert.equal(isValidConfirmationToken("VORSCHAU", "de", "preview-channel"), true);
+      assert.equal(isValidConfirmationToken("löschen", "de", "preview-channel"), false);
+
+      // ES
+      assert.equal(isValidConfirmationToken("preliminar", "es", "preview-channel"), true);
+      assert.equal(isValidConfirmationToken("vista previa", "es", "preview-channel"), true);
+      assert.equal(isValidConfirmationToken("eliminar", "es", "preview-channel"), false);
+
+      // FR
+      assert.equal(isValidConfirmationToken("aperçu", "fr", "preview-channel"), true);
+      assert.equal(isValidConfirmationToken("apercu", "fr", "preview-channel"), true);
+      assert.equal(isValidConfirmationToken("supprimer", "fr", "preview-channel"), false);
+    });
+
+    it("enables confirm button with localized preview tokens and calls onConfirm on click", () => {
+      function findBtn(node: any, testId: string): any {
+        if (!node) return null;
+        if (node.props?.["data-testid"] === testId) return node;
+        if (node.props?.children) {
+          const children = Array.isArray(node.props.children)
+            ? node.props.children
+            : [node.props.children];
+          for (const child of children) {
+            const found = findBtn(child, testId);
+            if (found) return found;
+          }
+        }
+        return null;
+      }
+
+      // German localized preview token "vorschau"
+      let deConfirmed = false;
+      let deResult: any = null;
+      function DePreviewWrapper() {
+        deResult = DestructiveModal({
+          isOpen: true,
+          actionType: "preview-channel",
+          onConfirm: () => { deConfirmed = true; },
+          onClose: () => {},
+          currentLanguage: "de",
+          initialResetInput: "vorschau",
+        });
+        return null;
+      }
+      renderToStaticMarkup(React.createElement(DePreviewWrapper));
+      const deConfirmBtn = findBtn(deResult, "destructive-confirm-button");
+      assert.ok(deConfirmBtn, "Confirm button must exist in DE preview mode");
+      assert.equal(deConfirmBtn.props.disabled, false, "Confirm button must be enabled with vorschau");
+      deConfirmBtn.props.onClick();
+      assert.equal(deConfirmed, true, "onConfirm must be invoked on click with vorschau");
+
+      // French localized preview token "aperçu"
+      let frConfirmed = false;
+      let frResult: any = null;
+      function FrPreviewWrapper() {
+        frResult = DestructiveModal({
+          isOpen: true,
+          actionType: "preview-channel",
+          onConfirm: () => { frConfirmed = true; },
+          onClose: () => {},
+          currentLanguage: "fr",
+          initialResetInput: "aperçu",
+        });
+        return null;
+      }
+      renderToStaticMarkup(React.createElement(FrPreviewWrapper));
+      const frConfirmBtn = findBtn(frResult, "destructive-confirm-button");
+      assert.ok(frConfirmBtn, "Confirm button must exist in FR preview mode");
+      assert.equal(frConfirmBtn.props.disabled, false, "Confirm button must be enabled with aperçu");
+      frConfirmBtn.props.onClick();
+      assert.equal(frConfirmed, true, "onConfirm must be invoked on click with aperçu");
+    });
+  });
 });

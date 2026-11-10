@@ -11,6 +11,7 @@ export interface AppHeaderProps {
   aggregateStatus: StatusLevel;
   onSettingsClick?: () => void;
   statusMessage?: string;
+  updateChannel?: string;
 }
 
 export function AppHeader({
@@ -19,6 +20,7 @@ export function AppHeader({
   aggregateStatus,
   onSettingsClick,
   statusMessage,
+  updateChannel,
 }: AppHeaderProps) {
   const t = translations[currentLanguage];
   const [showAlertPopover, setShowAlertPopover] = useState(false);
@@ -115,6 +117,18 @@ export function AppHeader({
             </div>
           )}
         </div>
+
+        {/* Secondary Preview Channel Active Pill (Story 10.2) */}
+        {updateChannel === "preview" && (
+          <div
+            data-testid="preview-channel-pill"
+            className="hidden sm:inline-flex items-center gap-1.5 rounded-full border border-amber-300 bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-900 shadow-xs"
+            role="status"
+          >
+            <span aria-hidden="true">🧪</span>
+            <span>{t.previewChannelPill}</span>
+          </div>
+        )}
       </div>
 
       {/* Utility Actions */}

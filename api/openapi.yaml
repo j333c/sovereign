@@ -560,6 +560,47 @@ paths:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/ProblemDetails'
+    put:
+      summary: Update administrative settings
+      description: Updates key-value settings via PUT. Requires administrative privileges.
+      operationId: updateSettingsPut
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties:
+                type: string
+      responses:
+        '200':
+          description: Settings updated successfully.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+        '400':
+          description: Malformed payload or missing preview confirmation token.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '401':
+          description: Authentication required.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+        '403':
+          description: Administrative privileges required.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
 
   /api/v1/services:
     get:
@@ -2377,6 +2418,10 @@ components:
         message:
           type: string
           example: All systems operational
+        update_channel:
+          type: string
+          enum: [stable, security-only, preview]
+          example: stable
 
     IngressStatusResponse:
       type: object
@@ -2855,6 +2900,10 @@ components:
         features:
           type: string
           example: video,audio,dms,ai
+        update_channel:
+          type: string
+          enum: [stable, security-only, preview]
+          example: stable
 
     TelemetryUpdate:
       type: object
@@ -2872,6 +2921,10 @@ components:
         - gpu_status
         - timestamp
       properties:
+        update_channel:
+          type: string
+          enum: [stable, security-only, preview]
+          example: stable
         cpu_percent:
           type: number
           format: float

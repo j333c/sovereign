@@ -337,4 +337,20 @@ export const fr: DashboardTranslations = {
     landingReadGuideDisc: "Lire le guide de numérisation de disques",
     landingFullHardwareGuides: "Guides matériels complets et feuille de route des profils",
     landingFooterBrandDesc: "Serveur domestique 100 % privé auto-hébergé",
+
+    // Release Channels & Preview Safeguards (Story 10.2)
+    updateChannelLabel: "Canal de mise à jour",
+    channelStable: "Stable (Recommandé)",
+    channelSecurityOnly: "Sécurité uniquement",
+    channelPreview: "Aperçu (Expérimental)",
+    channelToastSuccess: "Canal de mise à jour modifié avec succès.",
+    graduatingToStableTitle: "Transition vers Stable",
+    graduatingToStableDesc: "Vous utilisez actuellement une version d'aperçu. Votre système restera sur cette version jusqu'à la publication d'une version stable plus récente. Vos données restent totalement sécurisées.",
+    manualRollbackLink: "Aller au retour arrière manuel / restauration d'instantané",
+    previewModalTitle: "Passer au canal d'aperçu",
+    previewModalDesc: "Les versions d'aperçu contiennent des fonctionnalités expérimentales et des migrations de base de données qui ne peuvent pas être rétrogradées sans restaurer un instantané.",
+    previewConfirmationPrompt: "Tapez APERÇU pour confirmer le passage aux versions d'aperçu :",
+    previewConfirmationPlaceholder: "APERÇU",
+    previewConfirmButton: "Passer à l'aperçu",
+    previewChannelPill: "Canal d'aperçu actif",
 };

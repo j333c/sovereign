@@ -337,4 +337,20 @@ export const en: DashboardTranslations = {
     landingReadGuideDisc: "Read Optical Ripping Guide",
     landingFullHardwareGuides: "Full Hardware Specification Guides & Hardware Tier Roadmap",
     landingFooterBrandDesc: "100% Private Self-Hosted Home Server",
+
+    // Release Channels & Preview Safeguards (Story 10.2)
+    updateChannelLabel: "Release Channel",
+    channelStable: "Stable (Recommended)",
+    channelSecurityOnly: "Security-only",
+    channelPreview: "Preview (Experimental)",
+    channelToastSuccess: "Release channel updated successfully.",
+    graduatingToStableTitle: "Graduating to Stable",
+    graduatingToStableDesc: "You are currently running a preview build. Your system will hold on this version until a newer qualifying stable release ships. Your existing data remains completely secure.",
+    manualRollbackLink: "Go to Manual Rollback / Snapshot Restore",
+    previewModalTitle: "Switch to Preview Channel",
+    previewModalDesc: "Preview releases contain experimental features and forward database migrations that cannot be downgraded without a snapshot restore.",
+    previewConfirmationPrompt: "Type PREVIEW to confirm switching to experimental preview releases:",
+    previewConfirmationPlaceholder: "PREVIEW",
+    previewConfirmButton: "Switch to Preview",
+    previewChannelPill: "Preview Channel Active",
 };
