@@ -69,7 +69,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v7
         with:
-          go-version: '1.24'
+          go-version-file: 'go.mod'
           cache: false
 
       - name: Set up Node.js
@@ -108,7 +108,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v7
         with:
-          go-version: '1.24'
+          go-version-file: 'go.mod'
           cache: false
 
       - name: Cross-Compile Sovereign Daemon
