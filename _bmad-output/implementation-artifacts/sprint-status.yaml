@@ -110,7 +110,7 @@ development_status:
   10-1-git-native-update-discovery-engine-release-channel-polling: done
   10-2-multi-channel-update-settings-ui-destructive-preview-safeguard-modal: done
   10-3-installer-channel-selection-unattended-maintenance-pipeline-integration: done
-  10-4-upstream-spoke-dependency-governance-ci-tag-audit-suite: backlog
+  10-4-upstream-spoke-dependency-governance-ci-tag-audit-suite: done
   epic-10-retrospective: optional
 action_items:
   - id: "epic-1-retro-item-1-sse-server-timeout"

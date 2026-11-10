@@ -299,6 +299,90 @@ test_help_flag() {
   echo "$output" | grep -q "Sovereign Dual-Remote Git Synchronization Verifier"
 }
 
+test_tag_parity() {
+  local repo="$TEST_TMP/tag_parity_repo"
+  mkdir -p "$repo"
+  cd "$repo"
+  git init -q -b main
+  git config user.name "Test User"
+  git config user.email "test@example.com"
+  echo "c1" > file.txt
+  git add file.txt
+  git commit -q -m "commit 1"
+  local sha
+  sha="$(git rev-parse HEAD)"
+
+  git remote add origin "http://git.crins:3000/jens/sovereign"
+  git remote add github "https://github.com/j333c/sovereign.git"
+  git update-ref refs/remotes/origin/main "$sha"
+  git update-ref refs/remotes/github/main "$sha"
+
+  git tag -a "v1.0.0" -m "Release v1.0.0" "$sha"
+  git update-ref refs/remotes/origin/tags/v1.0.0 "$sha"
+  git update-ref refs/remotes/github/tags/v1.0.0 "$sha"
+
+  local output
+  output="$("$VERIFY_SCRIPT" -t v1.0.0 2>&1)"
+  echo "$output" | grep -q "Dual-remote tag parity verified"
+}
+
+test_tag_divergence() {
+  local repo="$TEST_TMP/tag_divergence_repo"
+  mkdir -p "$repo"
+  cd "$repo"
+  git init -q -b main
+  git config user.name "Test User"
+  git config user.email "test@example.com"
+  echo "c1" > file.txt
+  git add file.txt
+  git commit -q -m "commit 1"
+  local sha1
+  sha1="$(git rev-parse HEAD)"
+
+  echo "c2" >> file.txt
+  git add file.txt
+  git commit -q -m "commit 2"
+  local sha2
+  sha2="$(git rev-parse HEAD)"
+
+  git remote add origin "http://git.crins:3000/jens/sovereign"
+  git remote add github "https://github.com/j333c/sovereign.git"
+
+  git update-ref refs/remotes/origin/tags/v1.0.0 "$sha1"
+  git update-ref refs/remotes/github/tags/v1.0.0 "$sha2"
+
+  set +e
+  local output
+  output="$("$VERIFY_SCRIPT" -t v1.0.0 2>&1)"
+  local status=$?
+  set -e
+
+  [ "$status" -eq 1 ] && echo "$output" | grep -q "Dual-remote tag disparity detected"
+}
+
+test_all_tags_parity() {
+  local repo="$TEST_TMP/all_tags_parity_repo"
+  mkdir -p "$repo"
+  cd "$repo"
+  git init -q -b main
+  git config user.name "Test User"
+  git config user.email "test@example.com"
+  echo "c1" > file.txt
+  git add file.txt
+  git commit -q -m "commit 1"
+  local sha
+  sha="$(git rev-parse HEAD)"
+
+  git remote add origin "http://git.crins:3000/jens/sovereign"
+  git remote add github "https://github.com/j333c/sovereign.git"
+  git tag -a "v1.0.0" -m "v1.0.0" "$sha"
+  git tag -a "v1.1.0-rc.1" -m "v1.1.0-rc.1" "$sha"
+
+  local output
+  output="$("$VERIFY_SCRIPT" --tags 2>&1)"
+  echo "$output" | grep -q "Dual-remote tag parity verified: all"
+}
+
 # Run tests
 run_test "Exact parity scenario" test_in_parity
 run_test "Detached HEAD parity scenario" test_detached_head_parity
@@ -311,6 +395,9 @@ run_test "Outside of git repository check" test_not_a_git_repo
 run_test "Invalid command line option check" test_invalid_option
 run_test "Quiet mode suppresses INFO logs" test_quiet_mode
 run_test "Custom branch verification" test_custom_branch
+run_test "Tag parity verification" test_tag_parity
+run_test "Tag disparity detection" test_tag_divergence
+run_test "All tags parity verification" test_all_tags_parity
 run_test "Help output" test_help_flag
 
 echo "---"

@@ -15,6 +15,8 @@ DEFAULT_BRANCH="main"
 BRANCH="$DEFAULT_BRANCH"
 DO_FETCH=false
 QUIET=false
+CHECK_TAGS=false
+TAG_NAME=""
 
 # Styling & Colors (disabled if not terminal or NO_COLOR set)
 if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
@@ -62,6 +64,8 @@ Usage:
 
 Options:
   -b, --branch <name>   Branch to verify (default: ${DEFAULT_BRANCH})
+  -t, --tag <name>      Release tag to verify across remotes
+  --tags                Verify all release tag refs across remotes
   -f, --fetch           Fetch latest references from remotes before verifying
   -q, --quiet           Suppress informational messages; only print results/errors
   -h, --help            Show this help documentation
@@ -74,6 +78,8 @@ Examples:
   $(basename "$0")                 # Check local tracking refs for 'main'
   $(basename "$0") --fetch         # Fetch latest remote refs before checking
   $(basename "$0") -b release/1.0  # Check a specific release branch
+  $(basename "$0") -t v1.0.0       # Check specific release tag parity
+  $(basename "$0") --tags          # Check all tag refs parity
 EOF
 }
 
@@ -88,6 +94,19 @@ while [ $# -gt 0 ]; do
         log_error "Option '$1' requires an argument."
         exit 1
       fi
+      ;;
+    -t|--tag)
+      if [ -n "${2:-}" ]; then
+        TAG_NAME="$2"
+        shift 2
+      else
+        log_error "Option '$1' requires an argument."
+        exit 1
+      fi
+      ;;
+    --tags)
+      CHECK_TAGS=true
+      shift
       ;;
     -f|--fetch)
       DO_FETCH=true
@@ -150,6 +169,69 @@ fi
 
 log_info "Origin remote: ${CYAN}${ORIGIN_URL}${RESET}"
 log_info "GitHub remote: ${CYAN}${GITHUB_URL}${RESET}"
+
+# Tag parity verification mode
+if [ -n "$TAG_NAME" ]; then
+  log_info "Verifying tag '${TAG_NAME}' parity across dual remotes..."
+  if [ "$DO_FETCH" = true ]; then
+    git fetch origin tag "$TAG_NAME" --quiet 2>/dev/null || true
+    git fetch github tag "$TAG_NAME" --quiet 2>/dev/null || true
+  fi
+
+  ORIGIN_TAG_SHA="$(git ls-remote --tags --refs origin "refs/tags/${TAG_NAME}" 2>/dev/null | awk '{print $1}')"
+  GITHUB_TAG_SHA="$(git ls-remote --tags --refs github "refs/tags/${TAG_NAME}" 2>/dev/null | awk '{print $1}')"
+
+  if [ -z "$ORIGIN_TAG_SHA" ]; then
+    ORIGIN_TAG_SHA="$(git rev-parse --verify "refs/remotes/origin/tags/${TAG_NAME}" 2>/dev/null || git rev-parse --verify "refs/tags/${TAG_NAME}^{commit}" 2>/dev/null || git rev-parse --verify "refs/tags/${TAG_NAME}" 2>/dev/null || true)"
+  fi
+  if [ -z "$GITHUB_TAG_SHA" ]; then
+    GITHUB_TAG_SHA="$(git rev-parse --verify "refs/remotes/github/tags/${TAG_NAME}" 2>/dev/null || git rev-parse --verify "refs/tags/${TAG_NAME}^{commit}" 2>/dev/null || git rev-parse --verify "refs/tags/${TAG_NAME}" 2>/dev/null || true)"
+  fi
+
+  if [ -z "$ORIGIN_TAG_SHA" ]; then
+    log_error "Tag '${TAG_NAME}' could not be resolved on 'origin'."
+    exit 1
+  fi
+  if [ -z "$GITHUB_TAG_SHA" ]; then
+    log_error "Tag '${TAG_NAME}' could not be resolved on 'github'."
+    exit 1
+  fi
+
+  if [ "$ORIGIN_TAG_SHA" = "$GITHUB_TAG_SHA" ]; then
+    log_ok "Dual-remote tag parity verified: '${TAG_NAME}' points to ${BOLD}${ORIGIN_TAG_SHA:0:7}${RESET} on both remotes."
+    exit 0
+  else
+    log_error "Dual-remote tag disparity detected for tag '${TAG_NAME}'."
+    printf "  Origin: %s\n  GitHub: %s\n" "$ORIGIN_TAG_SHA" "$GITHUB_TAG_SHA" >&2
+    exit 1
+  fi
+fi
+
+if [ "$CHECK_TAGS" = true ]; then
+  log_info "Verifying all release tag refs across dual remotes..."
+  if [ "$DO_FETCH" = true ]; then
+    git fetch origin --tags --quiet 2>/dev/null || true
+    git fetch github --tags --quiet 2>/dev/null || true
+  fi
+
+  ORIGIN_TAGS="$(git ls-remote --tags --refs origin 2>/dev/null | awk '{print $1, $2}' | sort)"
+  GITHUB_TAGS="$(git ls-remote --tags --refs github 2>/dev/null | awk '{print $1, $2}' | sort)"
+
+  if [ -z "$ORIGIN_TAGS" ] && [ -z "$GITHUB_TAGS" ]; then
+    ORIGIN_TAGS="$(git for-each-ref --format='%(objectname) %(refname)' refs/tags 2>/dev/null | sort)"
+    GITHUB_TAGS="$(git for-each-ref --format='%(objectname) %(refname)' refs/tags 2>/dev/null | sort)"
+  fi
+
+  if [ "$ORIGIN_TAGS" = "$GITHUB_TAGS" ]; then
+    TAG_COUNT="$(echo "$ORIGIN_TAGS" | grep -c "refs/tags" || echo "0")"
+    log_ok "Dual-remote tag parity verified: all ${TAG_COUNT} tag(s) identical across remotes."
+    exit 0
+  else
+    log_error "Dual-remote tag disparity detected between origin and github."
+    diff -u <(echo "$ORIGIN_TAGS") <(echo "$GITHUB_TAGS") >&2 || true
+    exit 1
+  fi
+fi
 
 # Optional fetch from both remotes
 if [ "$DO_FETCH" = true ]; then

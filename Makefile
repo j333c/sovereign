@@ -1,4 +1,4 @@
-.PHONY: all build build-daemon build-web test test-daemon test-web test-scripts test-installer codegen lint clean config-check verify-remotes
+.PHONY: all build build-daemon build-web test test-daemon test-web test-scripts test-installer audit-spoke-tags codegen lint clean config-check verify-remotes
 
 # Default target
 all: build
@@ -25,9 +25,15 @@ test-web:
 test-scripts:
 	./tests/verify_remotes_test.sh
 	./tests/installer_test.sh
+	./tests/audit_spoke_tags_test.sh
+	./tests/publish_release_test.sh
 
 test-installer:
 	./tests/installer_test.sh
+
+# Run Spoke Dependency Governance and Tag Audit Suite
+audit-spoke-tags:
+	./scripts/audit-spoke-tags.sh
 
 # Run OpenAPI 3.1 code generation
 codegen:
