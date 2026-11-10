@@ -90,7 +90,7 @@ test_dirty_working_tree_rejected() {
 
   set +e
   local output
-  output="$("$PUBLISH_SCRIPT" --dry-run --skip-tests v1.0.0 2>&1)"
+  output="$(SOVEREIGN_DIR="$repo" "$PUBLISH_SCRIPT" --dry-run --skip-tests v1.0.0 2>&1)"
   local status=$?
   set -e
 

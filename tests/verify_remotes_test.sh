@@ -301,6 +301,11 @@ test_help_flag() {
 
 test_tag_parity() {
   local repo="$TEST_TMP/tag_parity_repo"
+  local mock_origin="$TEST_TMP/tag_parity_origin.git"
+  local mock_github="$TEST_TMP/tag_parity_github.git"
+  git init -q --bare "$mock_origin"
+  git init -q --bare "$mock_github"
+
   mkdir -p "$repo"
   cd "$repo"
   git init -q -b main
@@ -312,14 +317,14 @@ test_tag_parity() {
   local sha
   sha="$(git rev-parse HEAD)"
 
-  git remote add origin "http://git.crins:3000/jens/sovereign"
-  git remote add github "https://github.com/j333c/sovereign.git"
-  git update-ref refs/remotes/origin/main "$sha"
-  git update-ref refs/remotes/github/main "$sha"
+  git remote add origin "$mock_origin"
+  git remote add github "$mock_github"
+  git push -q origin main
+  git push -q github main
 
   git tag -a "v1.0.0" -m "Release v1.0.0" "$sha"
-  git update-ref refs/remotes/origin/tags/v1.0.0 "$sha"
-  git update-ref refs/remotes/github/tags/v1.0.0 "$sha"
+  git push -q origin v1.0.0
+  git push -q github v1.0.0
 
   local output
   output="$("$VERIFY_SCRIPT" -t v1.0.0 2>&1)"
@@ -328,6 +333,11 @@ test_tag_parity() {
 
 test_tag_divergence() {
   local repo="$TEST_TMP/tag_divergence_repo"
+  local mock_origin="$TEST_TMP/tag_divergence_origin.git"
+  local mock_github="$TEST_TMP/tag_divergence_github.git"
+  git init -q --bare "$mock_origin"
+  git init -q --bare "$mock_github"
+
   mkdir -p "$repo"
   cd "$repo"
   git init -q -b main
@@ -336,20 +346,18 @@ test_tag_divergence() {
   echo "c1" > file.txt
   git add file.txt
   git commit -q -m "commit 1"
-  local sha1
-  sha1="$(git rev-parse HEAD)"
+
+  git remote add origin "$mock_origin"
+  git remote add github "$mock_github"
+
+  git tag -a "v1.0.0" -m "v1.0.0 commit 1"
+  git push -q origin v1.0.0
 
   echo "c2" >> file.txt
   git add file.txt
   git commit -q -m "commit 2"
-  local sha2
-  sha2="$(git rev-parse HEAD)"
-
-  git remote add origin "http://git.crins:3000/jens/sovereign"
-  git remote add github "https://github.com/j333c/sovereign.git"
-
-  git update-ref refs/remotes/origin/tags/v1.0.0 "$sha1"
-  git update-ref refs/remotes/github/tags/v1.0.0 "$sha2"
+  git tag -f -a "v1.0.0" -m "v1.0.0 commit 2"
+  git push -f -q github v1.0.0
 
   set +e
   local output
@@ -362,6 +370,11 @@ test_tag_divergence() {
 
 test_all_tags_parity() {
   local repo="$TEST_TMP/all_tags_parity_repo"
+  local mock_origin="$TEST_TMP/all_tags_parity_origin.git"
+  local mock_github="$TEST_TMP/all_tags_parity_github.git"
+  git init -q --bare "$mock_origin"
+  git init -q --bare "$mock_github"
+
   mkdir -p "$repo"
   cd "$repo"
   git init -q -b main
@@ -370,13 +383,13 @@ test_all_tags_parity() {
   echo "c1" > file.txt
   git add file.txt
   git commit -q -m "commit 1"
-  local sha
-  sha="$(git rev-parse HEAD)"
 
-  git remote add origin "http://git.crins:3000/jens/sovereign"
-  git remote add github "https://github.com/j333c/sovereign.git"
-  git tag -a "v1.0.0" -m "v1.0.0" "$sha"
-  git tag -a "v1.1.0-rc.1" -m "v1.1.0-rc.1" "$sha"
+  git remote add origin "$mock_origin"
+  git remote add github "$mock_github"
+  git tag -a "v1.0.0" -m "v1.0.0"
+  git tag -a "v1.1.0-rc.1" -m "v1.1.0-rc.1"
+  git push -q origin --tags
+  git push -q github --tags
 
   local output
   output="$("$VERIFY_SCRIPT" --tags 2>&1)"

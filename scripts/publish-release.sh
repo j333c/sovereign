@@ -136,7 +136,8 @@ if [ -z "$TAG" ]; then
   exit 1
 fi
 
-cd "$REPO_ROOT"
+TARGET_REPO="${SOVEREIGN_DIR:-$REPO_ROOT}"
+cd "$TARGET_REPO"
 
 # 1. Enforce SemVer Tagging Convention
 STABLE_PATTERN='^v[0-9]+\.[0-9]+\.[0-9]+$'
