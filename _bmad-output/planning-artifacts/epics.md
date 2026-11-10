@@ -46,10 +46,10 @@ FR19: Multi-Language UI & Documentation — The system displays all admin interf
 FR20: Project Marketing Site & GitHub Presence — The project maintains a public marketing website and open-source GitHub repository detailing project architecture, BMad Method attribution, transparent AI-assistance notes, and FOSS license compliance.
 FR21: Minimum Hardware Specification Guidance & Future Hardware Roadmap — The platform publishes concrete minimum hardware profiles across three tiers (Light Tier, Media Tier, AI & Power Tier) and reserves architectural hooks for turnkey hardware appliance sales.
 FR22: Turnkey One-Line Linux Host Installer — The user can provision a standard Linux machine (Debian/Ubuntu, Fedora, Arch) into a fully operational Sovereign home server appliance by pasting a single shell command (`curl -fsSL https://raw.githubusercontent.com/j333c/sovereign/main/install.sh | sudo bash`), executing automated OS pre-flight validation, official Docker CE / Compose substrate installation, repository acquisition from `https://github.com/j333c/sovereign.git` into `/opt/sovereign`, partitioned `/data` hierarchy creation, systemd service registration, and instant browser setup handoff.
-FR23: Multi-Channel Release Distribution & Update Selection — The system supports three distinct update streams (Major/Stable, Security-only, and Preview), allowing users to configure update channels in Settings or during installation (`install.sh`), with automated discovery via git-native tag polling.
-FR24: Git-Native Update Discovery & Polling Engine — The appliance daemon inspects upstream distribution tags via `git ls-remote --tags origin` inside `/opt/sovereign` max once per hour, avoiding unauthenticated GitHub REST API rate limits and external API token requirements.
-FR25: Preview Forward-Migration Safeguard & Destructive Warning Modal — The system protects users from accidental beta instability when opting into the Preview channel via a high-visibility destructive warning modal requiring explicit confirmation token entry (`"PREVIEW"`), noting that schema forward migrations prevent downgrade to Stable without full snapshot restoration.
-FR26: Upstream Spoke Dependency Governance & CI Tag Auditing — All spoke container services in production Compose definitions enforce strict SemVer tag pinning (never floating `:latest`), integrated with automated CI auditing to detect upstream updates and run automated integration tests against release branches.
+FR23: Multi-Channel Release Distribution & Update Selection — The system supports three distinct update streams (`Stable`, `Security-only`, and `Preview`) configurable in Settings (`POST`/`PUT /api/v1/settings`) and during installation or CLI upgrades (`install.sh --channel stable|security-only|preview`, defaulting to `stable`), enforcing a monotonic SemVer 2.0.0 upgrade floor so appliances switching from `Preview` back to `Stable` or `Security-only` safely hold ("Graduating to Stable") until a newer stable release ships unless a manual snapshot restore is performed.
+FR24: Git-Native Update Discovery & Polling Engine — The appliance daemon inspects upstream distribution tags via `git ls-remote --tags --refs origin` over Smart HTTP inside `/opt/sovereign` (where `origin` points to `https://github.com/j333c/sovereign.git`) at most once per hour without GitHub REST API calls or external tokens, performing a shallow tag fetch (`git fetch --depth=1 origin tag <tag>`) when a qualifying newer tag is found to extract the annotated tag changelog summary.
+FR25: Preview Forward-Migration Safeguard & Destructive Warning Modal — The system protects users from accidental beta instability when opting into the `Preview` channel via an amber `DestructiveModal` (`actionType="preview-channel"`) requiring explicit localized confirmation token entry (`"PREVIEW"` / `"VORSCHAU"` / `"PRELIMINAR"` / `"APERÇU"`, validated on both client and backend), noting that forward schema migrations prevent downgrading to `Stable` without a full snapshot restoration, and displays a distinct secondary amber `"Preview Channel Active"` pill in the header when active.
+FR26: Upstream Spoke Dependency Governance & CI Tag Auditing — All spoke and gateway container images in Compose definitions, declarative manifests, and Go supervisor constants enforce explicit version pinning (strict `MAJOR.MINOR.PATCH` SemVer tags for Jellyfin, Paperless-ngx, Navidrome, Audiobookshelf, Open WebUI, and Caddy, and pinned `^b[0-9]{4,}$` upstream build tags for `llama.cpp`, never floating `:latest`), integrated with automated daily CI registry auditing targeting `release/v<MAJOR>.<MINOR>` branches and dual-remote tag parity checks in `scripts/verify-remotes.sh`.
 
 ### NonFunctional Requirements
 
@@ -110,10 +110,10 @@ FR19: Epic 6 - Multi-Language UI & Documentation (English, German, Spanish, Fren
 FR20: Epic 7 - Project Marketing Site & GitHub Presence (Marketing landing page, GitHub README with BMad attribution, transparent AI-assistance notice, and open-source license compliance)
 FR21: Epic 7 - Minimum Hardware Specification Guidance & Future Hardware Roadmap (Three-tier hardware profiles: Light, Media, AI & Power tiers; architectural hooks for future hardware sales)
 FR22: Epic 9 - Turnkey One-Line Linux Host Installer (One-line shell installer, OS pre-flight checks, automated Docker substrate setup, systemd service integration, setup wizard handoff, uninstaller/upgrade routines)
-FR23: Epic 10 - Multi-Channel Release Distribution, Spoke Lifecycle & Governance Pipeline
-FR24: Epic 10 - Multi-Channel Release Distribution, Spoke Lifecycle & Governance Pipeline
-FR25: Epic 10 - Multi-Channel Release Distribution, Spoke Lifecycle & Governance Pipeline
-FR26: Epic 10 - Multi-Channel Release Distribution, Spoke Lifecycle & Governance Pipeline
+FR23: Epic 10 - Multi-Channel Release Distribution & Update Selection (`Stable`, `Security-only`, and `Preview` streams in Settings UI and `install.sh --channel`, `/data/state/update_channel` bootstrap seeding, monotonic "Graduating to Stable" hold guard, persistent overnight update banner state)
+FR24: Epic 10 - Git-Native Update Discovery & Polling Engine (Hourly `git ls-remote --tags --refs origin` polling over Smart HTTP in `/opt/sovereign`, SemVer 2.0.0 numeric `-rc.<N>` precedence, shallow tag fetch for annotated changelog summaries)
+FR25: Epic 10 - Preview Forward-Migration Safeguard & Destructive Warning Modal (Amber `DestructiveModal` with localized `"PREVIEW"` confirmation tokens validated on client and backend, secondary amber `"Preview Channel Active"` header pill)
+FR26: Epic 10 - Upstream Spoke Dependency Governance & CI Tag Auditing (Pinned SemVer tags for spokes/Caddy and `^b[0-9]{4,}$` build tags for `llama.cpp`, automated daily CI registry audit PRs targeting `release/v<MAJOR>.<MINOR>`, `scripts/publish-release.sh`, dual-remote tag parity verification)
 
 ## Epic List
 
@@ -846,7 +846,7 @@ So that I know exactly how to open the Setup Wizard in my browser and have a saf
 **Then** the script stops and disables `sovereign.service`, stops and removes Sovereign managed containers, and prompts the user whether to preserve or purge `/data` storage to prevent accidental data loss.
 **Given** an administrator updating the appliance host installer
 **When** running `install.sh --upgrade`
-**Then** the installer pulls the latest release from `https://github.com/j333c/sovereign.git` and updates systemd units without destroying persistent configuration or database state.
+**Then** the installer pulls the latest qualifying release tag for the appliance's configured update channel from `https://github.com/j333c/sovereign.git` (defaulting to `stable`, or falling back to `main` if no release tags exist yet) and updates systemd units without destroying persistent configuration or database state.
 
 
 ## Epic 10: Multi-Channel Release Distribution, Spoke Lifecycle & Governance Pipeline
@@ -856,19 +856,20 @@ The user and appliance administrator can select and receive targeted update stre
 ### Story 10.1: Git-Native Update Discovery Engine & Release Channel Polling
 
 As an appliance administrator,
-I want the supervisor daemon to discover upstream updates via native git tag queries without relying on GitHub REST API rate limits,
+I want the supervisor daemon to discover upstream updates via native git tag queries without relying on the rate-limited GitHub REST API,
 So that my appliance reliably detects security fixes and new releases without requiring GitHub API credentials or failing when multiple devices share an IP.
 
 **Acceptance Criteria:**
 
-**Given** an operational Sovereign daemon running in `/opt/sovereign`
-**When** the scheduled update discovery worker runs (maximum once per hour)
-**Then** it executes `git ls-remote --tags origin` to query upstream tags over smart-HTTP without making GitHub REST API calls.
-**And** it evaluates available tags against the system's configured channel (`stable`, `security-only`, or `preview`):
-  - `stable`: matches latest SemVer release tag `v<MAJOR>.<MINOR>.<PATCH>` without pre-release suffixes.
-  - `security-only`: matches latest patch release `v<CURRENT_MAJOR>.<CURRENT_MINOR>.<PATCH>` where `PATCH > CURRENT_PATCH`, ignoring higher major/minor releases.
-  - `preview`: matches latest pre-release tag `v<MAJOR>.<MINOR>.<PATCH>-rc.<N>` or stable tag, whichever is newer.
-**And** if a qualifying new tag is detected, the daemon emits a `system.update_available` SSE event with target tag, channel name, and changelog summary.
+**Given** an operational Sovereign daemon container with `git` installed (`Dockerfile.daemon`), `safe.directory /opt/sovereign` configured, and `/opt/sovereign` bind-mounted (`docker-compose.yml` or configurable `SOVEREIGN_REPO_DIR`)
+**When** the scheduled update discovery worker runs (at most once per hour)
+**Then** it executes `git ls-remote --tags --refs origin` inside `/opt/sovereign` (where `origin` on the installed appliance points to `https://github.com/j333c/sovereign.git`) to query upstream tag refs over Smart HTTP without peeled `^{}` duplicates or GitHub REST API calls.
+**And** it resolves the currently running version from `git -C /opt/sovereign describe --tags --exact-match` (falling back to build-time `-ldflags "-X main.AppVersion=..."`), parsing `MAJOR`, `MINOR`, `PATCH`, and numeric `-rc.<N>` identifiers per SemVer 2.0.0 precedence (`v1.2.0-rc.1 < v1.2.0-rc.2 < v1.2.0-rc.10 < v1.2.0`).
+**And** it evaluates candidate tags against the system's configured channel (`stable`, `security-only`, or `preview`), enforcing a monotonic upgrade floor (`SemVer2(candidate) > SemVer2(current)` across all channels):
+  - `stable`: matches the latest SemVer release tag `v<MAJOR>.<MINOR>.<PATCH>` without pre-release suffixes that is strictly newer than the running version.
+  - `security-only`: matches the latest patch release `v<CURRENT_MAJOR>.<CURRENT_MINOR>.<PATCH>` where `PATCH > CURRENT_PATCH` (or `PATCH == CURRENT_PATCH` when graduating from `v<CURRENT_MAJOR>.<CURRENT_MINOR>.<CURRENT_PATCH>-rc.<N>` to final stable), ignoring higher major or minor releases.
+  - `preview`: matches the latest pre-release tag `v<MAJOR>.<MINOR>.<PATCH>-rc.<N>` or stable tag `v<MAJOR>.<MINOR>.<PATCH>`, whichever is newer by SemVer 2.0.0 precedence.
+**And** if a qualifying newer tag is detected, the daemon performs a shallow tag fetch (`git -C /opt/sovereign fetch --depth=1 origin tag <target_tag>`) to extract the annotated tag subject/body (`git tag -l --format='%(contents:subject)' <target_tag>`) and emits a `system.update_available` SSE event with the target tag, channel name, and changelog summary.
 **And** network disconnections or DNS failures during polling log a quiet debug notice and gracefully retry at the next hourly window without triggering health alarms.
 
 ### Story 10.2: Multi-Channel Update Settings UI & Destructive Preview Safeguard Modal
@@ -879,47 +880,49 @@ So that I understand my update cadence and never accidentally apply experimental
 
 **Acceptance Criteria:**
 
-**Given** an administrator navigating to `/settings` (System / Maintenance tab)
+**Given** an administrator navigating to `/settings` (`Maintenance & Rollback` tab)
 **When** viewing the Update Channel section
-**Then** a dropdown selector displays available channels: `Stable` (recommended default), `Security-only`, and `Preview`.
-**And** selecting `Security-only` or `Stable` updates the preference immediately via `PUT /api/v1/settings` with a reassuring toast confirmation.
+**Then** a dropdown selector displays available channels loaded from `GET /api/v1/settings` (`update_channel` in `SettingsResponse`): `Stable` (recommended default), `Security-only`, and `Preview`.
+**And** selecting `Security-only` or `Stable` updates the preference immediately via `POST /api/v1/settings` or `PUT /api/v1/settings` (both supported in `routes.go` and `api/openapi.yaml`) with a reassuring toast confirmation.
+**Given** an appliance currently running a `Preview` build (`v<MAJOR>.<MINOR>.<PATCH>-rc.<N>`)
+**When** the administrator switches the dropdown back to `Stable` or `Security-only`
+**Then** the daemon persists the new channel and enters a safe "Graduating to Stable" hold state that never checks out a lower SemVer tag than the running build, waiting until a qualifying stable release (`>= v<MAJOR>.<MINOR>.<PATCH>`) is published (while surfacing a direct link to Manual Rollback / Snapshot Restore if immediate downgrade is desired).
 **Given** the user selects `Preview` in the dropdown
 **When** attempting to change the setting
-**Then** an amber `DestructiveModal` opens displaying consumer reassurance copy: *"Preview releases contain experimental features and forward database migrations that cannot be downgraded without a snapshot restore."*
-**And** the modal requires the user to type `"PREVIEW"` (or localized confirmation token per Story 8.4) before the confirmation button is enabled.
+**Then** an amber `DestructiveModal` (`actionType="preview-channel"`) opens displaying consumer reassurance copy: *"Preview releases contain experimental features and forward database migrations that cannot be downgraded without a snapshot restore."*
+**And** both the modal and backend `handleUpdateSettings` handler require the user to type `"PREVIEW"` (or localized confirmation token `"VORSCHAU"`, `"PRELIMINAR"` / `"VISTA PREVIA"`, `"APERÇU"` / `"APERCU"` per Story 8.4) before the channel change is accepted.
 **And** dismissing or cancelling the modal reverts the dropdown to the previous channel without persisting changes.
-**And** when `Preview` is active, the dashboard header pill displays an Amber tag indicator (*"Preview Channel Active"*).
+**And** when `Preview` is active, `update_channel` is included in unauthenticated `BootStatusResponse` and `TelemetryUpdate` SSE payloads so `AppHeader` displays a distinct secondary amber pill (`data-testid="preview-channel-pill"`, *"Preview Channel Active"*) alongside the primary aggregate health `StatusBadge`.
 
 ### Story 10.3: Installer Channel Selection & Unattended Maintenance Pipeline Integration
 
 As an installer user and system owner,
-I want `install.sh` to support a channel flag during fresh installation and have the 3:00 AM unattended maintenance runner respect my chosen channel,
+I want `install.sh` to support a channel flag during fresh installation or CLI upgrades and have the 3:00 AM unattended maintenance runner respect my chosen channel,
 So that fresh test environments deploy directly to Preview and daily automated updates honor my selected stability level.
 
 **Acceptance Criteria:**
 
-**Given** running `install.sh` on a new host
-**When** passing `--channel preview` (or selecting Preview during interactive prompts)
-**Then** the installer clones and checks out the latest qualifying pre-release tag `v*-rc.*` into `/opt/sovereign` and records `update_channel: preview` in daemon settings.
-**And** omitting the flag defaults to `--channel stable`, checking out the latest stable SemVer tag.
+**Given** running `install.sh` on a new host or with `--upgrade`
+**When** passing `--channel stable|security-only|preview` (defaulting to `stable` when omitted, or reading `/data/state/update_channel` during `--upgrade`)
+**Then** the installer clones or fetches `/opt/sovereign`, resolves and checks out the newest qualifying tag for the channel (`v<M>.<m>.<p>-rc.<N>` or `v<M>.<m>.<p>` for `preview`, latest `v<M>.<m>.<p>` for `stable`, or current `v<M>.<m>.*` patch for `security-only`, falling back to `main` if no tags exist yet), and writes the selected channel to `/data/state/update_channel` so `sovereign-daemon` seeds `update_channel` into SQLite on first boot.
 **Given** an active appliance during the scheduled maintenance window (default: 3:00 AM)
 **When** the unattended updater executes
-**Then** it verifies whether an update is available on the configured channel.
-**And** before applying the update, it executes database WAL checkpointing (`PRAGMA wal_checkpoint(TRUNCATE)`) and takes an atomic pre-upgrade snapshot (Story 6.1 & 8.1).
-**And** it checks out the target tag, regenerates compose revisions, restarts services, and monitors the 180-second health check window (Story 6.2).
-**And** upon morning inspection, the dashboard displays a reassuring update notification badge (*"Sovereign updated to v1.1.0 overnight"*), or in the event of an automated rollback, an informative reassurance notice (*"Update postponed: automatic safety check prevented an issue. All data remains secure."*).
+**Then** it verifies whether a newer qualifying update is available on the configured channel.
+**And** before applying updates, it executes database WAL checkpointing (`PRAGMA wal_checkpoint(TRUNCATE)`), takes a single pre-maintenance atomic SQLite snapshot (Stories 6.1 & 8.1) with `store.DB.RestoreSnapshot` handle swaps guarded by a `sync.RWMutex`, and serializes per-service verification windows so concurrent rollbacks never collide.
+**And** for core appliance tag updates, it persists pending upgrade state (`pre_upgrade_tag`, `target_tag`, `snapshot_path`, `deadline`) across daemon restarts (or delegates to a host-level upgrade runner) so that if the updated stack fails to pass the 180-second health verification window (Story 6.2), `/opt/sovereign` automatically checks out `pre_upgrade_tag`, restores `sovereign.db`, and restarts the prior containers.
+**And** the updater persists the overnight outcome in SQLite (`last_update_status`: `updated|postponed|idle`, `last_update_version`, `last_update_timestamp`, `last_update_message`, `last_update_dismissed`) and exposes it via REST (`GET /api/v1/system/boot-status` / `POST /api/v1/system/update-status/dismiss`) so upon morning inspection the dashboard reliably displays and allows dismissing the notification badge (*"Sovereign updated to v1.1.0 overnight"* or *"Update postponed: automatic safety check prevented an issue. All data remains secure."*).
 
 ### Story 10.4: Upstream Spoke Dependency Governance & CI Tag Audit Suite
 
 As an appliance maintainer and developer,
-I want all spoke containers pinned to explicit SemVer tags with automated upstream auditing on release branches,
+I want all spoke and gateway containers pinned to explicit version tags with automated upstream auditing on release branches,
 So that upstream third-party changes never break running appliances without prior automated test validation.
 
 **Acceptance Criteria:**
 
-**Given** production Compose definitions for Jellyfin, Paperless-ngx, Navidrome, Audiobookshelf, Open WebUI, and llama.cpp
-**When** inspecting image references
-**Then** all image tags specify explicit SemVer versions (e.g. `jellyfin/jellyfin:10.9.11`), and floating `:latest` tags are strictly prohibited.
+**Given** container image definitions across `docker-compose.yml`, declarative spoke manifests, and Go supervisor constants (`internal/supervisor/`) for Jellyfin, Paperless-ngx, Navidrome, Audiobookshelf, Open WebUI, Caddy, and `llama.cpp`
+**When** inspecting image references in the CI tag audit suite
+**Then** Jellyfin, Paperless-ngx, Navidrome, Audiobookshelf, Open WebUI, and Caddy specify explicit `MAJOR.MINOR.PATCH` SemVer tags (for example, `jellyfin/jellyfin:10.9.11`, `caddy:2.8.4-alpine`), `ghcr.io/ggml-org/llama.cpp` specifies explicit upstream build tags matching `^b[0-9]{4,}$` (or `^server-b[0-9]{4,}$`), and floating tags (`:latest`, `:2-alpine`, `:main`) are strictly prohibited.
 **Given** an automated daily CI audit workflow
 **When** checking upstream OCI registries (Docker Hub, GHCR)
 **Then** the audit script detects new stable releases of spoke images and generates automated pull requests targeting active `release/v<MAJOR>.<MINOR>` branches.
@@ -927,6 +930,7 @@ So that upstream third-party changes never break running appliances without prio
 **Given** cutting a Sovereign release
 **When** tagging a version
 **Then** maintainers enforce the tagging convention: `v<MAJOR>.<MINOR>.<PATCH>` for stable, `v<MAJOR>.<MINOR>.<PATCH>-rc.<N>` for preview.
-**And** an automated script (`scripts/publish-release.sh`) verifies clean git status, runs test suites, creates the annotated git tag, and pushes to both remotes: `git push origin <tag> && git push github <tag>`.
+**And** an automated script (`scripts/publish-release.sh`) verifies clean git status, runs test suites, creates the annotated git tag, pushes to both remotes (`git push origin <tag> && git push github <tag>`), and `scripts/verify-remotes.sh` (`make verify-remotes`) verifies exact tag ref parity (`git ls-remote --tags --refs`) between `origin` and `github`.
+
 
 

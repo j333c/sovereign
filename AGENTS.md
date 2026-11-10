@@ -1,5 +1,5 @@
 <!-- bmad:context -->
-<!-- Verified 2026-11-09 against 954394e. Managed by bmad-project-context; edits inside this block are replaced on refresh. Keep anything you want preserved outside the markers. -->
+<!-- Verified 2026-11-10 against b1bbb86. Managed by bmad-project-context; edits inside this block are replaced on refresh. Keep anything you want preserved outside the markers. -->
 
 ## sovereign
 
@@ -10,21 +10,22 @@ Sovereign is a private, self-hosted home server appliance monorepo. Go superviso
 - Commit and push (`git push origin main` for internal dev, `git push github main` for public distribution) with clear, descriptive commit messages after every important step or completed milestone.
 - Dual-remote architecture:
   - Internal development repo: `origin` (`http://git.crins:3000/jens/sovereign`) — authoritative internal development remote.
-  - Public anonymous user repo: `github` (`https://github.com/j333c/sovereign`) — holds everything for installing, updating, and using Sovereign.
-- Do not commit personal configs (`*.user.toml`).
-- Never hand-edit `web/src/lib/api/schema.d.ts` — run `npm --prefix web run codegen` from `api/openapi.yaml`.
-- Never mount `/var/run/docker.sock` in spoke application containers; all container lifecycle operations must be mediated by the Go daemon.
-- The `sovereign-ai` Docker bridge must remain air-gapped without external internet routing.
+  - Public anonymous user repo: `github` (`https://github.com/j333c/sovereign`) — holds everything for installing, updating, and using Sovereign (on installed appliances inside `/opt/sovereign`, `origin` points to `https://github.com/j333c/sovereign.git`).
 - Release branching and tagging workflow:
   - `main` is production-stable and reflects the current release.
   - Milestone development occurs on planned `release/v<MAJOR>.<MINOR>` branches.
   - Hotfixes and security patches occur on `hotfix/v<MAJOR>.<MINOR>.<PATCH>`.
   - Tags must follow SemVer: `v<MAJOR>.<MINOR>.<PATCH>` for stable, `v<MAJOR>.<MINOR>.<PATCH>-rc.<N>` for preview. Never move or delete published tags.
-  - Push all release tags to both remotes: `git push origin <tag> && git push github <tag>`.
-  - Spoke container images in Compose definitions must use pinned SemVer tags, never floating `:latest`.
+  - Push all release tags to both remotes (`git push origin <tag> && git push github <tag>`) and verify tag parity via `scripts/verify-remotes.sh`.
 - Update channel rules:
-  - `install.sh` supports `--channel stable|preview` (default: `stable`).
-  - Appliance update discovery must use git-native `git ls-remote --tags origin` inside `/opt/sovereign` max once per hour to avoid GitHub REST API rate limits.
+  - `install.sh` supports `--channel stable|security-only|preview` (default: `stable`) and seeds `/data/state/update_channel` for first-boot SQLite initialization.
+  - Appliance update discovery must run `git ls-remote --tags --refs origin` over Smart HTTP inside `/opt/sovereign` (where `origin` points to `github`) at most once per hour to avoid GitHub REST API rate limits, using a shallow tag fetch (`git fetch --depth=1 origin tag <tag>`) for annotated changelog summaries.
+  - Preview channel updates perform forward schema/state migrations; downgrades require a snapshot restore (`store.DB.RestoreSnapshot` guarded by `sync.RWMutex`), while switching back to `Stable`/`Security-only` enters a monotonic "Graduating to Stable" hold until a newer stable release ships. Both the UI (`DestructiveModal`) and backend (`POST`/`PUT /api/v1/settings`) must enforce localized `"PREVIEW"` confirmation tokens.
+- Do not commit personal configs (`*.user.toml`).
+- Never hand-edit `web/src/lib/api/schema.d.ts` — run `npm --prefix web run codegen` from `api/openapi.yaml`.
+- Never mount `/var/run/docker.sock` in spoke application containers; all container lifecycle operations must be mediated by the Go daemon.
+- The `sovereign-ai` Docker bridge must remain air-gapped without external internet routing.
+- Spoke and gateway container images in Compose definitions, declarative manifests, and Go supervisor constants must use pinned `MAJOR.MINOR.PATCH` SemVer tags (or pinned `^b[0-9]{4,}$` upstream build tags for `llama.cpp`), never floating `:latest`.
 
 ## Where things are
 
@@ -53,7 +54,6 @@ Sovereign is a private, self-hosted home server appliance monorepo. Go superviso
 - Use shared frontend helpers in `web/src/lib/format.ts` (`formatBytes`, `formatSpeed`, `formatDuration`, `formatBytesToTB`, `formatBytesToGB`), `web/src/lib/hooks.ts` (`useLanguage`, `useModalFocusTrap`), and `web/src/lib/hardware-calculator.ts` (`calculateHardwareTier`) instead of duplicating logic in components.
 - All user-facing strings in `web/src/lib/i18n/` (`en.ts`, `de.ts`, `es.ts`, `fr.ts`, `setup.ts`, `types.ts`) must maintain complete key parity across all four locales.
 - UI microcopy and errors must provide calm, reassuring next steps instead of raw system stack traces.
-- Preview channel updates perform forward schema/state migrations; downgrades require snapshot restore. UI must enforce confirmation token modal before switching to preview.
 
 ## Known pitfalls
 
