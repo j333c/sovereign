@@ -280,18 +280,18 @@ func handleMockMQTTConn(conn net.Conn, expectedUser, expectedPass string, onPubl
 		return
 	}
 
-	// If QoS 1, find packet ID and send PUBACK
+	// If QoS 1, find packet ID and prepare PUBACK
 	topicLen := binary.BigEndian.Uint16(publishBody[0:2])
 	topic := string(publishBody[2 : 2+int(topicLen)])
 	var payload []byte
+	var puback []byte
 	if qos == 1 && remLen >= 4 {
 		pidOffset := 2 + int(topicLen)
 		if pidOffset+2 <= len(publishBody) {
 			pid := publishBody[pidOffset : pidOffset+2]
 			payload = publishBody[pidOffset+2:]
-			// Send PUBACK: 0x40, 0x02, pid[0], pid[1]
-			puback := []byte{packetPUBACK, 0x02, pid[0], pid[1]}
-			_, _ = conn.Write(puback)
+			// Prepare PUBACK: 0x40, 0x02, pid[0], pid[1]
+			puback = []byte{packetPUBACK, 0x02, pid[0], pid[1]}
 		}
 	} else {
 		payload = publishBody[2+int(topicLen):]
@@ -299,6 +299,10 @@ func handleMockMQTTConn(conn net.Conn, expectedUser, expectedPass string, onPubl
 
 	if onPublish != nil {
 		onPublish(MockMQTTMessage{Topic: topic, Payload: payload})
+	}
+
+	if len(puback) > 0 {
+		_, _ = conn.Write(puback)
 	}
 
 	// 3. Optional DISCONNECT
@@ -748,6 +752,10 @@ func TestAlertDispatcher_SendRollbackAlert(t *testing.T) {
 	}
 
 	// Verify MQTT
+	deadline := time.Now().Add(500 * time.Millisecond)
+	for len(*mqttReceived) < 1 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
 	if len(*mqttReceived) < 1 {
 		t.Errorf("expected at least 1 MQTT alert received")
 	}

@@ -116,8 +116,19 @@ test_changelog_fallback_git_unknown_tag() {
 }
 
 test_publish_release_loads_changelog_notes() {
+  local repo="$TEST_TMP/changelog_repo"
+  mkdir -p "$repo/scripts"
+  cd "$repo"
+  git init -q -b main
+  git config user.name "Test User"
+  git config user.email "test@example.com"
+  cp "$REPO_ROOT/CHANGELOG.md" "$repo/"
+  cp "$REPO_ROOT/scripts/extract-changelog.py" "$repo/scripts/"
+  git add CHANGELOG.md scripts/extract-changelog.py
+  git commit -q -m "init"
+
   local output
-  output="$("$PUBLISH_SCRIPT" --dry-run --skip-tests --allow-dirty v1.0.0-rc.2 2>&1)"
+  output="$(SOVEREIGN_DIR="$repo" "$PUBLISH_SCRIPT" --dry-run --skip-tests --allow-dirty v1.0.0-rc.2 2>&1)"
   echo "$output" | grep -q "Loaded release notes for 'v1.0.0-rc.2' from CHANGELOG.md"
 }
 

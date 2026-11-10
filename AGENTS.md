@@ -1,5 +1,5 @@
 <!-- bmad:context -->
-<!-- Verified 2026-11-10 against b1bbb86. Managed by bmad-project-context; edits inside this block are replaced on refresh. Keep anything you want preserved outside the markers. -->
+<!-- Verified 2026-11-10 against 698b9f3. Managed by bmad-project-context; edits inside this block are replaced on refresh. Keep anything you want preserved outside the markers. -->
 
 ## sovereign
 
@@ -36,7 +36,7 @@ Sovereign is a private, self-hosted home server appliance monorepo. Go superviso
 - Presentation web app: `web/` (settings tab panels in `web/src/components/settings/`, shared utilities and i18n in `web/src/lib/`)
 - Ingress gateway configuration: `caddy/Caddyfile`
 - API specification: `api/openapi.yaml`
-- Turnkey host installer & maintenance scripts: `install.sh` (symlinked at `scripts/install.sh`), `scripts/verify-remotes.sh`, and shell test suites in `tests/`
+- Turnkey host installer & maintenance scripts: `install.sh` (symlinked at `scripts/install.sh`), `scripts/verify-remotes.sh`, `scripts/audit-spoke-tags.sh`, `scripts/extract-changelog.py`, and shell test suites in `tests/`
 - BMad configuration & artifacts: `_bmad/`, `_bmad-output/planning-artifacts/`, `_bmad-output/implementation-artifacts/`
 - Canonical skill definitions: `.agents/skills/`
 
@@ -46,6 +46,8 @@ Sovereign is a private, self-hosted home server appliance monorepo. Go superviso
 - Run backend verification with `make test-daemon` or `go test -count=1 ./...`.
 - Run frontend verification with `make test-web` or `npm --prefix web test`; `web/package.json` enumerates test files explicitly in `scripts.test`, so add any new `*.test.ts(x)` file there.
 - Run shell & installer verification with `make test-scripts`, `make test-installer`, and `make verify-remotes`.
+- Run spoke container image tagging audit with `make audit-spoke-tags` or `scripts/audit-spoke-tags.sh`.
+- Real-machine hardware testing has not yet taken place; all verification currently relies on automated CI/dev test suites and virtual fixtures. Assume tests and components behave as intended until real-machine test results are provided.
 - Network operations against `git.crins` may require running outside the sandbox (`BypassSandbox: true`).
 
 ## Conventions that differ from defaults
@@ -63,3 +65,4 @@ Sovereign is a private, self-hosted home server appliance monorepo. Go superviso
 - Never import `net/http/httptest` in production Go packages; keep test utilities and mocks in `*_test.go` or `mock.go` files.
 
 <!-- /bmad:context -->
+
