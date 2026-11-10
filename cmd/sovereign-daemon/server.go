@@ -82,6 +82,8 @@ type Config struct {
 	ModelManager      *ai.ModelManager
 	DiskFree          ai.DiskFreeFunc
 	DockerSocketPath  string
+	RepoDir           string
+	UpdateEngine      *supervisor.UpdateDiscoveryEngine
 }
 
 // Server is the appliance core supervisor HTTP daemon.
@@ -115,6 +117,7 @@ type Server struct {
 	personaStore      *ai.PersonaStore
 	ragEngine         *ai.RAGEngine
 	modelManager      *ai.ModelManager
+	updateEngine      *supervisor.UpdateDiscoveryEngine
 	stopChan          chan struct{}
 	closeOnce         sync.Once
 	mu                sync.RWMutex
@@ -624,6 +627,53 @@ func NewServer(cfg Config) (*Server, error) {
 		}
 	}
 
+	// Update channel seeding: check SQLite, fallback to /data/state/update_channel, default to "stable"
+	updateChannel := ""
+	if db != nil {
+		updateChannel, _ = db.GetSetting(context.Background(), "update_channel")
+		if updateChannel == "" {
+			seedPath := filepath.Join(cfg.DataDir, "state", "update_channel")
+			if raw, err := os.ReadFile(seedPath); err == nil {
+				updateChannel = strings.TrimSpace(string(raw))
+			}
+			if updateChannel == "" {
+				updateChannel = supervisor.ChannelStable
+			}
+			_ = db.SetSetting(context.Background(), "update_channel", updateChannel)
+		}
+	}
+	if updateChannel == "" {
+		updateChannel = supervisor.ChannelStable
+	}
+
+	repoDir := cfg.RepoDir
+	if repoDir == "" {
+		repoDir = os.Getenv("SOVEREIGN_REPO_DIR")
+		if repoDir == "" {
+			repoDir = "/opt/sovereign"
+		}
+	}
+
+	updateEngine := cfg.UpdateEngine
+	if updateEngine == nil {
+		updateEngine = supervisor.NewUpdateDiscoveryEngine(supervisor.UpdateDiscoveryConfig{
+			RepoDir:        repoDir,
+			CurrentVersion: AppVersion,
+			Channel:        updateChannel,
+			Logger:         s.logger,
+			OnUpdateFound: func(candidate *supervisor.UpdateCandidate) {
+				s.BroadcastEvent("system.update_available", map[string]any{
+					"target_tag":      candidate.TargetTag,
+					"target_version":  candidate.TargetVersion.String(),
+					"current_version": candidate.CurrentVersion.String(),
+					"channel":         candidate.Channel,
+					"changelog":       candidate.Changelog,
+				})
+			},
+		})
+	}
+	s.updateEngine = updateEngine
+
 	s.routes()
 	return s, nil
 }
@@ -756,6 +806,11 @@ func (s *Server) StartBackgroundServices(ctx context.Context) {
 			}
 		}()
 	}
+
+	// 14. Start background git-native update discovery engine
+	if s.updateEngine != nil {
+		s.updateEngine.Start(ctx)
+	}
 }
 
 // BootManager returns the active BootManager instance.
@@ -880,10 +935,21 @@ func (s *Server) Close() error {
 		_ = s.ragEngine.Close()
 	}
 
+	if s.updateEngine != nil {
+		s.updateEngine.Stop()
+	}
+
 	if s.db != nil {
 		return s.db.Close()
 	}
 	return nil
+}
+
+// UpdateEngine returns the active update discovery engine.
+func (s *Server) UpdateEngine() *supervisor.UpdateDiscoveryEngine {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.updateEngine
 }
 
 // requireSetupOrAdmin allows unauthenticated access during first-run setup, but strictly requires

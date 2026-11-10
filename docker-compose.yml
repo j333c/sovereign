@@ -27,9 +27,11 @@ services:
       # Privileged control boundary: Docker socket mounted exclusively in supervisor daemon
       - /var/run/docker.sock:/var/run/docker.sock
       - ./data:/data
+      - .:/opt/sovereign
     environment:
       - SOVEREIGN_ADDR=:8080
       - SOVEREIGN_DATA_DIR=/data
+      - SOVEREIGN_REPO_DIR=/opt/sovereign
       - SOVEREIGN_CADDY_URL=http://caddy:2019
     ports:
       - "127.0.0.1:8080:8080"
