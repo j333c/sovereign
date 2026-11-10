@@ -6,11 +6,23 @@ on:
       - main
       - 'release/**'
       - 'hotfix/**'
+    paths-ignore:
+      - 'docs/**'
+      - '_bmad/**'
+      - '_bmad-output/**'
+      - '**.md'
+      - '.gitignore'
   pull_request:
     branches:
       - main
       - 'release/**'
       - 'hotfix/**'
+    paths-ignore:
+      - 'docs/**'
+      - '_bmad/**'
+      - '_bmad-output/**'
+      - '**.md'
+      - '.gitignore'
   workflow_dispatch:
 
 concurrency:
