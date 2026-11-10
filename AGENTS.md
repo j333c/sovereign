@@ -16,7 +16,8 @@ Sovereign is a private, self-hosted home server appliance monorepo. Go superviso
   - Milestone development occurs on planned `release/v<MAJOR>.<MINOR>` branches.
   - Hotfixes and security patches occur on `hotfix/v<MAJOR>.<MINOR>.<PATCH>`.
   - Tags must follow SemVer: `v<MAJOR>.<MINOR>.<PATCH>` for stable, `v<MAJOR>.<MINOR>.<PATCH>-rc.<N>` for preview. Never move or delete published tags.
-  - Push all release tags to both remotes (`git push origin <tag> && git push github <tag>`) and verify tag parity via `scripts/verify-remotes.sh`.
+  - To publish a release, run `scripts/publish-release.sh <tag>` (or `make publish-release TAG=<tag>`). This validates clean working tree, executes the full verification and spoke audit suites, creates the annotated tag, pushes to dual remotes (`origin` and `github`), and verifies tag ref parity via `scripts/verify-remotes.sh`.
+  - Pushing the tag to `github` triggers the GitHub Actions release pipeline (`.github/workflows/release.yml`), which compiles static daemon binaries (linux/amd64 and linux/arm64), generates SHA256SUMS, and publishes the official GitHub Release with release notes and prerelease channel metadata.
 - Update channel rules:
   - `install.sh` supports `--channel stable|security-only|preview` (default: `stable`) and seeds `/data/state/update_channel` for first-boot SQLite initialization.
   - Appliance update discovery must run `git ls-remote --tags --refs origin` over Smart HTTP inside `/opt/sovereign` (where `origin` points to `github`) at most once per hour to avoid GitHub REST API rate limits, using a shallow tag fetch (`git fetch --depth=1 origin tag <tag>`) for annotated changelog summaries.

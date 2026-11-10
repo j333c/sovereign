@@ -97,6 +97,12 @@ test_dirty_working_tree_rejected() {
   [ "$status" -eq 1 ] && echo "$output" | grep -q "Working tree has uncommitted modifications"
 }
 
+test_github_actions_planned_in_dry_run() {
+  local output
+  output="$("$PUBLISH_SCRIPT" --dry-run --skip-tests --allow-dirty v1.0.0 2>&1)"
+  echo "$output" | grep -q "GitHub Actions" && echo "$output" | grep -q "release.yml"
+}
+
 # Run tests
 run_test "Help output flag" test_help_flag
 run_test "Missing tag argument rejection" test_missing_tag_argument
@@ -104,6 +110,7 @@ run_test "Valid stable tag accepted (dry-run)" test_valid_stable_tag_dry_run
 run_test "Valid preview tag accepted (dry-run)" test_valid_preview_tag_dry_run
 run_test "Invalid tag formats rejected" test_invalid_tag_formats_rejected
 run_test "Dirty working tree rejected" test_dirty_working_tree_rejected
+run_test "GitHub Actions workflow planned in dry-run" test_github_actions_planned_in_dry_run
 
 echo "---"
 echo "Tests passed: $PASSED, failed: $FAILED"
@@ -111,3 +118,4 @@ echo "Tests passed: $PASSED, failed: $FAILED"
 if [ "$FAILED" -ne 0 ]; then
   exit 1
 fi
+

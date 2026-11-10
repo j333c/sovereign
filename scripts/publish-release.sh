@@ -227,6 +227,7 @@ if [ "$DRY_RUN" = true ]; then
   printf "  2. git push origin '%s'\n" "$TAG"
   printf "  3. git push github '%s'\n" "$TAG"
   printf "  4. %s/scripts/verify-remotes.sh -t '%s'\n" "$REPO_ROOT" "$TAG"
+  printf "  5. GitHub Actions '.github/workflows/release.yml' automatically publishes GitHub Release with compiled binaries\n"
   exit 0
 fi
 
@@ -259,3 +260,18 @@ if ! "$REPO_ROOT/scripts/verify-remotes.sh" -t "$TAG"; then
 fi
 
 log_ok "Release ${BOLD}${TAG}${RESET} successfully published and verified across both remotes!"
+
+printf "\n${BOLD}${GREEN}==============================================================================${RESET}\n"
+printf "${BOLD}${GREEN}  Release %s Successfully Published & Verified!${RESET}\n" "$TAG"
+printf "${BOLD}${GREEN}==============================================================================${RESET}\n"
+printf "  • Dual-Remote Tag Parity: ${GREEN}VERIFIED${RESET} (origin & github)\n"
+printf "  • GitHub Actions Pipeline: ${BLUE}TRIGGERED${RESET}\n"
+printf "    ↳ Workflow: https://github.com/j333c/sovereign/actions?query=workflow%%3A%%22Release+Pipeline%%22\n"
+printf "    ↳ Automated on GitHub:\n"
+printf "      - Full verification test suite execution\n"
+printf "      - Multi-architecture daemon cross-compilation (linux/amd64, linux/arm64)\n"
+printf "      - SHA256SUMS generation\n"
+printf "      - Official GitHub Release creation with release notes & assets\n"
+printf "  • Appliance Discovery: Active appliances will discover %s over Smart HTTP\n" "$TAG"
+printf "${BOLD}${GREEN}==============================================================================${RESET}\n\n"
+

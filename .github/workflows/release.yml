@@ -1,0 +1,162 @@
+name: Release Pipeline
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to publish (e.g. v1.0.0 or v1.0.0-rc.1)'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  validate-and-test:
+    name: Validate SemVer & Test Suites
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.resolve-tag.outputs.tag }}
+      prerelease: ${{ steps.channel.outputs.prerelease }}
+      title: ${{ steps.channel.outputs.title }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve Release Tag
+        id: resolve-tag
+        run: |
+          TAG="${{ github.event.inputs.tag }}"
+          if [ -z "$TAG" ]; then
+            TAG="${{ github.ref_name }}"
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "Processing Release Tag: $TAG"
+
+      - name: Validate SemVer Tag Format
+        run: |
+          TAG="${{ steps.resolve-tag.outputs.tag }}"
+          STABLE_PATTERN='^v[0-9]+\.[0-9]+\.[0-9]+$'
+          PREVIEW_PATTERN='^v[0-9]+\.[0-9]+\.[0-9]+-rc\.[0-9]+$'
+
+          if [[ "$TAG" =~ $STABLE_PATTERN ]]; then
+            echo "Valid Stable Tag: $TAG"
+          elif [[ "$TAG" =~ $PREVIEW_PATTERN ]]; then
+            echo "Valid Preview Tag: $TAG"
+          else
+            echo "::error::Tag '$TAG' is not a valid SemVer release tag."
+            echo "Must match v<MAJOR>.<MINOR>.<PATCH> or v<MAJOR>.<MINOR>.<PATCH>-rc.<N>"
+            exit 1
+          fi
+
+      - name: Determine Release Channel
+        id: channel
+        run: |
+          TAG="${{ steps.resolve-tag.outputs.tag }}"
+          if [[ "$TAG" =~ -rc\.[0-9]+$ ]]; then
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+            echo "title=Sovereign $TAG (Preview)" >> "$GITHUB_OUTPUT"
+          else
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+            echo "title=Sovereign $TAG" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache: true
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install Frontend Dependencies
+        run: npm --prefix web ci
+
+      - name: Spoke Dependency Governance Tag Audit
+        run: ./scripts/audit-spoke-tags.sh
+
+      - name: Run Backend Tests
+        run: go test -v -count=1 ./...
+
+      - name: Run Frontend Tests
+        run: npm --prefix web test
+
+      - name: Run Shell & Script Tests
+        run: |
+          ./tests/installer_test.sh
+          ./tests/audit_spoke_tags_test.sh
+          ./tests/publish_release_test.sh
+
+  build-binaries:
+    name: Cross-Compile Daemon Binaries
+    needs: validate-and-test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache: true
+
+      - name: Cross-Compile Sovereign Daemon
+        run: |
+          mkdir -p dist
+          TAG="${{ needs.validate-and-test.outputs.tag }}"
+          LDFLAGS="-s -w -X 'main.Version=${TAG}'"
+          
+          echo "Building linux/amd64..."
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="$LDFLAGS" -o dist/sovereign-daemon-linux-amd64 ./cmd/sovereign-daemon
+          
+          echo "Building linux/arm64..."
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags="$LDFLAGS" -o dist/sovereign-daemon-linux-arm64 ./cmd/sovereign-daemon
+          
+          echo "Generating SHA256 checksums..."
+          cd dist
+          sha256sum sovereign-daemon-* > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Upload Build Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-binaries
+          path: dist/
+          retention-days: 5
+
+  publish-github-release:
+    name: Publish Official GitHub Release
+    needs: [validate-and-test, build-binaries]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download Build Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: release-binaries
+          path: dist/
+
+      - name: Create or Update GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.validate-and-test.outputs.tag }}
+          name: ${{ needs.validate-and-test.outputs.title }}
+          draft: false
+          prerelease: ${{ needs.validate-and-test.outputs.prerelease == 'true' }}
+          generate_release_notes: true
+          files: |
+            dist/sovereign-daemon-linux-amd64
+            dist/sovereign-daemon-linux-arm64
+            dist/SHA256SUMS.txt
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

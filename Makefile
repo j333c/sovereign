@@ -1,4 +1,4 @@
-.PHONY: all build build-daemon build-web test test-daemon test-web test-scripts test-installer audit-spoke-tags codegen lint clean config-check verify-remotes
+.PHONY: all build build-daemon build-web test test-daemon test-web test-scripts test-installer audit-spoke-tags codegen lint clean config-check verify-remotes publish-release
 
 # Default target
 all: build
@@ -56,4 +56,9 @@ clean:
 # Verify dual-remote synchronization parity
 verify-remotes:
 	./scripts/verify-remotes.sh
+
+# Publish release tag across dual remotes and trigger GitHub Actions release pipeline
+publish-release:
+	@if [ -z "$(TAG)" ]; then echo "Usage: make publish-release TAG=v<MAJOR>.<MINOR>.<PATCH>[-rc.<N>]"; exit 1; fi
+	./scripts/publish-release.sh $(TAG)
 
