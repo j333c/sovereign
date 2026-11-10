@@ -105,6 +105,12 @@ development_status:
   9-3-appliance-filesystem-layout-service-config-systemd-integration: done
   9-4-setup-handoff-uninstaller-maintenance-utilities: done
   epic-9-retrospective: done
+
+  epic-10: backlog
+  10-1-git-native-update-discovery-engine-release-channel-polling: backlog
+  10-2-multi-channel-update-settings-ui-destructive-preview-safeguard-modal: backlog
+  10-3-installer-channel-selection-unattended-maintenance-pipeline-integration: backlog
+  10-4-upstream-spoke-dependency-governance-ci-tag-audit-suite: backlog
 action_items:
   - id: "epic-1-retro-item-1-sse-server-timeout"
     epic: 1

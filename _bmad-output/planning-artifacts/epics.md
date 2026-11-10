@@ -46,6 +46,10 @@ FR19: Multi-Language UI & Documentation — The system displays all admin interf
 FR20: Project Marketing Site & GitHub Presence — The project maintains a public marketing website and open-source GitHub repository detailing project architecture, BMad Method attribution, transparent AI-assistance notes, and FOSS license compliance.
 FR21: Minimum Hardware Specification Guidance & Future Hardware Roadmap — The platform publishes concrete minimum hardware profiles across three tiers (Light Tier, Media Tier, AI & Power Tier) and reserves architectural hooks for turnkey hardware appliance sales.
 FR22: Turnkey One-Line Linux Host Installer — The user can provision a standard Linux machine (Debian/Ubuntu, Fedora, Arch) into a fully operational Sovereign home server appliance by pasting a single shell command (`curl -fsSL https://raw.githubusercontent.com/j333c/sovereign/main/install.sh | sudo bash`), executing automated OS pre-flight validation, official Docker CE / Compose substrate installation, repository acquisition from `https://github.com/j333c/sovereign.git` into `/opt/sovereign`, partitioned `/data` hierarchy creation, systemd service registration, and instant browser setup handoff.
+FR23: Multi-Channel Release Distribution & Update Selection — The system supports three distinct update streams (Major/Stable, Security-only, and Preview), allowing users to configure update channels in Settings or during installation (`install.sh`), with automated discovery via git-native tag polling.
+FR24: Git-Native Update Discovery & Polling Engine — The appliance daemon inspects upstream distribution tags via `git ls-remote --tags origin` inside `/opt/sovereign` max once per hour, avoiding unauthenticated GitHub REST API rate limits and external API token requirements.
+FR25: Preview Forward-Migration Safeguard & Destructive Warning Modal — The system protects users from accidental beta instability when opting into the Preview channel via a high-visibility destructive warning modal requiring explicit confirmation token entry (`"PREVIEW"`), noting that schema forward migrations prevent downgrade to Stable without full snapshot restoration.
+FR26: Upstream Spoke Dependency Governance & CI Tag Auditing — All spoke container services in production Compose definitions enforce strict SemVer tag pinning (never floating `:latest`), integrated with automated CI auditing to detect upstream updates and run automated integration tests against release branches.
 
 ### NonFunctional Requirements
 
@@ -106,6 +110,10 @@ FR19: Epic 6 - Multi-Language UI & Documentation (English, German, Spanish, Fren
 FR20: Epic 7 - Project Marketing Site & GitHub Presence (Marketing landing page, GitHub README with BMad attribution, transparent AI-assistance notice, and open-source license compliance)
 FR21: Epic 7 - Minimum Hardware Specification Guidance & Future Hardware Roadmap (Three-tier hardware profiles: Light, Media, AI & Power tiers; architectural hooks for future hardware sales)
 FR22: Epic 9 - Turnkey One-Line Linux Host Installer (One-line shell installer, OS pre-flight checks, automated Docker substrate setup, systemd service integration, setup wizard handoff, uninstaller/upgrade routines)
+FR23: Epic 10 - Multi-Channel Release Distribution, Spoke Lifecycle & Governance Pipeline
+FR24: Epic 10 - Multi-Channel Release Distribution, Spoke Lifecycle & Governance Pipeline
+FR25: Epic 10 - Multi-Channel Release Distribution, Spoke Lifecycle & Governance Pipeline
+FR26: Epic 10 - Multi-Channel Release Distribution, Spoke Lifecycle & Governance Pipeline
 
 ## Epic List
 
@@ -144,6 +152,10 @@ The appliance administrator and developer can rely on comprehensive transaction 
 ### Epic 9: Turnkey One-Line Linux Host Installer & Host Provisioning Engine
 The user can convert any compatible x86_64 or ARM64 Linux machine into a fully functional Sovereign appliance via a single console command (`curl -fsSL https://raw.githubusercontent.com/j333c/sovereign/main/install.sh | sudo bash`), featuring automated OS detection, Docker/Compose provisioning, repository deployment from `https://github.com/j333c/sovereign.git` into `/opt/sovereign`, systemd integration, and instant setup wizard handoff.
 **FRs covered:** FR22
+
+### Epic 10: Multi-Channel Release Distribution, Spoke Lifecycle & Governance Pipeline
+The user and appliance administrator can select and receive targeted update streams (Stable, Security-only, Preview) with git-native rate-limit-free discovery, rely on unattended 3:00 AM updates with pre-upgrade snapshots and 180s health verification, receive explicit warnings when switching to experimental preview channels, and benefit from pinned, automated spoke container dependency governance across planned release branches.
+**FRs covered:** FR23, FR24, FR25, FR26
 
 
 ## Epic 1: Appliance Foundation, Setup Wizard & Power Resilience
@@ -835,4 +847,86 @@ So that I know exactly how to open the Setup Wizard in my browser and have a saf
 **Given** an administrator updating the appliance host installer
 **When** running `install.sh --upgrade`
 **Then** the installer pulls the latest release from `https://github.com/j333c/sovereign.git` and updates systemd units without destroying persistent configuration or database state.
+
+
+## Epic 10: Multi-Channel Release Distribution, Spoke Lifecycle & Governance Pipeline
+
+The user and appliance administrator can select and receive targeted update streams (Stable, Security-only, Preview) with git-native rate-limit-free discovery, rely on unattended 3:00 AM updates with pre-upgrade snapshots and 180s health verification, receive explicit warnings when switching to experimental preview channels, and benefit from pinned, automated spoke container dependency governance across planned release branches.
+
+### Story 10.1: Git-Native Update Discovery Engine & Release Channel Polling
+
+As an appliance administrator,
+I want the supervisor daemon to discover upstream updates via native git tag queries without relying on GitHub REST API rate limits,
+So that my appliance reliably detects security fixes and new releases without requiring GitHub API credentials or failing when multiple devices share an IP.
+
+**Acceptance Criteria:**
+
+**Given** an operational Sovereign daemon running in `/opt/sovereign`
+**When** the scheduled update discovery worker runs (maximum once per hour)
+**Then** it executes `git ls-remote --tags origin` to query upstream tags over smart-HTTP without making GitHub REST API calls.
+**And** it evaluates available tags against the system's configured channel (`stable`, `security-only`, or `preview`):
+  - `stable`: matches latest SemVer release tag `v<MAJOR>.<MINOR>.<PATCH>` without pre-release suffixes.
+  - `security-only`: matches latest patch release `v<CURRENT_MAJOR>.<CURRENT_MINOR>.<PATCH>` where `PATCH > CURRENT_PATCH`, ignoring higher major/minor releases.
+  - `preview`: matches latest pre-release tag `v<MAJOR>.<MINOR>.<PATCH>-rc.<N>` or stable tag, whichever is newer.
+**And** if a qualifying new tag is detected, the daemon emits a `system.update_available` SSE event with target tag, channel name, and changelog summary.
+**And** network disconnections or DNS failures during polling log a quiet debug notice and gracefully retry at the next hourly window without triggering health alarms.
+
+### Story 10.2: Multi-Channel Update Settings UI & Destructive Preview Safeguard Modal
+
+As a home server owner,
+I want a clear channel dropdown in Settings and an explicit warning if I try to switch to Preview,
+So that I understand my update cadence and never accidentally apply experimental updates that cannot be cleanly rolled back.
+
+**Acceptance Criteria:**
+
+**Given** an administrator navigating to `/settings` (System / Maintenance tab)
+**When** viewing the Update Channel section
+**Then** a dropdown selector displays available channels: `Stable` (recommended default), `Security-only`, and `Preview`.
+**And** selecting `Security-only` or `Stable` updates the preference immediately via `PUT /api/v1/settings` with a reassuring toast confirmation.
+**Given** the user selects `Preview` in the dropdown
+**When** attempting to change the setting
+**Then** an amber `DestructiveModal` opens displaying consumer reassurance copy: *"Preview releases contain experimental features and forward database migrations that cannot be downgraded without a snapshot restore."*
+**And** the modal requires the user to type `"PREVIEW"` (or localized confirmation token per Story 8.4) before the confirmation button is enabled.
+**And** dismissing or cancelling the modal reverts the dropdown to the previous channel without persisting changes.
+**And** when `Preview` is active, the dashboard header pill displays an Amber tag indicator (*"Preview Channel Active"*).
+
+### Story 10.3: Installer Channel Selection & Unattended Maintenance Pipeline Integration
+
+As an installer user and system owner,
+I want `install.sh` to support a channel flag during fresh installation and have the 3:00 AM unattended maintenance runner respect my chosen channel,
+So that fresh test environments deploy directly to Preview and daily automated updates honor my selected stability level.
+
+**Acceptance Criteria:**
+
+**Given** running `install.sh` on a new host
+**When** passing `--channel preview` (or selecting Preview during interactive prompts)
+**Then** the installer clones and checks out the latest qualifying pre-release tag `v*-rc.*` into `/opt/sovereign` and records `update_channel: preview` in daemon settings.
+**And** omitting the flag defaults to `--channel stable`, checking out the latest stable SemVer tag.
+**Given** an active appliance during the scheduled maintenance window (default: 3:00 AM)
+**When** the unattended updater executes
+**Then** it verifies whether an update is available on the configured channel.
+**And** before applying the update, it executes database WAL checkpointing (`PRAGMA wal_checkpoint(TRUNCATE)`) and takes an atomic pre-upgrade snapshot (Story 6.1 & 8.1).
+**And** it checks out the target tag, regenerates compose revisions, restarts services, and monitors the 180-second health check window (Story 6.2).
+**And** upon morning inspection, the dashboard displays a reassuring update notification badge (*"Sovereign updated to v1.1.0 overnight"*), or in the event of an automated rollback, an informative reassurance notice (*"Update postponed: automatic safety check prevented an issue. All data remains secure."*).
+
+### Story 10.4: Upstream Spoke Dependency Governance & CI Tag Audit Suite
+
+As an appliance maintainer and developer,
+I want all spoke containers pinned to explicit SemVer tags with automated upstream auditing on release branches,
+So that upstream third-party changes never break running appliances without prior automated test validation.
+
+**Acceptance Criteria:**
+
+**Given** production Compose definitions for Jellyfin, Paperless-ngx, Navidrome, Audiobookshelf, Open WebUI, and llama.cpp
+**When** inspecting image references
+**Then** all image tags specify explicit SemVer versions (e.g. `jellyfin/jellyfin:10.9.11`), and floating `:latest` tags are strictly prohibited.
+**Given** an automated daily CI audit workflow
+**When** checking upstream OCI registries (Docker Hub, GHCR)
+**Then** the audit script detects new stable releases of spoke images and generates automated pull requests targeting active `release/v<MAJOR>.<MINOR>` branches.
+**And** pull requests trigger the container integration and installer matrix test suites before maintainer approval.
+**Given** cutting a Sovereign release
+**When** tagging a version
+**Then** maintainers enforce the tagging convention: `v<MAJOR>.<MINOR>.<PATCH>` for stable, `v<MAJOR>.<MINOR>.<PATCH>-rc.<N>` for preview.
+**And** an automated script (`scripts/publish-release.sh`) verifies clean git status, runs test suites, creates the annotated git tag, and pushes to both remotes: `git push origin <tag> && git push github <tag>`.
+
 
