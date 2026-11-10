@@ -8,6 +8,7 @@ import (
 func (s *Server) routes() {
 	s.router.HandleFunc("GET /api/v1/health", s.handleHealth)
 	s.router.HandleFunc("GET /api/v1/system/boot-status", s.handleBootStatus)
+	s.router.HandleFunc("POST /api/v1/system/update-status/dismiss", s.handleDismissUpdateStatus)
 	s.router.HandleFunc("GET /api/v1/system/ingress", s.handleIngressStatus)
 	s.router.HandleFunc("GET /api/v1/system/revisions", s.handleListRevisions)
 	s.router.HandleFunc("GET /api/v1/system/revisions/active", s.handleGetActiveRevision)

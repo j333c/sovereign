@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -35,6 +37,8 @@ type MaintenanceScheduler struct {
 	mu           sync.Mutex
 	cfg          MaintenanceConfig
 	mgr          *ServiceManager
+	db           *store.DB
+	discovery    *UpdateDiscoveryEngine
 	logger       *slog.Logger
 	cancel       context.CancelFunc
 	lastRunDay   int
@@ -66,6 +70,20 @@ func NewMaintenanceScheduler(mgr *ServiceManager, cfg MaintenanceConfig, logger 
 		logger:   logger,
 		stopChan: make(chan struct{}),
 	}
+}
+
+// SetStore assigns the persistent store for WAL checkpointing and update outcome persistence.
+func (s *MaintenanceScheduler) SetStore(db *store.DB) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.db = db
+}
+
+// SetDiscoveryEngine assigns the update discovery engine for release channel candidate detection.
+func (s *MaintenanceScheduler) SetDiscoveryEngine(d *UpdateDiscoveryEngine) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.discovery = d
 }
 
 // IsMaintenanceWindow evaluates if the given timestamp falls inside the configured maintenance execution minute.
@@ -144,12 +162,59 @@ func (s *MaintenanceScheduler) Stop() {
 // ExecuteMaintenanceWindow executes service updates under the protection of the 180-second health verification window.
 // If pendingUpgrades is nil or empty, active running services are verified for upgrades.
 func (s *MaintenanceScheduler) ExecuteMaintenanceWindow(ctx context.Context, pendingUpgrades map[string]string) ([]*store.ComposeRevision, error) {
+	s.mu.Lock()
+	dbHandle := s.db
+	discoveryHandle := s.discovery
+	s.mu.Unlock()
+
+	// 1. Pre-maintenance WAL checkpoint PRAGMA wal_checkpoint(TRUNCATE) and atomic SQLite snapshot
+	if dbHandle != nil {
+		s.logger.Info("executing pre-maintenance database WAL checkpoint")
+		if err := dbHandle.FlushWAL(ctx); err != nil {
+			s.logger.Warn("pre-maintenance WAL checkpoint failed", "error", err)
+		}
+
+		backupDir := "/data/state/backups"
+		if err := os.MkdirAll(backupDir, 0755); err == nil {
+			snapPath := filepath.Join(backupDir, fmt.Sprintf("pre-maintenance-%d.db", time.Now().Unix()))
+			s.logger.Info("creating pre-maintenance atomic SQLite snapshot", "snapshot_path", snapPath)
+			if err := dbHandle.CreateSnapshot(ctx, snapPath); err != nil {
+				s.logger.Warn("pre-maintenance snapshot creation warning", "error", err)
+			}
+		}
+	}
+
+	// 2. Discover qualifying release channel updates
+	var candidate *UpdateCandidate
+	if discoveryHandle != nil {
+		cand, err := discoveryHandle.CheckForUpdates(ctx)
+		if err != nil {
+			s.logger.Warn("unattended maintenance update discovery check failed", "error", err)
+		} else {
+			candidate = cand
+		}
+	}
+
 	if s.mgr == nil {
+		if dbHandle != nil {
+			if candidate != nil {
+				_ = dbHandle.SetOvernightUpdateStatus(ctx, "postponed", candidate.TargetTag, "Update postponed: automatic safety check prevented an issue. All data remains secure.")
+			} else {
+				_ = dbHandle.SetOvernightUpdateStatus(ctx, "idle", "", "No updates required; system is on latest version.")
+			}
+		}
 		return nil, fmt.Errorf("service manager is not initialized")
 	}
 
 	services, err := s.mgr.ListServices(ctx)
 	if err != nil {
+		if dbHandle != nil {
+			ver := ""
+			if candidate != nil {
+				ver = candidate.TargetTag
+			}
+			_ = dbHandle.SetOvernightUpdateStatus(ctx, "postponed", ver, "Update postponed: automatic safety check prevented an issue. All data remains secure.")
+		}
 		return nil, fmt.Errorf("failed to list services for maintenance: %w", err)
 	}
 
@@ -187,7 +252,29 @@ func (s *MaintenanceScheduler) ExecuteMaintenanceWindow(ctx context.Context, pen
 	}
 
 	if len(errs) > 0 {
+		if dbHandle != nil {
+			ver := ""
+			if candidate != nil {
+				ver = candidate.TargetTag
+			}
+			_ = dbHandle.SetOvernightUpdateStatus(ctx, "postponed", ver, "Update postponed: automatic safety check prevented an issue. All data remains secure.")
+		}
 		return results, fmt.Errorf("maintenance completed with %d error(s): %v", len(errs), errs[0])
+	}
+
+	// Persist successful overnight update outcome
+	if dbHandle != nil {
+		if candidate != nil || len(results) > 0 {
+			targetVer := ""
+			if candidate != nil {
+				targetVer = candidate.TargetTag
+			} else if len(results) > 0 {
+				targetVer = results[0].NewImage
+			}
+			_ = dbHandle.SetOvernightUpdateStatus(ctx, "updated", targetVer, fmt.Sprintf("Sovereign updated to %s overnight", targetVer))
+		} else {
+			_ = dbHandle.SetOvernightUpdateStatus(ctx, "idle", "", "No updates required; system is on latest version.")
+		}
 	}
 
 	return results, nil

@@ -40,6 +40,7 @@ export interface HomePageProps {
   initialRollbackSuccessMessage?: string | null;
   initialRevisionsMap?: Record<string, { currentVersion?: string; previousVersion?: string; snapshotTimestamp?: string }>;
   initialAIStatus?: AIStatusResponse | null;
+  initialOvernightUpdateNotice?: { status: string; version?: string; message?: string } | null;
 }
 
 export function HomeScreen(props: HomePageProps) {
@@ -155,6 +156,7 @@ function HomeScreenContent({
   initialRollbackSuccessMessage = null,
   initialRevisionsMap = {},
   initialAIStatus = null,
+  initialOvernightUpdateNotice = null,
 }: HomePageProps & { router?: { replace: (url: string) => void } }) {
   const client = apiClientOverride ?? defaultApiClient;
   const [isReady, setIsReady] = useState(initialReady);
@@ -171,6 +173,11 @@ function HomeScreenContent({
   >(initialRevisionsMap || {});
   const [isRollingBack, setIsRollingBack] = useState(false);
   const [rollbackSuccessMessage, setRollbackSuccessMessage] = useState<string | null>(initialRollbackSuccessMessage);
+  const [overnightUpdateNotice, setOvernightUpdateNotice] = useState<{
+    status: string;
+    version?: string;
+    message?: string;
+  } | null>(initialOvernightUpdateNotice || null);
   const rollbackToastTimerRef = useRef<NodeJS.Timeout | null>(null);
   const problemDetailsRef = useRef<HTMLDivElement>(null);
 
@@ -346,6 +353,24 @@ function HomeScreenContent({
       .catch(() => {
         // Fallback to default
       });
+
+    // Check overnight update outcome
+    void client
+      .getBootStatus()
+      .then((status) => {
+        if (!isMounted || !status) return;
+        if (
+          (status.last_update_status === "updated" || status.last_update_status === "postponed") &&
+          !status.last_update_dismissed
+        ) {
+          setOvernightUpdateNotice({
+            status: status.last_update_status,
+            version: status.last_update_version,
+            message: status.last_update_message,
+          });
+        }
+      })
+      .catch(() => {});
 
     return () => {
       isMounted = false;
@@ -528,6 +553,15 @@ function HomeScreenContent({
     }
   }, [pendingAction, router, executeRestart]);
 
+  const handleDismissUpdate = useCallback(async () => {
+    try {
+      await client.dismissUpdateStatus();
+    } catch {
+      // Ignore network errors on dismiss
+    }
+    setOvernightUpdateNotice(null);
+  }, [client]);
+
   useEffect(() => {
     if (!restartError) return;
 
@@ -661,6 +695,40 @@ function HomeScreenContent({
       {/* Main Single-Viewport / Scrollable Service Grid Container */}
       <main className="flex-1 overflow-y-auto px-4 py-6 sm:px-8 sm:py-8 pb-20 lg:pb-20">
         <div className="mx-auto max-w-[1440px]">
+          {/* Overnight Update Outcome Banner */}
+          {overnightUpdateNotice && (
+            <div
+              data-testid="overnight-update-banner"
+              className={`mb-6 rounded-xl border p-4 text-xs shadow-xs flex items-center justify-between ${
+                overnightUpdateNotice.status === "updated"
+                  ? "border-emerald-200 bg-emerald-50 text-emerald-950"
+                  : "border-amber-200 bg-amber-50 text-amber-950"
+              }`}
+              role="status"
+            >
+              <div className="flex items-center gap-2.5">
+                <span className="text-base" aria-hidden="true">
+                  {overnightUpdateNotice.status === "updated" ? "🎉" : "🛡️"}
+                </span>
+                <span className="font-medium">
+                  {overnightUpdateNotice.message ||
+                    (overnightUpdateNotice.status === "updated"
+                      ? `Sovereign updated to ${overnightUpdateNotice.version || "latest release"} overnight`
+                      : "Update postponed: automatic safety check prevented an issue. All data remains secure.")}
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={handleDismissUpdate}
+                data-testid="dismiss-update-btn"
+                className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-lg text-slate-500 hover:text-slate-800 hover:bg-black/5 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
+                aria-label={t.close}
+              >
+                ✕
+              </button>
+            </div>
+          )}
+
           {/* Services Grid (Single-col mobile, 2-col tablet, 4-col desktop) */}
           <section aria-label="Services Overview">
             <div

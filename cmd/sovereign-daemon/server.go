@@ -118,6 +118,7 @@ type Server struct {
 	ragEngine         *ai.RAGEngine
 	modelManager      *ai.ModelManager
 	updateEngine      *supervisor.UpdateDiscoveryEngine
+	maintScheduler    *supervisor.MaintenanceScheduler
 	stopChan          chan struct{}
 	closeOnce         sync.Once
 	mu                sync.RWMutex
@@ -674,6 +675,15 @@ func NewServer(cfg Config) (*Server, error) {
 	}
 	s.updateEngine = updateEngine
 
+	maintSched := supervisor.NewMaintenanceScheduler(s.serviceMgr, supervisor.DefaultMaintenanceConfig(), s.logger)
+	if db != nil {
+		maintSched.SetStore(db)
+	}
+	if updateEngine != nil {
+		maintSched.SetDiscoveryEngine(updateEngine)
+	}
+	s.maintScheduler = maintSched
+
 	s.routes()
 	return s, nil
 }
@@ -811,6 +821,11 @@ func (s *Server) StartBackgroundServices(ctx context.Context) {
 	if s.updateEngine != nil {
 		s.updateEngine.Start(ctx)
 	}
+
+	// 15. Start background unattended maintenance scheduler
+	if s.maintScheduler != nil {
+		s.maintScheduler.Start(ctx)
+	}
 }
 
 // BootManager returns the active BootManager instance.
@@ -939,6 +954,10 @@ func (s *Server) Close() error {
 		s.updateEngine.Stop()
 	}
 
+	if s.maintScheduler != nil {
+		s.maintScheduler.Stop()
+	}
+
 	if s.db != nil {
 		return s.db.Close()
 	}
@@ -950,6 +969,13 @@ func (s *Server) UpdateEngine() *supervisor.UpdateDiscoveryEngine {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.updateEngine
+}
+
+// MaintenanceScheduler returns the active maintenance scheduler.
+func (s *Server) MaintenanceScheduler() *supervisor.MaintenanceScheduler {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.maintScheduler
 }
 
 // requireSetupOrAdmin allows unauthenticated access during first-run setup, but strictly requires

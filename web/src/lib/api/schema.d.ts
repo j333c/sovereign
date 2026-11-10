@@ -144,6 +144,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/system/update-status/dismiss": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Dismisses the overnight update notification
+         * @description Marks the last overnight update notification as dismissed.
+         */
+        post: operations["dismissUpdateStatus"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/system/events": {
         parameters: {
             query?: never;
@@ -1515,6 +1535,23 @@ export interface components {
              * @enum {string}
              */
             update_channel?: "stable" | "security-only" | "preview";
+            /**
+             * @example updated
+             * @enum {string}
+             */
+            last_update_status?: "updated" | "postponed" | "idle";
+            /** @example v1.1.0 */
+            last_update_version?: string;
+            /** Format: date-time */
+            last_update_timestamp?: string;
+            /** @example Sovereign updated to v1.1.0 overnight */
+            last_update_message?: string;
+            /** @example false */
+            last_update_dismissed?: boolean;
+        };
+        DismissUpdateStatusResponse: {
+            /** @example ok */
+            status: string;
         };
         IngressStatusResponse: {
             /**
@@ -3221,7 +3258,27 @@ export interface operations {
                     "application/problem+json": components["schemas"]["ProblemDetails"];
                 };
             };
-            /** @description Database error resetting appliance. */
+        };
+    };
+    dismissUpdateStatus: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Overnight update status dismissed successfully. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DismissUpdateStatusResponse"];
+                };
+            };
+            /** @description Internal server error. */
             500: {
                 headers: {
                     [name: string]: unknown;

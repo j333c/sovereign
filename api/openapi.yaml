@@ -182,8 +182,22 @@ paths:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/ProblemDetails'
+  /api/v1/system/update-status/dismiss:
+    post:
+      summary: Dismisses the overnight update notification
+      description: Marks the last overnight update notification as dismissed.
+      operationId: dismissUpdateStatus
+      tags:
+        - System
+      responses:
+        '200':
+          description: Overnight update status dismissed successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DismissUpdateStatusResponse'
         '500':
-          description: Database error resetting appliance.
+          description: Internal server error.
           content:
             application/problem+json:
               schema:
@@ -2422,6 +2436,31 @@ components:
           type: string
           enum: [stable, security-only, preview]
           example: stable
+        last_update_status:
+          type: string
+          enum: [updated, postponed, idle]
+          example: updated
+        last_update_version:
+          type: string
+          example: v1.1.0
+        last_update_timestamp:
+          type: string
+          format: date-time
+        last_update_message:
+          type: string
+          example: Sovereign updated to v1.1.0 overnight
+        last_update_dismissed:
+          type: boolean
+          example: false
+
+    DismissUpdateStatusResponse:
+      type: object
+      required:
+        - status
+      properties:
+        status:
+          type: string
+          example: ok
 
     IngressStatusResponse:
       type: object

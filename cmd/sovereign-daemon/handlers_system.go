@@ -85,14 +85,38 @@ func (s *Server) handleBootStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if s.db != nil {
-		if ch, _ := s.db.GetSetting(r.Context(), "update_channel"); ch != "" {
-			status.UpdateChannel = ch
+		if enriched, err := s.db.GetBootStatus(r.Context()); err == nil && enriched != nil {
+			status.UpdateChannel = enriched.UpdateChannel
+			status.LastUpdateStatus = enriched.LastUpdateStatus
+			status.LastUpdateVersion = enriched.LastUpdateVersion
+			status.LastUpdateTimestamp = enriched.LastUpdateTimestamp
+			status.LastUpdateMessage = enriched.LastUpdateMessage
+			status.LastUpdateDismissed = enriched.LastUpdateDismissed
 		} else {
 			status.UpdateChannel = "stable"
 		}
 	}
 
 	s.writeJSON(w, http.StatusOK, status)
+}
+
+func (s *Server) handleDismissUpdateStatus(w http.ResponseWriter, r *http.Request) {
+	s.mu.RLock()
+	dbHandle := s.db
+	s.mu.RUnlock()
+
+	if dbHandle == nil {
+		s.writeProblem(w, http.StatusServiceUnavailable, "Service Unavailable", "Database is not initialized", r.URL.Path)
+		return
+	}
+
+	if err := dbHandle.DismissOvernightUpdateStatus(r.Context()); err != nil {
+		s.logger.Error("failed to dismiss overnight update status", "error", err)
+		s.writeProblem(w, http.StatusInternalServerError, "Internal Server Error", "Failed to dismiss overnight update status", r.URL.Path)
+		return
+	}
+
+	s.writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
 func (s *Server) handleIngressStatus(w http.ResponseWriter, r *http.Request) {

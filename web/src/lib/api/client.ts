@@ -78,6 +78,7 @@ export type ComposeRevisionsResponse = components["schemas"]["ComposeRevisionsRe
 export type ServiceUpgradeRequest = components["schemas"]["ServiceUpgradeRequest"];
 export type SystemActionResponse = components["schemas"]["SystemActionResponse"];
 export type FactoryResetRequest = components["schemas"]["FactoryResetRequest"];
+export type DismissUpdateStatusResponse = components["schemas"]["DismissUpdateStatusResponse"];
 
 
 /**
@@ -802,6 +803,15 @@ export class SovereignApiClient {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ confirmation }),
+    });
+  }
+
+  /**
+   * Dismisses the overnight update notification.
+   */
+  async dismissUpdateStatus(): Promise<DismissUpdateStatusResponse> {
+    return this.request<DismissUpdateStatusResponse>("/api/v1/system/update-status/dismiss", {
+      method: "POST",
     });
   }
 

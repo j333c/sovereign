@@ -248,6 +248,38 @@ test_containerized_matrix() {
   done
 }
 
+# Test 14: Channel flag validation
+test_channel_flag() {
+  local output
+  output="$(bash "$INSTALLER" --channel stable --dry-run 2>&1)"
+  echo "$output" | grep -q "Pre-flight dry run completed"
+
+  output="$(bash "$INSTALLER" --channel preview --dry-run 2>&1)"
+  echo "$output" | grep -q "Pre-flight dry run completed"
+
+  output="$(bash "$INSTALLER" --channel security-only --dry-run 2>&1)"
+  echo "$output" | grep -q "Pre-flight dry run completed"
+
+  set +e
+  output="$(bash "$INSTALLER" --channel invalid 2>&1)"
+  local status=$?
+  set -e
+  [ "$status" -eq 1 ] && echo "$output" | grep -q "Invalid release channel"
+
+  set +e
+  output="$(bash "$INSTALLER" --channel 2>&1)"
+  local status_missing=$?
+  set -e
+  [ "$status_missing" -eq 1 ] && echo "$output" | grep -q "requires an argument"
+}
+
+# Test 15: Upgrade with channel flag dry-run simulation
+test_upgrade_channel_dry_run() {
+  local output
+  output="$(bash "$INSTALLER" --upgrade --channel preview --dry-run 2>&1)"
+  echo "$output" | grep -q "Would checkout qualifying tag for channel: preview" && echo "$output" | grep -q "Would persist channel preview"
+}
+
 # Execute tests
 run_test "Installer bash syntax" test_syntax
 run_test "Root and scripts installer parity" test_file_parity
@@ -261,6 +293,8 @@ run_test "Uninstallation with purge dry-run simulation" test_uninstall_purge_dry
 run_test "Upgrade dry-run simulation" test_upgrade_dry_run
 run_test "Mock OS distribution matrix (Ubuntu/Debian/Fedora/Arch)" test_mock_os_matrix
 run_test "SELinux detection handling" test_selinux_detection
+run_test "Release channel flag validation" test_channel_flag
+run_test "Upgrade channel selection dry-run" test_upgrade_channel_dry_run
 run_test "Containerized live matrix test" test_containerized_matrix
 
 echo "---"

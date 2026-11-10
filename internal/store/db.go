@@ -125,6 +125,11 @@ type BootStatusInfo struct {
 	DiagnosticsCompleted bool   `json:"diagnostics_completed"`
 	Message              string `json:"message"`
 	UpdateChannel        string `json:"update_channel,omitempty"`
+	LastUpdateStatus     string `json:"last_update_status,omitempty"`
+	LastUpdateVersion    string `json:"last_update_version,omitempty"`
+	LastUpdateTimestamp  string `json:"last_update_timestamp,omitempty"`
+	LastUpdateMessage    string `json:"last_update_message,omitempty"`
+	LastUpdateDismissed  bool   `json:"last_update_dismissed"`
 }
 
 // GetBootStatus returns the current boot status.
@@ -151,6 +156,21 @@ func (d *DB) GetBootStatus(ctx context.Context) (*BootStatusInfo, error) {
 
 	status.CleanShutdown = cleanShutdownInt != 0
 	status.DiagnosticsCompleted = diagCompletedInt != 0
+
+	// Enrich with update channel and overnight update status
+	if ch, _ := d.GetSetting(ctx, "update_channel"); ch != "" {
+		status.UpdateChannel = ch
+	} else {
+		status.UpdateChannel = "stable"
+	}
+
+	status.LastUpdateStatus, _ = d.GetSetting(ctx, "last_update_status")
+	status.LastUpdateVersion, _ = d.GetSetting(ctx, "last_update_version")
+	status.LastUpdateTimestamp, _ = d.GetSetting(ctx, "last_update_timestamp")
+	status.LastUpdateMessage, _ = d.GetSetting(ctx, "last_update_message")
+	dismissedStr, _ := d.GetSetting(ctx, "last_update_dismissed")
+	status.LastUpdateDismissed = dismissedStr == "1" || dismissedStr == "true"
+
 	return &status, nil
 }
 
@@ -210,7 +230,31 @@ func (d *DB) SetSetting(ctx context.Context, key, value string) error {
 	return nil
 }
 
+// SetOvernightUpdateStatus persists the outcome of an unattended maintenance execution.
+func (d *DB) SetOvernightUpdateStatus(ctx context.Context, status, version, message string) error {
+	now := time.Now().UTC().Format(time.RFC3339)
+	if err := d.SetSetting(ctx, "last_update_status", status); err != nil {
+		return err
+	}
+	if err := d.SetSetting(ctx, "last_update_version", version); err != nil {
+		return err
+	}
+	if err := d.SetSetting(ctx, "last_update_timestamp", now); err != nil {
+		return err
+	}
+	if err := d.SetSetting(ctx, "last_update_message", message); err != nil {
+		return err
+	}
+	return d.SetSetting(ctx, "last_update_dismissed", "0")
+}
+
+// DismissOvernightUpdateStatus marks the overnight update banner as dismissed.
+func (d *DB) DismissOvernightUpdateStatus(ctx context.Context) error {
+	return d.SetSetting(ctx, "last_update_dismissed", "1")
+}
+
 // Path returns the database file path.
 func (d *DB) Path() string {
 	return d.path
 }
+

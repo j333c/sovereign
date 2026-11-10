@@ -18,6 +18,7 @@ UNINSTALL=false
 UPGRADE=false
 PURGE_DATA=false
 DRY_RUN=false
+CHANNEL=""
 
 # Styling & Colors (disabled if not terminal or NO_COLOR set)
 if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
@@ -95,11 +96,24 @@ parse_args() {
         DRY_RUN=true
         shift
         ;;
+      --channel)
+        if [[ $# -lt 2 ]]; then
+          log_error "Option --channel requires an argument (stable|security-only|preview)"
+          exit 1
+        fi
+        CHANNEL="$2"
+        shift 2
+        ;;
+      --channel=*)
+        CHANNEL="${1#*=}"
+        shift
+        ;;
       -h|--help)
         echo "Usage: curl -fsSL https://raw.githubusercontent.com/j333c/sovereign/main/install.sh | sudo bash [OPTIONS]"
         echo ""
         echo "Options:"
         echo "  -y, --yes          Proceed without interactive confirmation prompts"
+        echo "  --channel <name>   Release channel: stable (default), security-only, or preview"
         echo "  --upgrade          Update Sovereign from https://github.com/j333c/sovereign and rebuild"
         echo "  --uninstall        Uninstall Sovereign and disable the systemd service"
         echo "  --purge-data       With --uninstall, delete persistent /data storage as well"
@@ -114,6 +128,25 @@ parse_args() {
         ;;
     esac
   done
+
+  # Validate or default release channel
+  if [ -n "$CHANNEL" ]; then
+    case "$CHANNEL" in
+      stable|security-only|preview)
+        ;;
+      *)
+        log_error "Invalid release channel '$CHANNEL'. Must be one of: stable, security-only, preview."
+        exit 1
+        ;;
+    esac
+  else
+    if [ "$UPGRADE" = true ] && [ -f "${DATA_DIR}/state/update_channel" ]; then
+      CHANNEL="$(cat "${DATA_DIR}/state/update_channel" | tr -d '[:space:]')"
+    fi
+    if [ -z "$CHANNEL" ]; then
+      CHANNEL="stable"
+    fi
+  fi
 }
 
 check_root() {
@@ -255,19 +288,69 @@ ensure_docker() {
   log_ok "Docker engine and compose plugin successfully configured."
 }
 
+resolve_channel_tag() {
+  local channel="$1"
+  local repo_dir="$2"
+  local target_tag=""
+
+  local all_tags
+  all_tags="$(git -C "$repo_dir" tag -l 'v*' 2>/dev/null || true)"
+  if [ -z "$all_tags" ]; then
+    echo "main"
+    return 0
+  fi
+
+  case "$channel" in
+    stable)
+      target_tag="$(echo "$all_tags" | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n1 || true)"
+      ;;
+    security-only)
+      # Match current major.minor patch releases, or fallback to newest stable
+      local cur_tag
+      cur_tag="$(git -C "$repo_dir" describe --tags --exact-match 2>/dev/null || true)"
+      if [[ "$cur_tag" =~ ^v([0-9]+)\.([0-9]+) ]]; then
+        local major="${BASH_REMATCH[1]}"
+        local minor="${BASH_REMATCH[2]}"
+        target_tag="$(echo "$all_tags" | grep -E "^v${major}\.${minor}\.[0-9]+$" | sort -V | tail -n1 || true)"
+      fi
+      if [ -z "$target_tag" ]; then
+        target_tag="$(echo "$all_tags" | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n1 || true)"
+      fi
+      ;;
+    preview)
+      target_tag="$(echo "$all_tags" | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?$' | sed 's/-/~/g' | sort -V | sed 's/~/-/g' | tail -n1 || true)"
+      ;;
+    *)
+      target_tag=""
+      ;;
+  esac
+
+  if [ -z "$target_tag" ]; then
+    target_tag="main"
+  fi
+
+  echo "$target_tag"
+}
+
 deploy_sovereign() {
-  log_info "Deploying Sovereign appliance to ${INSTALL_DIR} from ${REPO_URL}..."
+  log_info "Deploying Sovereign appliance to ${INSTALL_DIR} from ${REPO_URL} (channel: ${CHANNEL})..."
 
   mkdir -p "$(dirname "$INSTALL_DIR")"
 
   if [ -d "${INSTALL_DIR}/.git" ]; then
-    log_info "Existing git repository found at ${INSTALL_DIR}. Updating to latest release..."
-    git -C "${INSTALL_DIR}" fetch origin
-    git -C "${INSTALL_DIR}" checkout main
-    git -C "${INSTALL_DIR}" pull origin main
+    log_info "Existing git repository found at ${INSTALL_DIR}. Fetching upstream updates..."
+    git -C "${INSTALL_DIR}" fetch --tags origin
   else
     log_info "Cloning Sovereign repository into ${INSTALL_DIR}..."
     git clone "${REPO_URL}" "${INSTALL_DIR}"
+  fi
+
+  local target_ref
+  target_ref="$(resolve_channel_tag "$CHANNEL" "$INSTALL_DIR")"
+  log_info "Checking out release target '${target_ref}' for channel '${CHANNEL}'..."
+  git -C "${INSTALL_DIR}" checkout "$target_ref"
+  if [ "$target_ref" = "main" ]; then
+    git -C "${INSTALL_DIR}" pull origin main || true
   fi
 
   # Initialize structured /data partition hierarchy
@@ -283,6 +366,10 @@ deploy_sovereign() {
   mkdir -p "${DATA_DIR}/drop/incoming"
   mkdir -p "${DATA_DIR}/caddy/data"
   mkdir -p "${DATA_DIR}/caddy/config"
+
+  # Seed /data/state/update_channel for daemon bootstrap initialization
+  echo "$CHANNEL" > "${DATA_DIR}/state/update_channel"
+  log_ok "Update channel '${CHANNEL}' persisted to ${DATA_DIR}/state/update_channel."
 
   chmod -R 775 "${DATA_DIR}" || true
 
@@ -458,10 +545,12 @@ uninstall_sovereign() {
 }
 
 upgrade_sovereign() {
-  log_info "Upgrading Sovereign from ${REPO_URL}..."
+  log_info "Upgrading Sovereign from ${REPO_URL} (channel: ${CHANNEL})..."
 
   if [ "$DRY_RUN" = true ]; then
-    log_info "[DRY-RUN] Would pull latest code changes from ${REPO_URL}"
+    log_info "[DRY-RUN] Would fetch tags from ${REPO_URL}"
+    log_info "[DRY-RUN] Would checkout qualifying tag for channel: ${CHANNEL}"
+    log_info "[DRY-RUN] Would persist channel ${CHANNEL} to ${DATA_DIR}/state/update_channel"
     log_info "[DRY-RUN] Would rebuild and restart Docker Compose services at ${INSTALL_DIR}"
     log_ok "[DRY-RUN] Sovereign upgrade dry-run completed."
     exit 0
@@ -472,10 +561,21 @@ upgrade_sovereign() {
     exit 1
   fi
 
-  log_info "Pulling latest code changes..."
-  git -C "${INSTALL_DIR}" fetch origin
-  git -C "${INSTALL_DIR}" checkout main
-  git -C "${INSTALL_DIR}" pull origin main
+  log_info "Fetching latest git tags from origin..."
+  git -C "${INSTALL_DIR}" fetch --tags origin
+
+  local target_ref
+  target_ref="$(resolve_channel_tag "$CHANNEL" "$INSTALL_DIR")"
+  log_info "Checking out release target '${target_ref}' for channel '${CHANNEL}'..."
+  git -C "${INSTALL_DIR}" checkout "$target_ref"
+  if [ "$target_ref" = "main" ]; then
+    git -C "${INSTALL_DIR}" pull origin main || true
+  fi
+
+  # Persist channel to /data/state/update_channel
+  mkdir -p "${DATA_DIR}/state"
+  echo "$CHANNEL" > "${DATA_DIR}/state/update_channel"
+  log_ok "Update channel '${CHANNEL}' persisted to ${DATA_DIR}/state/update_channel."
 
   # Re-apply SELinux context if SELinux is active
   if command -v selinuxenabled >/dev/null 2>&1 && selinuxenabled; then
@@ -487,7 +587,7 @@ upgrade_sovereign() {
   log_info "Rebuilding and restarting updated containers..."
   docker compose -f "${INSTALL_DIR}/docker-compose.yml" up -d --build
 
-  log_ok "Sovereign successfully upgraded to the latest version."
+  log_ok "Sovereign successfully upgraded to '${target_ref}' on channel '${CHANNEL}'."
   display_upgrade_banner
   exit 0
 }

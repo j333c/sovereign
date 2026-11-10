@@ -1058,3 +1058,68 @@ func TestDockerSocket_PresentHealthy(t *testing.T) {
 		t.Errorf("expected SSE stream NOT to emit system.docker_unavailable event when socket present, got: %s", body)
 	}
 }
+
+func TestServer_BootStatusOvernightUpdateAndDismiss(t *testing.T) {
+	srv, _ := setupTestServer(t)
+	defer srv.Close()
+
+	ctx := context.Background()
+
+	// 1. Initial boot-status has no overnight update status
+	req1 := httptest.NewRequest(http.MethodGet, "/api/v1/system/boot-status", nil)
+	w1 := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(w1, req1)
+	if w1.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d", w1.Code)
+	}
+	var res1 map[string]any
+	if err := json.Unmarshal(w1.Body.Bytes(), &res1); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	// 2. Set overnight update status to updated
+	if err := srv.db.SetOvernightUpdateStatus(ctx, "updated", "v1.1.0", "Sovereign updated to v1.1.0 overnight"); err != nil {
+		t.Fatalf("failed to set overnight update status: %v", err)
+	}
+
+	// 3. GET /api/v1/system/boot-status reflects updated outcome
+	req2 := httptest.NewRequest(http.MethodGet, "/api/v1/system/boot-status", nil)
+	w2 := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(w2, req2)
+	if w2.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d", w2.Code)
+	}
+	var res2 map[string]any
+	if err := json.Unmarshal(w2.Body.Bytes(), &res2); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if res2["last_update_status"] != "updated" {
+		t.Errorf("expected last_update_status 'updated', got %v", res2["last_update_status"])
+	}
+	if res2["last_update_version"] != "v1.1.0" {
+		t.Errorf("expected last_update_version 'v1.1.0', got %v", res2["last_update_version"])
+	}
+	if res2["last_update_dismissed"] != false {
+		t.Errorf("expected last_update_dismissed false, got %v", res2["last_update_dismissed"])
+	}
+
+	// 4. POST /api/v1/system/update-status/dismiss
+	reqDismiss := httptest.NewRequest(http.MethodPost, "/api/v1/system/update-status/dismiss", nil)
+	wDismiss := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(wDismiss, reqDismiss)
+	if wDismiss.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK for dismiss, got %d", wDismiss.Code)
+	}
+
+	// 5. Verify boot-status is now dismissed
+	req3 := httptest.NewRequest(http.MethodGet, "/api/v1/system/boot-status", nil)
+	w3 := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(w3, req3)
+	var res3 map[string]any
+	if err := json.Unmarshal(w3.Body.Bytes(), &res3); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if res3["last_update_dismissed"] != true {
+		t.Errorf("expected last_update_dismissed true after dismiss, got %v", res3["last_update_dismissed"])
+	}
+}
