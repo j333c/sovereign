@@ -17,6 +17,7 @@ Sovereign is a private, self-hosted home server appliance monorepo. Go superviso
   - Hotfixes and security patches occur on `hotfix/v<MAJOR>.<MINOR>.<PATCH>`.
   - Tags must follow SemVer: `v<MAJOR>.<MINOR>.<PATCH>` for stable, `v<MAJOR>.<MINOR>.<PATCH>-rc.<N>` for preview. Never move or delete published tags.
   - To publish a release, run `scripts/publish-release.sh <tag>` (or `make publish-release TAG=<tag>`). This validates clean working tree, executes the full verification and spoke audit suites, creates the annotated tag, pushes to dual remotes (`origin` and `github`), and verifies tag ref parity via `scripts/verify-remotes.sh`.
+  - Every release must have an entry in `CHANGELOG.md` under `## [v<MAJOR>.<MINOR>.<PATCH>[-rc.<N>]] - YYYY-MM-DD` detailing Added, Changed, Fixed, and Security items. `scripts/publish-release.sh` and `.github/workflows/release.yml` automatically extract this entry to populate the annotated git tag body (consumed by appliance update discovery over Smart HTTP) and official GitHub Release notes.
   - Pushing the tag to `github` triggers the GitHub Actions release pipeline (`.github/workflows/release.yml`), which compiles static daemon binaries (linux/amd64 and linux/arm64), generates SHA256SUMS, and publishes the official GitHub Release with release notes and prerelease channel metadata.
 - Update channel rules:
   - `install.sh` supports `--channel stable|security-only|preview` (default: `stable`) and seeds `/data/state/update_channel` for first-boot SQLite initialization.

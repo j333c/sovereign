@@ -103,6 +103,24 @@ test_github_actions_planned_in_dry_run() {
   echo "$output" | grep -q "GitHub Actions" && echo "$output" | grep -q "release.yml"
 }
 
+test_changelog_extraction_known_tag() {
+  local output
+  output="$(python3 "$REPO_ROOT/scripts/extract-changelog.py" v1.0.0-rc.2 2>&1)"
+  echo "$output" | grep -q "Official GitHub Actions release pipeline"
+}
+
+test_changelog_fallback_git_unknown_tag() {
+  local output
+  output="$(python3 "$REPO_ROOT/scripts/extract-changelog.py" --fallback-git v99.0.0 2>&1)"
+  echo "$output" | grep -q "## \[v99.0.0\]"
+}
+
+test_publish_release_loads_changelog_notes() {
+  local output
+  output="$("$PUBLISH_SCRIPT" --dry-run --skip-tests --allow-dirty v1.0.0-rc.2 2>&1)"
+  echo "$output" | grep -q "Loaded release notes for 'v1.0.0-rc.2' from CHANGELOG.md"
+}
+
 # Run tests
 run_test "Help output flag" test_help_flag
 run_test "Missing tag argument rejection" test_missing_tag_argument
@@ -111,6 +129,9 @@ run_test "Valid preview tag accepted (dry-run)" test_valid_preview_tag_dry_run
 run_test "Invalid tag formats rejected" test_invalid_tag_formats_rejected
 run_test "Dirty working tree rejected" test_dirty_working_tree_rejected
 run_test "GitHub Actions workflow planned in dry-run" test_github_actions_planned_in_dry_run
+run_test "Changelog extraction for documented tag" test_changelog_extraction_known_tag
+run_test "Changelog fallback to git log for undocumented tag" test_changelog_fallback_git_unknown_tag
+run_test "Publish release loads release notes from CHANGELOG.md" test_publish_release_loads_changelog_notes
 
 echo "---"
 echo "Tests passed: $PASSED, failed: $FAILED"
@@ -118,4 +139,5 @@ echo "Tests passed: $PASSED, failed: $FAILED"
 if [ "$FAILED" -ne 0 ]; then
   exit 1
 fi
+
 

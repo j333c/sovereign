@@ -220,11 +220,29 @@ else
   log_warn "Test verification suites skipped (--skip-tests)."
 fi
 
-# 5. Handle Dry-Run Mode
+# 5. Extract or Generate Release Notes
+RELEASE_NOTES=""
+if [ -f "$REPO_ROOT/scripts/extract-changelog.py" ]; then
+  if python3 "$REPO_ROOT/scripts/extract-changelog.py" "$TAG" >/dev/null 2>&1; then
+    RELEASE_NOTES="$(python3 "$REPO_ROOT/scripts/extract-changelog.py" "$TAG")"
+    log_ok "Loaded release notes for '${TAG}' from CHANGELOG.md"
+  else
+    log_warn "Tag '${TAG}' not found in CHANGELOG.md. Falling back to git commit log."
+    RELEASE_NOTES="$(python3 "$REPO_ROOT/scripts/extract-changelog.py" --fallback-git "$TAG")"
+  fi
+fi
+
+if [ -z "$RELEASE_NOTES" ]; then
+  RELEASE_NOTES="Release $TAG"
+fi
+
+# 6. Handle Dry-Run Mode
 if [ "$DRY_RUN" = true ]; then
   log_ok "Dry-run validation successful for release tag ${BOLD}${TAG}${RESET}."
+  printf "\n${BOLD}Release Notes:${RESET}\n"
+  echo "$RELEASE_NOTES"
   printf "\n${BOLD}Planned Actions (skipped due to --dry-run):${RESET}\n"
-  printf "  1. git tag -a '%s' -m 'Release %s'\n" "$TAG" "$TAG"
+  printf "  1. git tag -a '%s' -m <release-notes>\n" "$TAG"
   printf "  2. git push origin '%s'\n" "$TAG"
   printf "  3. git push github '%s'\n" "$TAG"
   printf "  4. %s/scripts/verify-remotes.sh -t '%s'\n" "$REPO_ROOT" "$TAG"
@@ -232,12 +250,13 @@ if [ "$DRY_RUN" = true ]; then
   exit 0
 fi
 
-# 6. Create Annotated Tag
-log_info "Creating annotated git tag: ${BOLD}${TAG}${RESET}..."
+# 7. Create Annotated Tag
+log_info "Creating annotated git tag: ${BOLD}${TAG}${RESET} with release notes..."
 if ! git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then
-  git tag -a "$TAG" -m "Release $TAG"
+  git tag -a "$TAG" -m "$RELEASE_NOTES"
   log_ok "Created git tag: $TAG"
 fi
+
 
 # 7. Push to Dual Remotes
 log_info "Pushing tag '${TAG}' to internal remote 'origin'..."

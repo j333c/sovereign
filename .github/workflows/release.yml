@@ -140,23 +140,40 @@ jobs:
     needs: [validate-and-test, build-binaries]
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
       - name: Download Build Artifacts
         uses: actions/download-artifact@v4
         with:
           name: release-binaries
           path: dist/
 
+      - name: Extract Release Notes from CHANGELOG.md
+        id: notes
+        run: |
+          TAG="${{ needs.validate-and-test.outputs.tag }}"
+          if python3 scripts/extract-changelog.py "$TAG" > RELEASE_NOTES.md 2>/dev/null; then
+            echo "Successfully extracted release notes from CHANGELOG.md for $TAG"
+          else
+            python3 scripts/extract-changelog.py --fallback-git "$TAG" > RELEASE_NOTES.md
+            echo "Generated fallback release notes from git log for $TAG"
+          fi
+          cat RELEASE_NOTES.md
+
       - name: Create or Update GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.validate-and-test.outputs.tag }}
           name: ${{ needs.validate-and-test.outputs.title }}
+          body_path: RELEASE_NOTES.md
           draft: false
           prerelease: ${{ needs.validate-and-test.outputs.prerelease == 'true' }}
-          generate_release_notes: true
+          generate_release_notes: false
           files: |
             dist/sovereign-daemon-linux-amd64
             dist/sovereign-daemon-linux-arm64
             dist/SHA256SUMS.txt
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
