@@ -280,6 +280,89 @@ test_upgrade_channel_dry_run() {
   echo "$output" | grep -q "Would checkout qualifying tag for channel: preview" && echo "$output" | grep -q "Would persist channel preview"
 }
 
+# Test 16: Piped stdin execution (curl | bash) displays prompt and reads from /dev/tty
+test_piped_tty_prompt() {
+  local mock_bin="$TEST_TMP/mock_root_bin"
+  mkdir -p "$mock_bin"
+  cat << 'EOF' > "$mock_bin/id"
+#!/usr/bin/env bash
+echo "0"
+EOF
+  chmod +x "$mock_bin/id"
+
+  # 1. File execution with piped stdin ("n")
+  local file_out
+  file_out="$(printf "n\n" | PATH="$mock_bin:$PATH" bash "$INSTALLER" 2>&1)"
+  echo "$file_out" | grep -q "Do you wish to proceed? \[Y/n\]: "
+  echo "$file_out" | grep -q "Installation aborted by user."
+
+  # 2. Script piped via stdin (simulating curl -fsSL ... | sudo bash) with controlling PTY
+  if command -v python3 >/dev/null 2>&1; then
+    PATH="$mock_bin:$PATH" INSTALLER_PATH="$INSTALLER" python3 - << 'PYEOF'
+import fcntl, os, pty, select, subprocess, sys, termios
+
+installer_path = os.environ["INSTALLER_PATH"]
+with open(installer_path, "rb") as f:
+    script_bytes = f.read()
+
+def run_piped(args, expected_prompt, reply, expected_msg):
+    master, slave = pty.openpty()
+    def set_ctty():
+        os.setsid()
+        fcntl.ioctl(slave, termios.TIOCSCTTY, 0)
+
+    proc = subprocess.Popen(
+        ["bash"] + args,
+        stdin=subprocess.PIPE,
+        stdout=slave,
+        stderr=slave,
+        preexec_fn=set_ctty,
+        close_fds=True,
+    )
+    os.close(slave)
+    proc.stdin.write(script_bytes)
+    proc.stdin.close()
+
+    out = b""
+    replied = False
+    while True:
+        r, _, _ = select.select([master], [], [], 3.0)
+        if not r:
+            break
+        try:
+            chunk = os.read(master, 1024)
+            if not chunk:
+                break
+            out += chunk
+            if not replied and expected_prompt in out:
+                os.write(master, reply)
+                replied = True
+        except OSError:
+            break
+
+    proc.wait(timeout=5)
+    os.close(master)
+    decoded = out.decode("utf-8", errors="replace")
+    if not replied or expected_msg not in decoded or proc.returncode != 0:
+        sys.stderr.write(f"PTY test failed (rc={proc.returncode}, replied={replied}):\n{decoded}\n")
+        sys.exit(1)
+
+run_piped(
+    [],
+    b"Do you wish to proceed? [Y/n]: ",
+    b"n\n",
+    "Installation aborted by user.",
+)
+run_piped(
+    ["-s", "--", "--uninstall"],
+    b"Are you sure you want to uninstall Sovereign from this machine? [y/N]: ",
+    b"n\n",
+    "Uninstallation cancelled by user.",
+)
+PYEOF
+  fi
+}
+
 # Execute tests
 run_test "Installer bash syntax" test_syntax
 run_test "Root and scripts installer parity" test_file_parity
@@ -295,6 +378,7 @@ run_test "Mock OS distribution matrix (Ubuntu/Debian/Fedora/Arch)" test_mock_os_
 run_test "SELinux detection handling" test_selinux_detection
 run_test "Release channel flag validation" test_channel_flag
 run_test "Upgrade channel selection dry-run" test_upgrade_channel_dry_run
+run_test "Piped stdin (curl | bash) interactive prompt" test_piped_tty_prompt
 run_test "Containerized live matrix test" test_containerized_matrix
 
 echo "---"

@@ -55,6 +55,47 @@ log_error() {
   echo -e "${RED}[ERROR]${RESET} $1" >&2
 }
 
+prompt_read() {
+  local prompt_text="$1"
+  local __resultvar="$2"
+  local input_val=""
+
+  printf "%s" "$prompt_text"
+  if [ -t 0 ]; then
+    if ! read -r input_val; then
+      echo ""
+      log_error "Confirmation input closed (EOF). Aborting."
+      exit 1
+    fi
+  elif [ -n "${BASH_SOURCE[0]:-}" ]; then
+    if ! read -r input_val; then
+      if (: </dev/tty) 2>/dev/null; then
+        if ! read -r input_val </dev/tty; then
+          echo ""
+          log_error "Confirmation input closed (EOF). Aborting."
+          exit 1
+        fi
+      else
+        echo ""
+        log_error "Confirmation input closed (EOF). Re-run with -y / --yes for non-interactive mode."
+        exit 1
+      fi
+    fi
+  elif (: </dev/tty) 2>/dev/null; then
+    if ! read -r input_val </dev/tty; then
+      echo ""
+      log_error "Confirmation input closed (EOF). Aborting."
+      exit 1
+    fi
+  else
+    echo ""
+    log_error "No interactive terminal (/dev/tty) available for confirmation prompt. Re-run with -y / --yes."
+    exit 1
+  fi
+
+  printf -v "$__resultvar" '%s' "$input_val"
+}
+
 print_banner() {
   echo -e "${CYAN}${BOLD}"
   echo "  ███████╗ ██████╗ ██╗   ██╗███████╗██████╗ ███████╗██╗ ██████╗ ███╗   ██╗"
@@ -508,7 +549,8 @@ uninstall_sovereign() {
   fi
 
   if [ "$NON_INTERACTIVE" = false ]; then
-    read -r -p "Are you sure you want to uninstall Sovereign from this machine? [y/N]: " confirm
+    local confirm=""
+    prompt_read "Are you sure you want to uninstall Sovereign from this machine? [y/N]: " confirm
     if [[ ! "$confirm" =~ ^[yY]([eE][sS])?$ ]]; then
       log_info "Uninstallation cancelled by user."
       exit 0
@@ -615,7 +657,8 @@ main() {
     echo -e "This script will install Sovereign and its prerequisites to ${BOLD}${INSTALL_DIR}${RESET}."
     echo -e "Data will be safely stored under ${BOLD}${DATA_DIR}${RESET}."
     echo ""
-    read -r -p "Do you wish to proceed? [Y/n]: " proceed
+    local proceed=""
+    prompt_read "Do you wish to proceed? [Y/n]: " proceed
     if [[ "$proceed" =~ ^[nN] ]]; then
       log_info "Installation aborted by user."
       exit 0
