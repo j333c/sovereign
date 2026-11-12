@@ -470,6 +470,7 @@ start_services() {
   log_info "Building and launching Sovereign containers via Docker Compose..."
   cd "${INSTALL_DIR}"
   docker compose up -d --build
+  docker compose restart caddy >/dev/null 2>&1 || true
 
   log_ok "All appliance services launched successfully."
 }
@@ -628,6 +629,7 @@ upgrade_sovereign() {
 
   log_info "Rebuilding and restarting updated containers..."
   docker compose -f "${INSTALL_DIR}/docker-compose.yml" up -d --build
+  docker compose -f "${INSTALL_DIR}/docker-compose.yml" restart caddy >/dev/null 2>&1 || true
 
   log_ok "Sovereign successfully upgraded to '${target_ref}' on channel '${CHANNEL}'."
   display_upgrade_banner

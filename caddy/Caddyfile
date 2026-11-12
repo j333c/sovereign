@@ -15,9 +15,6 @@
 		reverse_proxy sovereign-daemon:8080 {
 			header_up Host {host}
 			header_up X-Real-IP {remote_host}
-			header_up X-Forwarded-For {remote_host}
-			header_up X-Forwarded-Proto {scheme}
-			header_up X-Forwarded-Host {host}
 			header_up X-Forwarded-Prefix /api
 		}
 	}
@@ -28,9 +25,6 @@
 		reverse_proxy sovereign-daemon:8080 {
 			header_up Host {host}
 			header_up X-Real-IP {remote_host}
-			header_up X-Forwarded-For {remote_host}
-			header_up X-Forwarded-Proto {scheme}
-			header_up X-Forwarded-Host {host}
 			header_up X-Forwarded-Prefix /v1
 		}
 	}
@@ -41,9 +35,6 @@
 		reverse_proxy sovereign-web:3000 {
 			header_up Host {host}
 			header_up X-Real-IP {remote_host}
-			header_up X-Forwarded-For {remote_host}
-			header_up X-Forwarded-Proto {scheme}
-			header_up X-Forwarded-Host {host}
 		}
 	}
 
@@ -57,9 +48,6 @@
 		reverse_proxy sovereign-openwebui:3001 {
 			header_up Host {host}
 			header_up X-Real-IP {remote_host}
-			header_up X-Forwarded-For {remote_host}
-			header_up X-Forwarded-Proto {scheme}
-			header_up X-Forwarded-Host {host}
 			header_up X-Forwarded-Prefix /chat
 		}
 	}
@@ -69,20 +57,17 @@
 		reverse_proxy sovereign-web:3000 {
 			header_up Host {host}
 			header_up X-Real-IP {remote_host}
-			header_up X-Forwarded-For {remote_host}
-			header_up X-Forwarded-Proto {scheme}
-			header_up X-Forwarded-Host {host}
 		}
 	}
 }
 
 # HTTP Ingress: matches sovereign.local, direct LAN IPs, localhost, and catch-all port 80
-http://sovereign.local, http://localhost, :80 {
+:80 {
 	import common_ingress
 }
 
-# HTTPS Ingress: matches sovereign.local, direct LAN IPs, localhost, and catch-all port 443 with internal TLS
-https://sovereign.local, https://localhost, :443 {
+# HTTPS Ingress: matches sovereign.local and localhost on port 443 with internal TLS
+https://sovereign.local, https://localhost {
 	tls internal
 	import common_ingress
 }
@@ -92,9 +77,6 @@ https://sovereign.local, https://localhost, :443 {
 	reverse_proxy sovereign-openwebui:3001 {
 		header_up Host {host}
 		header_up X-Real-IP {remote_host}
-		header_up X-Forwarded-For {remote_host}
-		header_up X-Forwarded-Proto {scheme}
-		header_up X-Forwarded-Host {host}
 	}
 }
 
