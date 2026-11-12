@@ -380,7 +380,7 @@ deploy_sovereign() {
 
   if [ -d "${INSTALL_DIR}/.git" ]; then
     log_info "Existing git repository found at ${INSTALL_DIR}. Fetching upstream updates..."
-    git -C "${INSTALL_DIR}" fetch --tags origin
+    git -C "${INSTALL_DIR}" fetch --tags --prune origin
   else
     log_info "Cloning Sovereign repository into ${INSTALL_DIR}..."
     git clone "${REPO_URL}" "${INSTALL_DIR}"
@@ -389,9 +389,12 @@ deploy_sovereign() {
   local target_ref
   target_ref="$(resolve_channel_tag "$CHANNEL" "$INSTALL_DIR")"
   log_info "Checking out release target '${target_ref}' for channel '${CHANNEL}'..."
-  git -C "${INSTALL_DIR}" checkout "$target_ref"
   if [ "$target_ref" = "main" ]; then
-    git -C "${INSTALL_DIR}" pull origin main || true
+    git -C "${INSTALL_DIR}" fetch origin main
+    git -C "${INSTALL_DIR}" checkout -f main
+    git -C "${INSTALL_DIR}" reset --hard origin/main
+  else
+    git -C "${INSTALL_DIR}" checkout -f "$target_ref"
   fi
 
   # Initialize structured /data partition hierarchy
@@ -469,8 +472,7 @@ EOF
 start_services() {
   log_info "Building and launching Sovereign containers via Docker Compose..."
   cd "${INSTALL_DIR}"
-  docker compose up -d --build
-  docker compose restart caddy >/dev/null 2>&1 || true
+  docker compose up -d --build --force-recreate
 
   log_ok "All appliance services launched successfully."
 }
@@ -605,14 +607,17 @@ upgrade_sovereign() {
   fi
 
   log_info "Fetching latest git tags from origin..."
-  git -C "${INSTALL_DIR}" fetch --tags origin
+  git -C "${INSTALL_DIR}" fetch --tags --prune origin
 
   local target_ref
   target_ref="$(resolve_channel_tag "$CHANNEL" "$INSTALL_DIR")"
   log_info "Checking out release target '${target_ref}' for channel '${CHANNEL}'..."
-  git -C "${INSTALL_DIR}" checkout "$target_ref"
   if [ "$target_ref" = "main" ]; then
-    git -C "${INSTALL_DIR}" pull origin main || true
+    git -C "${INSTALL_DIR}" fetch origin main
+    git -C "${INSTALL_DIR}" checkout -f main
+    git -C "${INSTALL_DIR}" reset --hard origin/main
+  else
+    git -C "${INSTALL_DIR}" checkout -f "$target_ref"
   fi
 
   # Persist channel to /data/state/update_channel
@@ -628,8 +633,7 @@ upgrade_sovereign() {
   fi
 
   log_info "Rebuilding and restarting updated containers..."
-  docker compose -f "${INSTALL_DIR}/docker-compose.yml" up -d --build
-  docker compose -f "${INSTALL_DIR}/docker-compose.yml" restart caddy >/dev/null 2>&1 || true
+  docker compose -f "${INSTALL_DIR}/docker-compose.yml" up -d --build --force-recreate
 
   log_ok "Sovereign successfully upgraded to '${target_ref}' on channel '${CHANNEL}'."
   display_upgrade_banner

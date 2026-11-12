@@ -189,7 +189,7 @@ func (c *CaddyClient) BuildCaddyConfig(routes []RouteConfig) map[string]any {
 	servers := map[string]any{
 		"srv0": map[string]any{
 			"listen": []string{":80", ":443"},
-			"auto_https": map[string]any{
+			"automatic_https": map[string]any{
 				"disable_redirects": true,
 			},
 			"routes": caddyRoutes,

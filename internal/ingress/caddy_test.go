@@ -65,9 +65,9 @@ func TestCaddyClient_BuildConfigurationPayload(t *testing.T) {
 		t.Fatalf("expected srv0 server block in caddy config")
 	}
 
-	autoHTTPS, ok := srv0["auto_https"].(map[string]any)
+	autoHTTPS, ok := srv0["automatic_https"].(map[string]any)
 	if !ok || autoHTTPS["disable_redirects"] != true {
-		t.Fatalf("expected auto_https.disable_redirects = true, got %v", srv0["auto_https"])
+		t.Fatalf("expected automatic_https.disable_redirects = true, got %v", srv0["automatic_https"])
 	}
 
 	caddyRoutes, ok := srv0["routes"].([]map[string]any)
